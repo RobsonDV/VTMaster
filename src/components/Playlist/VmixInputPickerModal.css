@@ -1,0 +1,150 @@
+.vmix-picker-box {
+  max-width: 560px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.vmix-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.vmix-picker-hint {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ── Search bar ── */
+.vmix-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: var(--text-secondary);
+}
+
+.vmix-search input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.vmix-search input::placeholder { color: var(--text-secondary); }
+
+/* ── Input list ── */
+.vmix-input-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 200px;
+  max-height: 380px;
+}
+
+.vmix-list-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.vmix-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: var(--bg-primary);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  user-select: none;
+}
+
+.vmix-input-row:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}
+
+.vmix-input-row.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent);
+}
+
+.vmix-input-row input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.vmix-input-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.vmix-input-num {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+}
+
+.vmix-input-title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vmix-input-type {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.type-tag-camera  { background: #1a4a2e; color: #4caf50; }
+.type-tag-ndi     { background: #1a3a4a; color: #4fc3f7; }
+.type-tag-video   { background: #3a1a4a; color: #ce93d8; }
+.type-tag-gt      { background: #4a3a1a; color: #ffcc02; }
+
+.vmix-input-state {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.state-running  { background: #1a4a2e; color: #4caf50; }
+.state-paused   { background: #4a3a1a; color: #ffcc02; }
+.state-stopped  { background: var(--bg-tertiary); color: var(--text-secondary); }

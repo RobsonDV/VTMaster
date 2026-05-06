@@ -1,0 +1,257 @@
+/* ── VmixInputPanel — Inline Side Panel ───────────────────────────────────── */
+.vmix-panel {
+  width: 270px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.vip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+}
+
+.vip-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.vip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.vip-header-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.vip-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.vip-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.vip-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Search ── */
+.vip-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.vip-search input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.vip-search input::placeholder { color: var(--text-secondary); }
+
+/* ── Hint bar ── */
+.vip-hint {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 10px;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── List ── */
+.vip-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+}
+
+.vip-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 12px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* ── Item row ── */
+.vip-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 6px 4px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: var(--bg-primary);
+  cursor: grab;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+  user-select: none;
+}
+
+.vip-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.vip-item.vip-dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.vip-item.vip-in-playlist {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary));
+}
+
+.vip-playlist-badge {
+  font-size: 0.65rem;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.vip-grip {
+  color: var(--text-secondary);
+  opacity: 0.4;
+  flex-shrink: 0;
+}
+
+.vip-type-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.vip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.vip-num {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.vip-name {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vip-type-label {
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+}
+
+/* State indicator */
+.vip-state {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.vip-state-on    { color: var(--success); }
+.vip-state-pause { color: var(--warning); }
+.vip-state-off   { color: var(--text-secondary); }
+
+/* ── Add button ── */
+.vip-add-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+  opacity: 0;
+}
+
+.vip-item:hover .vip-add-btn {
+  opacity: 1;
+}
+
+.vip-add-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── Spin animation (shared) ── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spin { animation: spin 0.7s linear infinite; }
