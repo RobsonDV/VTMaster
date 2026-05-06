@@ -334,7 +334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await window.spotmaster.vmixRequest({ Function: 'AddInput', Value: `${vmixType}|${filePath}` })
     const num = await pollForNewInput(prevMax)
     if (!num) return null
-    await sleep(600) // let vMix fully decode/buffer
+    await sleep(1000) // let vMix fully decode/buffer and report correct duration
     if (!isImage) {
       await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: num, Value: '0' })
     }
@@ -417,10 +417,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       // EXIT 1 — position reached end (video/image clips)
-      // Require dur > 500 to avoid false positives while vMix is still reporting
-      // a preliminary/partial duration value during file load (dur=50 would make
-      // dur-500 = -500, and any pos >= -500 is trivially true → immediate skip)
-      if (dur > 500 && pos >= dur - 500) return
+      // Require dur to be both > 500 ms AND at least 50% of the expected clip
+      // duration (durationMs).  vMix sometimes reports a preliminary/partial
+      // duration while it is still reading a file's metadata — values like
+      // 1 000–3 000 ms for a 30-second clip are common right after AddInput.
+      // Without the second guard, position would reach (partial_dur - 500) in
+      // just one second and EXIT 1 would fire immediately, causing every
+      // commercial spot to be skipped in ~1 s instead of playing in full.
+      // Using Math.max(durationMs * 0.5, 1000) ensures:
+      //   • Very short clips  (durationMs < 2 000): require dur ≥ 1 000 ms
+      //   • Normal/long clips (durationMs ≥ 2 000): require dur ≥ half expected
+      const minReliableDur = Math.max(durationMs * 0.5, 1000)
+      if (dur > 500 && dur >= minReliableDur && pos >= dur - 500) return
 
       // EXIT 2 — was Running, transitioned to non-Running for 2+ consecutive polls.
       // Requiring 2 polls prevents false exits from brief buffering/transition states.
