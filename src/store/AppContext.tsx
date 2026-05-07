@@ -219,6 +219,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lastFastPosRef = useRef<Record<string, number>>({})
   // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
   const preloadedInputRef = useRef<{ guid: string; filePath: string } | null>(null)
+  // Tracks ALL GUIDs loaded by SpotMaster via AddInput during this session.
+  // Used for full cleanup at end-of-sequence or stopPlayback — ensures no
+  // ghost inputs accumulate in the vMix project. Permanent vMix inputs
+  // (inputName) never pass through loadNewInput, so they are never in this Set.
+  const spotmasterGuidsRef = useRef<Set<string>>(new Set())
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
   // Resolves round-robin rotation and inserts spots into the playlist tail.
@@ -337,6 +342,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await window.spotmaster.vmixRequest({ Function: 'AddInput', Value: `${vmixType}|${filePath}` })
     const guid = await pollForNewInput(prevMax)  // returns GUID
     if (!guid) return null
+    spotmasterGuidsRef.current.add(guid)  // register so we can clean up later
     await sleep(1000) // let vMix fully decode/buffer
     if (!isImage) {
       await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: guid, Value: '0' })
@@ -622,6 +628,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Do NOT zero activeInputRef before this call or it will remove nothing.
     if (!abortRef.current) cleanupInputs(5000)
     else activeInputRef.current = ''
+
+    // Full sweep: remove every GUID loaded by SpotMaster this session.
+    // This catches any input that escaped individual cleanup (abort, error, etc.)
+    // and prevents ghost inputs from accumulating in the vMix project.
+    // Permanent vMix inputs are never in this Set — they are 100% safe.
+    if (window.spotmaster) {
+      const allGuids = [...spotmasterGuidsRef.current]
+      spotmasterGuidsRef.current.clear()
+      for (const g of allGuids) {
+        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: g })
+      }
+    }
+
     if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
   }, [dispatch, playItem, loadNewInput, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -659,6 +678,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: pre.guid })
       }
       cleanupInputs(0)
+      // Full sweep: remove every GUID loaded by SpotMaster this session.
+      // Catches anything that escaped individual cleanup on abort/stop.
+      const allGuids = [...spotmasterGuidsRef.current]
+      spotmasterGuidsRef.current.clear()
+      for (const g of allGuids) {
+        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: g })
+      }
     }
     stateRef.current.playlist
       .filter(i => i.status === 'playing')
