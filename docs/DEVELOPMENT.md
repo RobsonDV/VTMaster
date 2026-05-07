@@ -275,77 +275,89 @@ O `Cut` da API HTTP do vMix sempre corta o que **já está no Preview**. Por iss
 
 ## 8. Motor de Playout
 
-**Arquivo:** `src/store/AppContext.tsx` — função `playItem()`
+**Arquivo:** `src/store/AppContext.tsx` — funções `playItem()`, `runSequence()`
 
-### Princípio: Slots Não-Destrutivos
+### Princípio: GUID-based, wall-clock, limpeza garantida
 
-O SpotMaster **nunca remove nem sobrescreve** inputs pré-existentes no vMix. Câmeras, gráficos NDI e outros inputs manuais ficam intocados. Cada clipe de arquivo recebe o próximo número disponível:
+O SpotMaster **nunca remove inputs pré-existentes** do vMix. Inputs de câmeras, gráficos e NDI ficam intocados. Cada arquivo carregado recebe um GUID único (atributo `key` do XML do vMix) que é estável e nunca muda mesmo quando o vMix renumera os inputs.
 
 ```
 vMix tem inputs 1, 2, 3 (câmera, gráfico, NDI)
-SpotMaster carrega spot.mp4    → cria input 4
-SpotMaster carrega vinheta.mp4 → cria input 5
-Ao final da playlist: remove inputs 4 e 5 (5s de graça)
-Inputs 1, 2, 3 intocados
+SpotMaster carrega spot.mp4    → GUID_A (ex: {abc-123})
+SpotMaster carrega vinheta.mp4 → GUID_B (ex: {def-456})
+vMix renumera → spot vira 5, vinheta vira 6
+SpotMaster usa GUID_A e GUID_B — nunca os números → zero erro de input errado
+Ao final: Remove GUID_A e GUID_B. Inputs 1, 2, 3 intocados.
 ```
 
-### Refs de controle (evitam stale closures)
+### Refs de controle
 
 ```typescript
-activeInputNumRef    // número do input atualmente no ar
-preloadedRef         // { itemId, inputNum } do próximo clipe já pré-carregado
-createdInputNumsRef  // todos os inputs criados pelo SpotMaster (para cleanup)
+activeInputRef       // GUID do input atualmente no ar (string vazia se input permanente)
+preloadedInputRef    // { guid, filePath } do próximo input já carregado em background
+spotmasterGuidsRef   // Set<string> — todos os GUIDs desta sessão (cleanup garantido)
+abortRef             // true quando stopPlayback() foi chamado
 ```
 
-### Fluxo completo de playItem(item)
+### Dois tipos de item na playlist
+
+| Campo | Tipo | SpotMaster faz |
+|-------|------|---------------|
+| `filePath` | Arquivo local | `AddInput` → GUID → toca → `RemoveInput` após uso |
+| `inputName` | Input permanente do vMix | Apenas `PlayInput`/`PreviewInput`/`Cut` — **nunca** `RemoveInput` |
+
+### Fluxo de `playItem(item, nextFilePath?)`
 
 ```
 1. UPDATE_PLAYLIST_ITEM → status: 'playing'
 
-2. Se item.filePath (arquivo local):
-
-   a. Verificar preloadedRef:
-      → itemId bate E inputNum != ''?
-        Sim: usar número já disponível (zero dead air)
-        Não: chamar loadNewInput(filePath) agora
-
-   b. loadNewInput(filePath):
-      - Detectar tipo: Video| / Image| / AudioFile|
-      - getMaxInputNum() → número mais alto atual no vMix
+2. Se item.filePath:
+   a. Checar preloadedInputRef:
+      → filePath bate? Usar GUID pronto (sem delay)
+      → Stale? RemoveInput no stale, carregar agora
+      → Vazio? loadNewInput(filePath) agora
+   b. loadNewInput:
+      - Detectar tipo: Video | AudioFile | Image
+      - getMaxInputNum() → baseline
       - AddInput → vMix carrega o arquivo
-      - pollForNewInput() → aguarda até 8s (40 tentativas × 200ms)
-        por qualquer novo input (número > prevMax)
-      - sleep(600ms) → vMix inicializa o input
-      - SetPosition(0) → vídeos/áudios voltam ao frame 0
-        (imagens: ignorado, são estáticas)
-      - Retorna o número do novo input
+      - pollForNewInput(prevMax) → obtém GUID via XML (até 10s)
+      - spotmasterGuidsRef.add(guid) ← registra para limpeza garantida
+      - sleep(1000ms) → bufferização
+      - SetPosition(0) → rebobina (exceto imagens)
+   c. Vídeo: PlayInput + sleep(300ms)
+   d. PreviewInput + sleep(100ms) + Cut
+   e. Áudio: sleep(500ms) + PlayInput + sleep(200ms)
+   f. RemoveInput(prevGuid) com 5s de delay
+   g. activeInputRef.current = guid
 
-   c. PlayInput(inputNum) → inicia reprodução do vídeo/áudio
-      (imagens: pula este passo)
-   d. sleep(300ms)
-   e. PreviewInput(inputNum) → coloca no Preview
-   f. sleep(100ms)
-   g. Cut → Program recebe o input
+3. Se item.inputName (input permanente):
+   a. RemoveInput(prevGuid) com 5s se havia arquivo anterior
+   b. activeInputRef.current = '' ← NUNCA armazena input permanente
+   c. SetPosition + PlayInput + PreviewInput + Cut
 
-3. Se item.inputName (input pré-existente):
-   - SetPosition(0) + PlayInput → rebobina e inicia
-   - PreviewInput → coloca no Preview
-   - Cut → vai ao ar
+4. ADD_LOG
 
-4. Cleanup A/B roll (1,5s após o Cut):
-   - Se havia um input SpotMaster anterior → RemoveInput
-   - Remove do createdInputNumsRef
+5. Wall-clock loop:
+   - totalMs = max(item.duration × 1000, 3000ms)
+   - Se duration=0: lê duração real do XML do vMix
+   - sleep(300ms) a cada tick, verifica abortRef
+   - Quando remaining ≤ 10s e nextFilePath existe:
+     → loadNewInput em background → preloadedInputRef
+     → se abort: RemoveInput no guid preloadado
 
-5. ADD_LOG → registra veiculação (horário real, duração, input usado)
+6. UPDATE_PLAYLIST_ITEM → status: 'done'
+```
 
-6. schedulePreload(próximo):
-   - Carrega próximo arquivo em background enquanto atual está no ar
-   - Armazena em preloadedRef para uso imediato quando chegar a vez
+### Limpeza garantida ao fim de cada sessão
 
-7. setTimeout(item.duration * 1000):
-   - UPDATE_PLAYLIST_ITEM → status: 'done'
-   - Se isSequencePlaying: playItem(próximo) ← sequência contínua até o fim
-   - Se não há próximo: cleanupInputs() com 5s de delay
+Ao fim de `runSequence` ou em `stopPlayback`, além dos cleanups individuais:
+
+```typescript
+// Varre o Set completo — pega qualquer input que escapou por erro/abort
+for (const guid of spotmasterGuidsRef.current) {
+  window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: guid })
+}
+spotmasterGuidsRef.current.clear()
 ```
 
 ### Detecção de tipo de mídia

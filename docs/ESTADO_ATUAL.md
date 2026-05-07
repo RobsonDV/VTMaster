@@ -1,5 +1,5 @@
 # SpotMaster — Estado Atual do Projeto
-> Documento atualizado em 06/05/2026 — Versão após Fase 3 (A/B Slot Engine + Blindagens + UX)
+> Documento atualizado em 07/05/2026 — Versão após refatoração completa do motor de playout (GUID, wall-clock, preload antecipado, limpeza total)
 
 ---
 
@@ -22,107 +22,142 @@
 
 ---
 
-## 4. Bugs corrigidos — Fase 3
+## 4. Bugs corrigidos — Refatoração do motor de playout
 
-### 4.1 Tracks sendo puladas (3 causas)
+### 4.1 Spots pulando em 1-2 segundos (`waitForInputEnd` removido)
 
-**Problema:** Faixas eram puladas imediatamente na sequência, especialmente arquivos de áudio.
+**Problema:** Cada spot avançava imediatamente, especialmente durante Cut/Preview.
 
-**Causa 1 — `waitForInputEnd` disparava com `dur=100` falso:**
-- A API do vMix retorna `dur=100` temporariamente durante o carregamento do input
-- A condição era `dur > 0 && pos >= dur - 500` → `dur - 500 = -400` → `pos >= -400` sempre verdadeiro
-- **Correção:** Adicionada guarda `dur > 500` antes de qualquer verificação de posição (EXIT 1)
+**Causa:** `waitForInputEnd` fazia polling do XML do vMix. Durante a transição de corte, o vMix reportava estado `Paused` ou `Buffering` temporariamente, disparando saída falsa.
 
-**Causa 2 — EXIT 2 disparava em transição momentânea de estado:**
-- Qualquer poll não-Running (buffering, corte) disparava saída imediata
-- **Correção:** `nonRunningCount >= 2` — exige 2 polls consecutivos não-Running
+**Correção:** `waitForInputEnd` **removido completamente**. O avanço da sequência agora é exclusivamente por wall-clock (`Date.now()`). Se `item.duration` for 0 ou ausente, o SpotMaster lê a duração real do XML do vMix após o buffer. Mínimo absoluto de 3 segundos.
 
-**Causa 3 — EXIT 3 disparava em posição zero inicial:**
-- Input recém carregado tem `pos=0` na 1ª consulta
-- **Correção:** `lowPosCount >= 2` — exige 2 polls consecutivos com posição próxima de zero
-- Também adicionado `lastHighPos` tracking para reset correto do contador
+### 4.2 Input errado tocava / sequência parava no item 2
 
-**Causa 4 — Race condition em `runSequence`:**
-- Após `await playItem(next)`, o React não havia processado o dispatch `'done'`
-- O loop lia o mesmo item do stateRef e tocava novamente
-- **Correção:** `await sleep(50)` após cada `playItem` em `runSequence`
+**Problema:** O item 2 tocava no lugar do item 1, ou a sequência parava após 2 itens.
 
-### 4.2 vMix acumulando inputs sem limite
+**Causa:** O sistema A/B Slot usava **número** do input (renumerado pelo vMix após cada `RemoveInput`). Após o `RemoveInput` do slot A, o vMix renumerava os inputs e o número do slot B apontava para o input errado.
 
-**Problema:** Cada `playItem` criava um novo `AddInput` permanente no projeto vMix.
+**Correção:** O A/B Slot Engine foi **removido**. Cada input é identificado por **GUID** (`key` attribute do XML do vMix), que é estável e nunca muda mesmo quando o vMix renumera os inputs.
 
-**Causa:** `createdInputNumsRef[]` crescia ilimitado; a remoção era frágil.
+### 4.3 Race condition no preload concorrente
 
-**Correção:** Ver seção 5 — A/B Slot Engine.
+**Problema:** Item 2 tocava no lugar do item 1 (mesmo com GUIDs).
 
-### 4.3 AdBreakSelectModal vazia
+**Causa:** O `runSequence` disparava `loadNewInput` do item 2 em background enquanto `playItem(item1)` também chamava `loadNewInput`. Ambas chamavam `getMaxInputNum()` antes de qualquer `AddInput` completar — retornavam o mesmo `prevMax` — e `pollForNewInput` retornava o mesmo GUID para os dois.
 
-**Problema:** Modal de seleção de bloco comercial aparecia sem conteúdo.
+**Correção:** Preload concorrente **removido**. `loadNewInput` é estritamente serial. O preload antecipado (10s) foi reimplementado de forma segura — veja seção 5.
 
-**Causa:** Usava `state.adBreaks` (tipo `AdBreak[]` legado) em vez de `state.commercialBlocks` (`CommercialBlock[]`).
+### 4.4 `cleanupInputs` não removia o último input
 
-**Correção:** Componente reescrito para usar `commercialBlocks` + `loadBlockIntoPlaylist`.
+**Problema:** O último input da sequência ficava permanentemente no projeto vMix.
 
-### 4.4 `playSingleItem` podia disparar reprodução dupla
+**Causa:** `runSequence` zerava `activeInputRef.current = ''` **antes** de chamar `cleanupInputs`, que lê o ref internamente. Com `''`, não havia nada para remover.
 
-**Problema:** Sem guarda de `isSequencePlaying`, clicar duas vezes disparava duas reproduções paralelas.
+**Correção:** `cleanupInputs` é o único responsável por zerar `activeInputRef`. O caminho de abort usa `else activeInputRef.current = ''`.
 
-**Correção:** Adicionado `dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })` no início e `false` no `.then()` de `playSingleItem`.
+### 4.5 Inputs permanentes do vMix sendo deletados
 
-### 4.5 `activePanel` não era persistido
+**Problema:** Câmeras, gráficos e outros inputs do projeto vMix eram deletados pelo SpotMaster.
 
-**Problema:** Ao reiniciar o app, sempre abria na aba padrão (Playlist).
+**Causa:** O bloco `else if (item.inputName)` em `playItem` armazenava o nome do input permanente em `activeInputRef.current`. Ao fim da sequência (ou no Stop), `cleanupInputs` chamava `RemoveInput` nele.
 
-**Correção:** `LOAD_ALL` carrega `activePanel` de storage; `useEffect` persiste qualquer mudança.
+**Correção:** Para inputs permanentes, `activeInputRef.current` é mantido como `''`. Se havia um GUID de arquivo carregado anteriormente, ele é removido com 5s de grace antes do input permanente entrar no ar.
+
+### 4.6 Inputs fantasmas acumulando no projeto vMix
+
+**Problema:** Após várias sessões, o projeto vMix acumulava inputs carregados pelo SpotMaster que não foram removidos (por abort, erro ou crash).
+
+**Causa:** Cada input tinha remoção individual (`prevGuid`, `cleanupInputs`), mas qualquer erro no caminho deixava o input órfão.
+
+**Correção:** `spotmasterGuidsRef` — um `Set<string>` que registra **todo GUID** retornado por `loadNewInput`. Ao fim de `runSequence` e em `stopPlayback`, o Set é varrido completamente e `RemoveInput` é chamado em todos. Inputs permanentes do vMix nunca passam por `loadNewInput`, logo nunca entram no Set.
 
 ---
 
-## 5. A/B Slot Engine — arquitetura
+## 5. Motor de playout — arquitetura atual
 
-### Conceito
+### Princípio: GUID-based, wall-clock
 
-Em vez de criar inputs ilimitados no vMix, o SpotMaster mantém exatamente **2 slots fixos** (A e B) que se alternam durante a sequência. Isso mantém o projeto vMix limpo.
+Cada input carregado pelo SpotMaster é identificado pelo seu **GUID** (`key` attribute no XML do vMix). O GUID é estável — nunca muda mesmo quando o vMix renumera os inputs após um `RemoveInput`. O avanço da sequência é feito exclusivamente por wall-clock (`Date.now()`), nunca por polling do estado do vMix.
 
 ### Refs de controle
 
 ```typescript
-const slotARef = useRef<number | null>(null)   // número do input vMix ocupando slot A
-const slotBRef = useRef<number | null>(null)   // número do input vMix ocupando slot B
-const activeSlotRef = useRef<'A' | 'B' | 'none'>('none')
+activeInputRef        // GUID do input atualmente no ar
+preloadedInputRef     // { guid, filePath } do próximo input já carregado em background
+spotmasterGuidsRef    // Set<string> — todos os GUIDs carregados por esta sessão
+abortRef              // true quando stopPlayback() foi chamado
+scheduleInterruptRef  // true quando o abort foi pelo scheduler (retoma em vez de parar)
 ```
 
-### Fluxo por item
+### Dois tipos de item na playlist
+
+| Campo preenchido | Tipo | Comportamento |
+|-----------------|------|--------------|
+| `filePath` | Arquivo local | SpotMaster faz `AddInput` → obtém GUID → toca → remove após uso |
+| `inputName` | Input permanente do vMix | SpotMaster chama apenas `PlayInput`/`PreviewInput`/`Cut` — **nunca** `RemoveInput` |
+
+### Fluxo completo de `playItem(item, nextFilePath?)`
 
 ```
-Item 1:
-  activeSlot = 'none' → targetSlot = 'A'
-  AddInput → num=42 → slotA=42
-  PlayInput 42 → PreviewInput 42 → Cut
-  activeSlot = 'A'
-  slotToRelease = null (nada a liberar)
+1. UPDATE_PLAYLIST_ITEM → status: 'playing'
 
-Item 2:
-  activeSlot = 'A' → targetSlot = 'B'
-  AddInput → num=43 → slotB=43
-  PlayInput 43 → PreviewInput 43 → Cut
-  setTimeout(1500ms): RemoveInput slotA (42) → slotA=null
-  activeSlot = 'B'
+2. Se item.filePath:
+   a. Verificar preloadedInputRef:
+      → filePath bate? Usar GUID já pronto (zero dead air)
+      → Stale (filePath diferente)? RemoveInput no stale, loadNewInput agora
+      → Vazio? loadNewInput agora
+   b. loadNewInput(filePath):
+      - getMaxInputNum() → marca linha de base
+      - AddInput → vMix carrega o arquivo
+      - pollForNewInput(prevMax) → aguarda até 10s por GUID com number > prevMax
+      - spotmasterGuidsRef.add(guid) ← registra para cleanup garantido
+      - sleep(1000ms) → vMix decodifica/bufferiza
+      - SetPosition(0) → rebobina (exceto imagens)
+      - retorna GUID
+   c. Se vídeo: PlayInput(guid) + sleep(300ms)
+   d. PreviewInput(guid) + sleep(100ms) + Cut
+   e. Se áudio: sleep(500ms) + PlayInput(guid) + sleep(200ms)
+   f. RemoveInput(prevGuid) com 5s de delay (remove o ANTERIOR)
+   g. activeInputRef.current = guid
 
-Item 3:
-  activeSlot = 'B' → targetSlot = 'A'
-  AddInput → num=44 → slotA=44
-  PlayInput 44 → PreviewInput 44 → Cut
-  setTimeout(1500ms): RemoveInput slotB (43) → slotB=null
-  activeSlot = 'A'
+3. Se item.inputName (input permanente):
+   a. RemoveInput(prevGuid) com 5s de delay (se havia GUID de arquivo anterior)
+   b. activeInputRef.current = '' ← NUNCA armazena o input permanente
+   c. SetPosition(0) + PlayInput + PreviewInput + sleep(100ms) + Cut
+
+4. ADD_LOG → registra veiculação
+
+5. Wall-clock loop (substitui waitForInputEnd):
+   - totalMs = Math.max(item.duration * 1000, 3000)
+   - Se duration=0: lê duração real do XML do vMix
+   - Loop com sleep(300ms) até elapsed >= totalMs ou abortRef=true
+   - Quando remaining <= 10s e nextFilePath existe:
+     → dispara loadNewInput(nextFilePath) em background (sem await)
+     → resultado guardado em preloadedInputRef para uso imediato no próximo item
+     → se abort ocorrer durante o preload: RemoveInput no guid preloadado
+
+6. UPDATE_PLAYLIST_ITEM → status: 'done'
 ```
 
-### cleanupInputs (ao parar)
+### Limpeza garantida — spotmasterGuidsRef
 
-Remove slotA e slotB, reseta todos os refs. Não remove inputs de câmera/NDI.
+```
+Ao fim de runSequence (sequência terminou naturalmente):
+  cleanupInputs(5000)            ← remove input ativo com 5s de grace
+  para cada GUID no Set:
+    RemoveInput(GUID)            ← varre tudo que possa ter escapado
+  Set.clear()
 
-### Inputs com `inputName` (nomeados)
+Ao stopPlayback():
+  preloadedInputRef → RemoveInput imediato
+  cleanupInputs(0)               ← remove input ativo imediatamente
+  para cada GUID no Set:
+    RemoveInput(GUID)
+  Set.clear()
+```
 
-Inputs já existentes no vMix (referenciados por nome, não número) não passam pelo A/B engine — seguem o fluxo `SetPosition` → `PlayInput` → `PreviewInput` → `Cut` normalmente, sem `AddInput`/`RemoveInput`.
+Inputs permanentes do vMix (câmeras, gráficos) **nunca** passam por `loadNewInput`, logo nunca entram no Set — 100% protegidos.
 
 ---
 
