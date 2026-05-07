@@ -1,9 +1,9 @@
 {
-  "name": "spotmaster",
+  "name": "vtmaster",
   "private": true,
   "version": "1.0.0",
-  "description": "SpotMaster - Software de Veiculação Comercial com Comprovante",
-  "author": "SpotMaster Team",
+  "description": "VTMaster - Software de Veiculação Comercial para TV",
+  "author": "RobsonCostaDV",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {

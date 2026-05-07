@@ -52,14 +52,14 @@ function createWindow(): void {
     height: 800,
     minWidth: 960,
     minHeight: 600,
-    title: 'SpotMaster',
-    backgroundColor: '#1a1a2e',
+    title: 'VTMaster',
+    backgroundColor: '#0f0f1a',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
-    icon: join(__dirname, '../public/icon.png'),
+    icon: join(__dirname, '../public/icon.ico'),
   })
 
   if (isDev) {

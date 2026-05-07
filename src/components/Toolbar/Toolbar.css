@@ -14,19 +14,13 @@
 .toolbar-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 160px;
+  min-width: 200px;
 }
 
-.brand-icon {
-  color: var(--accent);
-}
-
-.brand-name {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: 0.5px;
+.brand-logo {
+  height: 38px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 6px rgba(14,165,233,0.3));
 }
 
 .toolbar-actions {

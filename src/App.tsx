@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react'
-import { LayoutList, Settings } from 'lucide-react'
+import { Settings } from 'lucide-react'
 import { useApp } from './store/AppContext'
 import Toolbar from './components/Toolbar/Toolbar'
 import StatusBar from './components/StatusBar/StatusBar'
@@ -14,6 +14,7 @@ import ReportsPanel from './components/Reports/ReportsPanel'
 import SettingsModal from './components/Settings/SettingsModal'
 import type { PlaylistItem } from './types'
 import './App.css'
+import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
 type Panel = 'playlist' | 'adbreaks' | 'clients' | 'log' | 'reports'
 
@@ -42,8 +43,8 @@ export default function App() {
   if (state.isLoading) {
     return (
       <div className="loading-screen">
-        <LayoutList size={40} />
-        <span>SpotMaster</span>
+        <img src={vtmasterLogo} alt="VTMaster" />
+        <span>carregando...</span>
       </div>
     )
   }
@@ -68,6 +69,10 @@ export default function App() {
             <Settings size={18} />
             <span>{t.settings.title}</span>
           </button>
+          <div className="dev-credit">
+            <strong>VTMaster</strong>
+            Desenvolvido por<br />RobsonCostaDV
+          </div>
         </nav>
         <main className="content-area">
           {activePanel === 'playlist' && (

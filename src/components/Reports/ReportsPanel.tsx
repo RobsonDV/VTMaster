@@ -4,6 +4,7 @@ import autoTable from 'jspdf-autotable'
 import { useApp } from '../../store/AppContext'
 import { formatDate, formatDuration, today } from '../../utils/time'
 import type { PlayLog } from '../../types'
+import vtmasterLogoSrc from '../../assets/Logo_VTMasterHorizontal.png'
 import '../AdBreaks/AdBreaksPanel.css'
 
 export default function ReportsPanel() {
@@ -39,32 +40,51 @@ export default function ReportsPanel() {
       const stationName = settings.stationName
 
       // ── Header ──
-      doc.setFillColor(26, 26, 46)
-      doc.rect(0, 0, 210, 30, 'F')
-      doc.setTextColor(255, 255, 255)
-      doc.setFontSize(16)
-      doc.setFont('helvetica', 'bold')
-      doc.text('SpotMaster', 14, 12)
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'normal')
-      doc.text(stationName, 14, 20)
+      doc.setFillColor(10, 10, 20)
+      doc.rect(0, 0, 210, 32, 'F')
 
-      // Report title
+      // VTMaster logo in header
+      try {
+        const res = await fetch(vtmasterLogoSrc)
+        const blob = await res.blob()
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onloadend = () => resolve(reader.result as string)
+          reader.readAsDataURL(blob)
+        })
+        doc.addImage(base64, 'PNG', 12, 7, 64, 14)
+      } catch {
+        // fallback: text if image fails
+        doc.setTextColor(14, 165, 233)
+        doc.setFontSize(14)
+        doc.setFont('helvetica', 'bold')
+        doc.text('VTMaster', 14, 16)
+      }
+
+      // Station name below logo
+      doc.setTextColor(180, 180, 200)
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.text(stationName, 12, 27)
+
+      // Report title (centered)
+      doc.setTextColor(255, 255, 255)
       doc.setFontSize(11)
       doc.setFont('helvetica', 'bold')
       const reportTitle = t.reports.reportTitle.toUpperCase()
-      doc.text(reportTitle, 210 / 2, 12, { align: 'center' })
+      doc.text(reportTitle, 210 / 2, 13, { align: 'center' })
 
       // Generated at
       doc.setFontSize(7)
       doc.setFont('helvetica', 'normal')
+      doc.setTextColor(160, 160, 190)
       const generatedAt = `${t.reports.generatedAt}: ${new Date().toLocaleString(lang === 'pt' ? 'pt-BR' : 'en-US')}`
-      doc.text(generatedAt, 196, 26, { align: 'right' })
+      doc.text(generatedAt, 198, 27, { align: 'right' })
 
       doc.setTextColor(0, 0, 0)
 
       // ── Report info ──
-      let y = 38
+      let y = 40
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
 
@@ -152,7 +172,7 @@ export default function ReportsPanel() {
         doc.setFontSize(7)
         doc.setTextColor(150)
         doc.text(
-          `SpotMaster · ${stationName} · ${t.reports.generatedAt}: ${new Date().toLocaleDateString()} · ${p}/${pageCount}`,
+          `VTMaster · ${stationName} · ${t.reports.generatedAt}: ${new Date().toLocaleDateString()} · ${p}/${pageCount}`,
           210 / 2,
           292,
           { align: 'center' }

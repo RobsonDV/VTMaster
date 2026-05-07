@@ -144,6 +144,14 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           <button className="btn-cancel" onClick={onClose}>{t.common.cancel}</button>
           <button className="btn-save" onClick={handleSave}>{t.common.save}</button>
         </div>
+
+        {/* Brand credit */}
+        <div style={{ padding: '10px 20px 14px', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
+            VTMaster · Desenvolvido por{' '}
+            <strong style={{ color: 'var(--accent)', fontWeight: 700 }}>RobsonCostaDV</strong>
+          </span>
+        </div>
       </div>
     </div>
   )

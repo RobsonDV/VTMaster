@@ -10,11 +10,11 @@ import {
   Globe,
   Wifi,
   WifiOff,
-  LayoutList,
   MonitorPlay,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { AppSettings } from '../../types'
+import vtmasterLogo from '../../assets/Logo_VTMasterHorizontal.png'
 import './Toolbar.css'
 
 interface ToolbarProps {
@@ -89,8 +89,7 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
     <header className="toolbar">
       {/* Logo */}
       <div className="toolbar-brand">
-        <LayoutList size={22} className="brand-icon" />
-        <span className="brand-name">SpotMaster</span>
+        <img src={vtmasterLogo} alt="VTMaster" className="brand-logo" />
       </div>
 
       {/* Actions */}
