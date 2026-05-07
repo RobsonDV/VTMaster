@@ -1,73 +1,102 @@
-# React + TypeScript + Vite
+# VTMaster
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Software desktop de veiculacao comercial para emissoras de TV com integracao nativa ao vMix.
 
-Currently, two official plugins are available:
+## Sobre o projeto
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+O VTMaster automatiza a execucao de playlists comerciais, incluindo:
 
-## React Compiler
+- Sequencia automatica de playout (PlayInput -> PreviewInput -> Cut)
+- Autoplay por horario agendado
+- Blocos comerciais com round-robin por anunciante
+- Painel de inputs do vMix com arrastar e soltar para a playlist
+- Log de veiculacao e geracao de relatorios PDF
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Stack principal:
 
-## Expanding the ESLint configuration
+- Electron 41
+- React 19
+- TypeScript 6
+- Vite 8
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Documentacao
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Use este mapa para navegar na documentacao oficial do projeto:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- [docs/INDEX.md](docs/INDEX.md): indice central e trilhas por perfil
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes tecnicos completos
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional e backlog
+- [release/LEIA-ME.md](release/LEIA-ME.md): guia de uso para operador final
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Requisitos
+
+- Windows 10/11 64-bit
+- Node.js 20+
+- npm 10+
+- vMix 20+ (para uso em producao)
+
+## Instalar dependencias
+
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Rodar em desenvolvimento
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+Esse comando:
+
+1. Compila o processo Electron (pasta electron -> dist-electron)
+2. Sobe o servidor Vite (porta 5173)
+3. Abre a janela Electron apontando para o frontend em dev
+
+## Scripts disponiveis
+
+- `npm run dev`: ambiente de desenvolvimento completo
+- `npm run electron:compile`: compila apenas codigo Electron
+- `npm run build`: build de producao (frontend + Electron)
+- `npm run build:dist`: gera instaladores via electron-builder
+- `npm run lint`: executa ESLint
+- `npm run preview`: preview local do build web
+
+## Build de distribuicao
+
+```bash
+npm run build:dist
+```
+
+Artefatos sao gerados em `release/`, incluindo:
+
+- `VTMaster-1.0.0-Setup.exe`
+- `VTMaster-1.0.0-Portable.exe`
+
+## Estrutura principal
+
+```text
+spotmaster/
+  electron/              # main process, preload e integracao com vMix
+  src/                   # app React (UI, estado, componentes)
+  docs/                  # documentacao tecnica e estado do projeto
+  release/               # artefatos de distribuicao
+  dist/                  # build frontend
+  dist-electron/         # build Electron
+```
+
+## Persistencia local
+
+Os dados do usuario ficam em `%APPDATA%/SpotMaster/` (Windows), incluindo:
+
+- configuracoes
+- playlist
+- blocos comerciais
+- anunciantes
+- spots por anunciante
+- log de veiculacao
+
+## Licenca
+
+Este projeto esta licenciado sob GNU AGPL v3.
+Veja [LICENSE](LICENSE).

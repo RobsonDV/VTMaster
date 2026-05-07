@@ -15,22 +15,49 @@
     "preview": "vite preview"
   },
   "build": {
-    "appId": "com.spotmaster.app",
-    "productName": "SpotMaster",
+    "appId": "com.vtmaster.app",
+    "productName": "VTMaster",
+    "copyright": "Copyright © 2026 RobsonCostaDV",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "!**/*.map"
     ],
+    "extraResources": [
+      {
+        "from": "public/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "asar": true,
+    "compression": "maximum",
     "win": {
-      "target": "nsis",
-      "icon": "public/icon.ico"
+      "target": [
+        { "target": "nsis",     "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "public/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Portable.${ext}"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VTMaster",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "${productName}-${version}-Setup.${ext}"
     }
   },
   "dependencies": {

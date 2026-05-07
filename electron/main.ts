@@ -59,7 +59,9 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    icon: join(__dirname, '../public/icon.ico'),
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'icon.ico')
+      : join(__dirname, '../public/icon.ico'),
   })
 
   if (isDev) {
