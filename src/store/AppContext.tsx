@@ -217,6 +217,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const scheduleInterruptTimeRef = useRef<string>('')
   // Tracks last fast-poll position per input — guards progress bar against regression on audio end
   const lastFastPosRef = useRef<Record<string, number>>({})
+  // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
+  const preloadedInputRef = useRef<{ guid: string; filePath: string } | null>(null)
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
   // Resolves round-robin rotation and inserts spots into the playlist tail.
@@ -359,7 +361,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Sends ONE item to air and awaits until it finishes playing.
   // This function is strictly serial — it never runs concurrently with itself.
   // loadNewInput is called here (not in background) to prevent slot collisions.
-  const playItem = useCallback(async (item: PlaylistItem) => {
+  const playItem = useCallback(async (item: PlaylistItem, nextFilePath?: string) => {
     if (!window.spotmaster) return
 
     dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'playing' } })
@@ -369,7 +371,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     if (vmixStatus.connected) {
       if (item.filePath) {
-        const guid = await loadNewInput(item.filePath)
+        // Use a preloaded GUID if available for this exact file (eliminates gap between items).
+        // Otherwise fall back to loading now (same behaviour as before this feature).
+        let guid: string | null = null
+        const cached = preloadedInputRef.current
+        if (cached?.filePath === item.filePath) {
+          guid = cached.guid
+          preloadedInputRef.current = null
+          console.log(`[SpotMaster] using preloaded input for "${item.title}"`)
+        } else {
+          if (cached) {
+            // Stale preload (e.g. playlist was reordered) — discard safely
+            console.warn(`[SpotMaster] discarding stale preload: "${cached.filePath}"`)
+            const staleGuid = cached.guid
+            preloadedInputRef.current = null
+            window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: staleGuid })
+          }
+          guid = await loadNewInput(item.filePath)
+        }
 
         if (guid) {
           const ext = item.filePath.split('.').pop()?.toLowerCase() ?? ''
@@ -475,16 +494,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const totalMs = Math.max(durationSec * 1000, 3000)
       console.log(`[SpotMaster] playing "${item.title}" — duration: ${durationSec}s (${totalMs}ms)`)
       const start = Date.now()
+      let preloadTriggered = false
       while (Date.now() - start < totalMs) {
         if (abortRef.current) break
+        const elapsed = Date.now() - start
         dispatch({
           type: 'SET_ACTIVE_ITEM_PROGRESS',
           payload: {
             inputNum: onAirInput || 'clock',
-            position: Date.now() - start,
+            position: elapsed,
             duration: totalMs,
           },
         })
+        // ── Anticipatory preload ─────────────────────────────────────────────
+        // Start loading the next file-based item ~10 s before this one ends.
+        // The GUID is stored in preloadedInputRef so playItem can use it
+        // instantly instead of waiting for AddInput + buffer (~1.5-2 s).
+        if (!preloadTriggered && nextFilePath && window.spotmaster) {
+          const remaining = totalMs - elapsed
+          if (remaining <= 10000) {
+            preloadTriggered = true
+            const fpToLoad = nextFilePath
+            console.log(`[SpotMaster] preloading next: "${fpToLoad}" (${(remaining / 1000).toFixed(1)}s remaining)`)
+            loadNewInput(fpToLoad).then(preGuid => {
+              if (!preGuid) return
+              if (abortRef.current) {
+                // Playback was stopped while we were loading — discard immediately
+                window.spotmaster?.vmixRequest({ Function: 'RemoveInput', Input: preGuid })
+              } else {
+                preloadedInputRef.current = { guid: preGuid, filePath: fpToLoad }
+              }
+            })
+          }
+        }
         await sleep(300)
       }
     }
@@ -545,8 +587,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const next = scheduledDue[0] ?? [...pending].sort((a, b) => a.order - b.order)[0]
 
+      // Look ahead: find the next file-based pending item so playItem can preload it
+      const pendingByOrder = [...pending].sort((a, b) => a.order - b.order)
+      const afterNext = pendingByOrder.find(i => i.order > next.order && !!i.filePath)
+
       try {
-        await playItem(next)
+        await playItem(next, afterNext?.filePath)
       } catch (err) {
         console.error('[SpotMaster] playItem error for "' + next.title + '":', err)
         const stale = stateRef.current.playlist.find(i => i.id === next.id)
@@ -562,6 +608,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     scheduleInterruptTimeRef.current = ''
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
+
+    // Discard any preloaded input that was never used (sequence ended before it played)
+    const unusedPreload = preloadedInputRef.current
+    if (unusedPreload) {
+      preloadedInputRef.current = null
+      if (window.spotmaster) {
+        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: unusedPreload.guid })
+      }
+    }
 
     // cleanupInputs reads activeInputRef internally, then zeros it.
     // Do NOT zero activeInputRef before this call or it will remove nothing.
@@ -597,6 +652,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
     if (window.spotmaster) {
       await window.spotmaster.vmixStopFastPolling()
+      // Discard any in-progress preload so it doesn't linger in vMix
+      const pre = preloadedInputRef.current
+      if (pre) {
+        preloadedInputRef.current = null
+        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: pre.guid })
+      }
       cleanupInputs(0)
     }
     stateRef.current.playlist
