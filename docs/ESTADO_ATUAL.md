@@ -1,21 +1,21 @@
-# SpotMaster — Estado Atual do Projeto
-> Documento atualizado em 07/05/2026 — Versão após refatoração completa do motor de playout (GUID, wall-clock, preload antecipado, limpeza total)
+# VTMaster — Estado Atual do Projeto
+> Documento atualizado em 07/05/2026 — Versão após refatoração completa do motor de playout (GUID, wall-clock, preload antecipado, limpeza total) + rebranding VTMaster
 
 ---
 
 ## Índice
 
-1. [O que o SpotMaster faz](#1-o-que-o-spotmaster-faz)
+1. [O que o VTMaster faz](#1-o-que-o-vtmaster-faz)
 2. [Stack técnico](#2-stack-técnico)
 3. [Estrutura de arquivos](#3-estrutura-de-arquivos)
-4. [Bugs corrigidos — Fase 3](#4-bugs-corrigidos--fase-3)
-5. [A/B Slot Engine — arquitetura](#5-ab-slot-engine--arquitetura)
+4. [Bugs corrigidos — Refatoração do motor de playout](#4-bugs-corrigidos--refatoração-do-motor-de-playout)
+5. [Motor de playout — arquitetura atual](#5-motor-de-playout--arquitetura-atual)
 6. [Motor de playout — como funciona](#6-motor-de-playout--como-funciona)
 7. [Sistema de Blocos Comerciais — como funciona](#7-sistema-de-blocos-comerciais--como-funciona)
 8. [Tipos de dados completos](#8-tipos-de-dados-completos)
 9. [Estado global (AppContext)](#9-estado-global-appcontext)
 10. [Persistência de dados](#10-persistência-de-dados)
-11. [Componentes alterados na Fase 3](#11-componentes-alterados-na-fase-3)
+11. [Rebranding VTMaster — alterações visuais](#11-rebranding-vtmaster--alterações-visuais)
 12. [Integração vMix](#12-integração-vmix)
 13. [Funcionalidades — checklist completo](#13-funcionalidades--checklist-completo)
 14. [O que ainda não está implementado](#14-o-que-ainda-não-está-implementado)
@@ -161,52 +161,55 @@ Inputs permanentes do vMix (câmeras, gráficos) **nunca** passam por `loadNewIn
 
 ---
 
-## 11. Componentes alterados na Fase 3
+## 11. Rebranding VTMaster — alterações visuais
 
-### `AppContext.tsx`
+Realizado em 07/05/2026. O produto foi renomeado de **SpotMaster** para **VTMaster**.
 
-- A/B Slot Engine (slotA/B/activeSlot refs)
-- `cleanupInputs`: remove apenas slotA e slotB
-- `playItem`: lógica A/B completa
-- `stopPlayback`: reseta `activeSlotRef`
-- `playSingleItem`: guard `SET_SEQUENCE_PLAYING`
-- `waitForInputEnd`: 3 blindagens (dur>500, 2x non-running, 2x low-pos)
-- `runSequence`: `sleep(50)` anti-race
-- `LOAD_ALL`: carrega `activePanel`
-- `useEffect`: persiste `activePanel`
+### Identidade visual
 
-### `AdBreakSelectModal.tsx`
+| Elemento | Antes | Depois |
+|----------|-------|--------|
+| Nome do produto | SpotMaster | **VTMaster** |
+| Cor de acento | `#e94560` (vermelho) | `#0ea5e9` (azul VTMaster) |
+| Ícone da janela | `public/icon.png` | `public/icon.ico` (icone_VTmaster.ico) |
+| Título da janela Electron | "SpotMaster" | "VTMaster" |
+| `<title>` HTML | "SpotMaster" | "VTMaster" |
+| `package.json name` | spotmaster | vtmaster |
 
-Reescrito para usar `commercialBlocks` + `loadBlockIntoPlaylist`. Exibe blocos com horário agendado, badge "✓ Carregado hoje" e contagem de spots.
+### Arquivos de logo adicionados
 
-### `LogPanel.tsx`
+- `src/assets/Logo_VTMasterHorizontal.png` — logo com ícone + texto, usado na Toolbar e PDF
+- `src/assets/Logo_VTMaster.png` — ícone isolado
+- `public/icon.ico` — ícone do executável Windows
 
-Novos filtros:
-- **Intervalo de datas** (De / Até) substituindo filtro de data única
-- **Busca por título** (campo de texto)
-- **Filtro de status** (aired / skipped / error)
-- **Filtro por anunciante** (select)
-- Botão "Limpar filtros" aparece quando qualquer filtro está ativo
+### Componentes alterados
 
-### `ClientsPanel.tsx`
+| Arquivo | Alteração |
+|---------|----------|
+| `Toolbar.tsx` | Logo horizontal substitui texto "SpotMaster" + ícone `LayoutList` |
+| `Toolbar.css` | `.brand-logo` (height 38px, drop-shadow azul); removidos `.brand-icon` / `.brand-name` |
+| `App.tsx` | Loading screen com logo VTMaster + animação glow; sidebar footer com crédito |
+| `App.css` | `--accent: #0ea5e9`; `--accent-hover: #0284c7`; `--accent-glow`; keyframes `pulse-glow`; `.dev-credit` |
+| `SettingsModal.tsx` | Footer "VTMaster · Desenvolvido por **RobsonCostaDV**" |
+| `ReportsPanel.tsx` | Cabeçalho PDF: logo VTMaster via `addImage()` (fallback text); footer atualizado |
+| `electron/main.ts` | `title: 'VTMaster'`, `icon: '../public/icon.ico'` |
+| `index.html` | `<title>VTMaster</title>` |
+| `package.json` | `name: vtmaster`, `author: RobsonCostaDV`, description atualizado |
 
-Campo de busca por nome de anunciante adicionado ao cabeçalho da lista. Filtragem em tempo real.
+### Crédito de autoria
 
-### `VmixInputPanel.tsx`
-
-Badge "✓ na playlist" em inputs que já estão presentes na playlist. Item recebe classe CSS `vip-in-playlist` com borda/fundo destacados.
-
-### `AdBreaksPanel.tsx`
-
-Badge **"⚠ Não disparou"** (laranja) exibido em blocos cujo horário agendado já passou no dia corrente e que não foram carregados hoje (`lastLoadedDate !== today`).
+Em todas as telas o produto exibe: **"VTMaster · Desenvolvido por RobsonCostaDV"**
+- Sidebar (rodapé da navegação lateral)
+- Modal de Configurações (rodapé)
+- PDF de Relatórios (cabeçalho e rodapé de cada página)
 
 ---
 
 
 
-## 1. O que o SpotMaster faz
+## 1. O que o VTMaster faz
 
-O SpotMaster é um software desktop para **emissoras de TV** controlarem a veiculação de spots comerciais via integração com o **vMix** (software de produção ao vivo).
+O VTMaster é um software desktop para **emissoras de TV** controlarem a veiculação de spots comerciais via integração com o **vMix** (software de produção ao vivo).
 
 ### Fluxo principal
 
@@ -215,7 +218,7 @@ Operador monta playlist
         ↓
 Clica "Iniciar Playlist"
         ↓
-SpotMaster carrega cada clipe como novo input no vMix
+VTMaster carrega cada clipe como novo input no vMix
 PlayInput → PreviewInput → Cut (vai ao ar)
 Aguarda o clipe terminar
         ↓

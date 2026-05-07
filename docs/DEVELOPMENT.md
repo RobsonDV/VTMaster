@@ -1,7 +1,8 @@
-﻿# SpotMaster — Documentação de Desenvolvimento
+﻿# VTMaster — Documentação de Desenvolvimento
 
 > Software de veiculação comercial para emissoras de TV.  
-> Stack: **Electron 41 + React 19 + TypeScript + Vite 8**
+> Stack: **Electron 41 + React 19 + TypeScript + Vite 8**  
+> Desenvolvido por **RobsonCostaDV**
 
 ---
 
@@ -26,12 +27,12 @@
 
 ## 1. Visão Geral
 
-O SpotMaster é um software desktop para emissoras de TV controlarem a veiculação de spots comerciais via integração com o software de produção ao vivo **vMix**.
+O **VTMaster** é um software desktop para emissoras de TV controlarem a veiculação de spots comerciais via integração com o software de produção ao vivo **vMix**.
 
 **Fluxo principal:**
 1. Operador monta uma playlist com itens (spots de arquivo, câmeras, gráficos)
 2. Clica em **Iniciar Playlist**
-3. SpotMaster adiciona cada clipe ao vMix automaticamente, dá play e corta para o ar — um a um, sem intervenção manual
+3. VTMaster adiciona cada clipe ao vMix automaticamente, dá play e corta para o ar — um a um, sem intervenção manual
 4. Ao final, remove todos os inputs criados (gerenciamento não-destrutivo)
 
 ---
