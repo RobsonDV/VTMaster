@@ -47,6 +47,7 @@ export function parseVmixInputs(xml: string): VmixInput[] {
     if (!num) continue
     inputs.push({
       number: num,
+      key: get('key'),
       type: get('type'),
       title: m[2].trim() || get('title') || get('shortTitle') || `Input ${num}`,
       shortTitle: get('shortTitle'),

@@ -4,7 +4,7 @@ import {
   RefreshCw, Film, Music, Image as ImageIcon, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
-import type { CommercialBlock, BlockClientSlot, ClientSpot } from '../../types'
+import type { CommercialBlock, BlockClientSlot, ClientSpot, Client } from '../../types'
 import { formatDuration } from '../../utils/time'
 import './AdBreaksPanel.css'
 
@@ -46,12 +46,12 @@ function MediaIcon({ type }: { type: 'video' | 'audio' | 'image' }) {
 }
 
 // ─── Block Form ──────────────────────────────────────────────────────────────
-function BlockForm({ block, onSave, onCancel }: {
+function BlockForm({ block, clients, onSave, onCancel }: {
   block?: CommercialBlock | null
+  clients: Client[]
   onSave: (data: Omit<CommercialBlock, 'id' | 'createdAt' | 'lastLoadedDate'>) => void
   onCancel: () => void
 }) {
-  const { state } = useApp()
   const [name, setName] = useState(block?.name ?? '')
   const [time, setTime] = useState(block?.scheduledTime?.slice(0, 5) ?? '08:00')
   const [enabled, setEnabled] = useState(block?.enabled ?? true)
@@ -120,7 +120,7 @@ function BlockForm({ block, onSave, onCancel }: {
                 style={{ flex: 1 }}
               >
                 <option value="">Selecionar anunciante...</option>
-                {state.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <input
                 type="number"
@@ -305,7 +305,9 @@ export default function AdBreaksPanel() {
   if (editingBlock !== undefined) {
     return (
       <BlockForm
+        key={editingBlock?.id ?? 'new'}
         block={editingBlock}
+        clients={clients}
         onSave={handleSaveBlock}
         onCancel={() => setEditingBlock(undefined)}
       />

@@ -57,6 +57,7 @@ export default function VmixInputPickerModal({ onClose }: VmixInputPickerModalPr
           }
           parsed.push({
             number: getText('number'),
+            key: getText('key'),
             type: getText('type'),
             title: m[2].trim() || getText('title'),
             shortTitle: getText('shortTitle'),

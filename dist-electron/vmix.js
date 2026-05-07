@@ -52,6 +52,7 @@ function parseVmixStatus(xml) {
         };
         inputs.push({
             number: getInputAttr('number'),
+            key: getInputAttr('key'),
             type: getInputAttr('type'),
             title: inputMatch[2] || getInputAttr('title'),
             shortTitle: getInputAttr('shortTitle'),

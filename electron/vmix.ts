@@ -26,6 +26,7 @@ export interface VmixInput {
   state: string
   duration: number
   position: number
+  key: string        // vMix GUID — stable across input renumbering
 }
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null
@@ -93,6 +94,7 @@ function parseVmixStatus(xml: string): VmixStatus {
     }
     inputs.push({
       number: getInputAttr('number'),
+      key:    getInputAttr('key'),
       type: getInputAttr('type'),
       title: inputMatch[2] || getInputAttr('title'),
       shortTitle: getInputAttr('shortTitle'),

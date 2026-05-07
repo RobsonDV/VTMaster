@@ -206,7 +206,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { stateRef.current = state })
 
   // Tracks the vMix input number currently on-air
-  const activeInputNumRef = useRef<string>('')
+  const activeInputRef = useRef<string>('')
   // Set to true by stopPlayback(); checked inside every async loop
   const abortRef = useRef<boolean>(false)
   // When true, the abort was triggered by the schedule (not the user).
@@ -217,16 +217,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const scheduleInterruptTimeRef = useRef<string>('')
   // Tracks last fast-poll position per input — guards progress bar against regression on audio end
   const lastFastPosRef = useRef<Record<string, number>>({})
-
-  // ── A/B Slot Engine ──────────────────────────────────────────────────────
-  // Instead of accumulating unlimited vMix inputs, SpotMaster uses exactly
-  // two fixed slots (A and B) that alternate with every item played.
-  // When item N is on-air in slot A, item N+1 is loaded into slot B.
-  // After Cut to B the old content in A is removed immediately, freeing the
-  // slot for item N+2. The vMix project is always clean: ≤ 2 SpotMaster inputs.
-  const slotARef          = useRef<string | null>(null) // input number in slot A (or null)
-  const slotBRef          = useRef<string | null>(null) // input number in slot B (or null)
-  const activeSlotRef     = useRef<'A' | 'B' | 'none'>('none')
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
   // Resolves round-robin rotation and inserts spots into the playlist tail.
@@ -244,6 +234,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const base = newRotation[slot.clientId] ?? 0
       for (let i = 0; i < slot.spotsCount; i++) {
         const spot = spots[(base + i) % spots.length]
+        // All spots share scheduledTime so runSequence finds them all in
+        // scheduledDue and plays them in order before touching anything else.
+        // scheduleInterruptTimeRef prevents the scheduler from re-interrupting
+        // for the same time value while the block is playing.
         dispatch({
           type: 'ADD_PLAYLIST_ITEM',
           payload: {
@@ -305,24 +299,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return matches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0)
   }, [])
 
-  // Polls until a new input (number > prevMax) appears after AddInput
+  // Polls until a new input (number > prevMax) appears after AddInput.
+  // Returns the input's GUID (key attribute) — stable across renumbering.
   const pollForNewInput = useCallback(async (prevMax: number): Promise<string | null> => {
     for (let attempt = 0; attempt < 50; attempt++) {
       await sleep(200)
       if (!window.spotmaster) return null
       const st = await window.spotmaster.vmixRequest({})
       if (st.success && st.data) {
-        const nums = [...st.data.matchAll(/<input[^>]*number="(\d+)"/gi)]
-        const found = nums.find(m => parseInt(m[1]) > prevMax)
-        if (found) return found[1]
+        // Parse every <input ...> tag and find one with number > prevMax
+        const tags = [...st.data.matchAll(/<input\s([^>]*)>/gi)]
+        for (const tag of tags) {
+          const attrs = tag[1]
+          const numM = attrs.match(/\bnumber="(\d+)"/i)
+          const keyM = attrs.match(/\bkey="([^"]+)"/i)
+          if (numM && parseInt(numM[1]) > prevMax && keyM) {
+            return keyM[1]  // return GUID — never changes when vMix renumbers
+          }
+        }
       }
     }
     return null
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Loads a file as a new input in vMix.
-  // Returns the assigned input number string, or null on failure.
-  // NOTE: called serially — never concurrently — to avoid slot collisions.
+  // Returns the input's GUID (stable — never changes when vMix renumbers).
   const loadNewInput = useCallback(async (filePath: string): Promise<string | null> => {
     if (!window.spotmaster) return null
     const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
@@ -332,134 +333,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const prevMax = await getMaxInputNum()
     await window.spotmaster.vmixRequest({ Function: 'AddInput', Value: `${vmixType}|${filePath}` })
-    const num = await pollForNewInput(prevMax)
-    if (!num) return null
-    await sleep(1000) // let vMix fully decode/buffer and report correct duration
+    const guid = await pollForNewInput(prevMax)  // returns GUID
+    if (!guid) return null
+    await sleep(1000) // let vMix fully decode/buffer
     if (!isImage) {
-      await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: num, Value: '0' })
+      await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: guid, Value: '0' })
     }
-    return num
+    return guid
   }, [getMaxInputNum, pollForNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── waitForInputEnd ─────────────────────────────────────────────────────────
-  // Polls vMix XML every 300 ms until position >= duration - 500 ms.
-  // Falls back to wall-clock deadline (durationMs + 5 s) if position is
-  // unavailable (e.g., for audio files that don't report position).
-  // Completely isolated per clip — no shared state with other clips.
-  const waitForInputEnd = useCallback(async (
-    inputNum: string,
-    durationMs: number,
-  ): Promise<void> => {
-    // Deadline: item duration + 5 s grace.
-    const deadline = Date.now() + Math.max(durationMs, 1000) + 5000
-    // hasSeenRunning becomes true once the input reports state="Running".
-    // When it then transitions to ANY other state the clip has finished.
-    // This is the PRIMARY exit for AudioFile inputs, which reset position
-    // to 0 at end instead of staying at duration — so position-based
-    // detection alone never fires for audio.
-    let hasSeenRunning = false
-    let lastPos = -1
-    let lastHighPos = 0     // highest position seen — detects AudioFile position reset at end
-    let nonRunningCount = 0 // consecutive non-Running polls after hasSeenRunning is set
-    let lowPosCount = 0     // consecutive near-zero polls after lastHighPos > 1000
-
-    while (Date.now() < deadline) {
-      if (abortRef.current) return
-      await sleep(300)
-      if (abortRef.current) return
-      if (!window.spotmaster) return
-
-      const st = await window.spotmaster.vmixRequest({})
-      if (!st.success || !st.data) continue
-
-      // Find the <input number="N" ...> opening tag in vMix XML
-      const tagMatch = st.data.match(
-        new RegExp(`<input\\s[^>]*number="${inputNum}"[^>]*>`, 'i')
-      )
-
-      // Input disappeared from vMix entirely → it finished (or was removed)
-      if (!tagMatch) {
-        if (hasSeenRunning) return
-        continue // hasn't appeared yet — keep waiting
-      }
-
-      const tag          = tagMatch[0]
-      const stateM       = tag.match(/\bstate="([^"]+)"/i)
-      const dM           = tag.match(/\bduration="(\d+)"/i)
-      const pM           = tag.match(/\bposition="(\d+)"/i)
-      const currentState = stateM ? stateM[1] : ''
-      const dur          = dM ? parseInt(dM[1]) : 0
-      const pos          = pM ? parseInt(pM[1]) : -1
-
-      // Track state transitions — reset counter when Running resumes
-      if (currentState === 'Running') {
-        hasSeenRunning = true
-        nonRunningCount = 0
-      } else if (hasSeenRunning && currentState !== '') {
-        nonRunningCount++
-      }
-
-      // Track position — detect reset to near-zero; reset counter when pos is high again
-      if (pos > 1000) {
-        lastHighPos = pos
-        lowPosCount = 0
-      } else if (lastHighPos > 1000 && pos >= 0 && pos < 500) {
-        lowPosCount++
-      }
-
-      // Update progress bar
-      if (dur > 0 && pos >= 0 && pos !== lastPos) {
-        lastPos = pos
-        dispatch({
-          type: 'SET_ACTIVE_ITEM_PROGRESS',
-          payload: { inputNum, position: pos, duration: dur },
-        })
-      }
-
-      // EXIT 1 — position reached end (video/image clips)
-      // Require dur to be both > 500 ms AND at least 50% of the expected clip
-      // duration (durationMs).  vMix sometimes reports a preliminary/partial
-      // duration while it is still reading a file's metadata — values like
-      // 1 000–3 000 ms for a 30-second clip are common right after AddInput.
-      // Without the second guard, position would reach (partial_dur - 500) in
-      // just one second and EXIT 1 would fire immediately, causing every
-      // commercial spot to be skipped in ~1 s instead of playing in full.
-      // Using Math.max(durationMs * 0.5, 1000) ensures:
-      //   • Very short clips  (durationMs < 2 000): require dur ≥ 1 000 ms
-      //   • Normal/long clips (durationMs ≥ 2 000): require dur ≥ half expected
-      const minReliableDur = Math.max(durationMs * 0.5, 1000)
-      if (dur > 500 && dur >= minReliableDur && pos >= dur - 500) return
-
-      // EXIT 2 — was Running, transitioned to non-Running for 2+ consecutive polls.
-      // Requiring 2 polls prevents false exits from brief buffering/transition states.
-      if (nonRunningCount >= 2) return
-
-      // EXIT 3 — position reset to near-zero after being well into playback.
-      // Requiring 2 consecutive near-zero polls avoids false positives from
-      // momentary position glitches or mid-clip seeks.
-      if (lowPosCount >= 2) {
-        dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: { inputNum, position: dur || durationMs, duration: dur || durationMs } })
-        return
-      }
-    }
-    // Deadline reached — treat as natural completion
-  }, [dispatch]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── cleanupInputs ───────────────────────────────────────────────────────────
-  // Removes the A and B slots from vMix after `delayMs` and resets the refs.
-  // Called after sequence/single-play finishes or when user stops playback.
-  const cleanupInputs = useCallback((delayMs = 10000) => {
-    const toRemove = [slotARef.current, slotBRef.current].filter(Boolean) as string[]
-    slotARef.current = null
-    slotBRef.current = null
-    activeSlotRef.current = 'none'
-    if (toRemove.length === 0) return
+  // Removes the active input (by GUID) from vMix after delayMs.
+  const cleanupInputs = useCallback((delayMs = 0) => {
+    const toRemove = activeInputRef.current
+    activeInputRef.current = ''
+    if (!toRemove || !window.spotmaster) return
     setTimeout(async () => {
-      for (const n of toRemove) {
-        if (window.spotmaster) {
-          await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: n })
-          await sleep(200)
-        }
+      if (window.spotmaster) {
+        await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: toRemove })
       }
     }, delayMs)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -478,60 +369,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     if (vmixStatus.connected) {
       if (item.filePath) {
-        // Serial load — no concurrent calls, no slot collisions
-        const inputNum = await loadNewInput(item.filePath)
+        const guid = await loadNewInput(item.filePath)
 
-        if (inputNum) {
+        if (guid) {
           const ext = item.filePath.split('.').pop()?.toLowerCase() ?? ''
-          const isImg = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
+          const isImg   = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
           const isAudio = ['mp3','wav','aac','m4a','flac','ogg','wma','opus','aiff','aif'].includes(ext)
 
-          // ── A/B Slot: determine target slot and release the other one ────
-          const targetSlot: 'A' | 'B' = activeSlotRef.current === 'A' ? 'B' : 'A'
-          const slotToRelease = targetSlot === 'A' ? slotBRef.current : slotARef.current
-
           if (!isImg && !isAudio) {
-            await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: inputNum })
+            await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
             await sleep(300)
           }
-          await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: inputNum })
+          await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: guid })
           await sleep(100)
           await window.spotmaster.vmixRequest({ Function: 'Cut' })
           if (isAudio) {
             await sleep(500)
-            await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: inputNum })
+            await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
             await sleep(200)
           }
 
-          // Update A/B slot refs for this item
-          if (targetSlot === 'A') slotARef.current = inputNum
-          else slotBRef.current = inputNum
-          activeSlotRef.current = targetSlot
-
-          // Remove the previous slot content now that Cut happened (A/B roll cleanup)
-          if (slotToRelease) {
+          // Remove the PREVIOUS input 5 s after the cut.
+          // Delayed so the previous audio finishes fading out; GUID-based so
+          // vMix renumbering never removes the wrong input.
+          const prevGuid = activeInputRef.current
+          if (prevGuid) {
             setTimeout(async () => {
               if (window.spotmaster) {
-                await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: slotToRelease })
-                // Clear the ref for the released slot
-                if (targetSlot === 'A' && slotBRef.current === slotToRelease) slotBRef.current = null
-                if (targetSlot === 'B' && slotARef.current === slotToRelease) slotARef.current = null
+                await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
               }
-            }, 1500)
+            }, 5000)
           }
 
-          activeInputNumRef.current = inputNum
-          onAirInput = inputNum
+          activeInputRef.current = guid
+          onAirInput = guid
         }
 
       } else if (item.inputName) {
+        // ── vMix permanent input (camera, graphic, etc.) ─────────────────────
+        // SpotMaster NEVER calls RemoveInput on these — they belong to the user's
+        // vMix project. Only PlayInput / PreviewInput / Cut are allowed.
+        //
+        // If the previous item was a SpotMaster-loaded file (GUID in activeInputRef),
+        // remove it now (with a 5 s grace period so audio fades out cleanly).
+        const prevGuid = activeInputRef.current
+        if (prevGuid) {
+          setTimeout(async () => {
+            if (window.spotmaster) {
+              await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
+            }
+          }, 5000)
+        }
+        // Clear the ref — this input is permanent and must NEVER be auto-removed.
+        activeInputRef.current = ''
+
         await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: item.inputName, Value: '0' })
         await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: item.inputName })
         await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: item.inputName })
         await sleep(100)
         await window.spotmaster.vmixRequest({ Function: 'Cut' })
-          activeInputNumRef.current = item.inputName
         onAirInput = item.inputName
+        // activeInputRef intentionally left as '' — permanent inputs are not owned by SpotMaster
       }
     }
 
@@ -553,13 +451,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })
 
     // ── Wait for the clip to finish ─────────────────────────────────────────
-    if (onAirInput && vmixStatus.connected && item.filePath) {
-      // Position-based polling (preferred — gives accurate progress bar)
-      await waitForInputEnd(onAirInput, item.duration * 1000)
-    } else {
-      // Wall-clock fallback (no vMix connection, or named inputs)
+    // Use wall-clock for all timing. If item.duration is 0 or missing, try
+    // to read the real duration from vMix (reported after the input buffers).
+    {
+      let durationSec = item.duration ?? 0
+      if (durationSec <= 0 && onAirInput && window.spotmaster) {
+        // vMix already buffered the input (we slept 1s in loadNewInput).
+        // Re-read the XML to get the real duration.
+        const st = await window.spotmaster.vmixRequest({})
+        if (st.success && st.data) {
+          const tags = [...st.data.matchAll(/<input\s([^>]*)>/gi)]
+          for (const tag of tags) {
+            const keyM = tag[1].match(/\bkey="([^"]+)"/i)
+            const durM = tag[1].match(/\bduration="(\d+)"/i)
+            if (keyM && keyM[1] === onAirInput && durM) {
+              durationSec = parseInt(durM[1]) / 1000
+              break
+            }
+          }
+        }
+      }
+      // Absolute minimum 3 s so a misconfigured item doesn't flash past.
+      const totalMs = Math.max(durationSec * 1000, 3000)
+      console.log(`[SpotMaster] playing "${item.title}" — duration: ${durationSec}s (${totalMs}ms)`)
       const start = Date.now()
-      const totalMs = Math.max(item.duration * 1000, 1000)
       while (Date.now() - start < totalMs) {
         if (abortRef.current) break
         dispatch({
@@ -576,15 +491,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
 
-    // Mark done (only if not already changed by the user).
-    // Exception: if this item was cut short by a schedule interrupt, put it
-    // back in the queue so it resumes after the commercial block finishes.
+    // Mark done. Items interrupted by a scheduled block go 'done' —
+    // playout always moves forward, never returns to what was playing.
     const fresh = stateRef.current.playlist.find(i => i.id === item.id)
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
-      const newStatus = (abortRef.current && scheduleInterruptRef.current) ? 'pending' : 'done'
-      dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...fresh, status: newStatus } })
+      dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...fresh, status: 'done' } })
     }
-  }, [dispatch, loadNewInput, waitForInputEnd]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, loadNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── runSequence ─────────────────────────────────────────────────────────────
   // Infinite while-loop that reads the LIVE playlist on every iteration.
@@ -594,35 +507,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
   //     (or stopPlayback() sets abortRef).
   const runSequence = useCallback(async () => {
     while (true) {
-      // ── Handle abort at the top of every iteration ───────────────────────
+      // ── Handle abort ─────────────────────────────────────────────────────
       if (abortRef.current) {
-        if (!scheduleInterruptRef.current) break // Real user stop — exit
-        // Schedule interrupt: reset flags and fall through to priority pick
+        if (!scheduleInterruptRef.current) break
         abortRef.current = false
         scheduleInterruptRef.current = false
       }
 
-      // ── Select next item ─────────────────────────────────────────────────
-      // When autoPlay is ON, prioritise items whose scheduledTime has arrived;
-      // this ensures commercial blocks jump to the front even mid-sequence.
-      // Fallback: next item by insertion order (normal behaviour).
+      // ── Read live playlist ───────────────────────────────────────────────
       const pending = stateRef.current.playlist.filter(i => i.status === 'pending')
-      if (pending.length === 0) break // No more pending items
+      if (pending.length === 0) break
 
       const currentTime = now()
       const { autoPlay } = stateRef.current.settings
       const scheduledDue = autoPlay
         ? pending
             .filter(i => i.scheduledTime && i.scheduledTime <= currentTime)
-            .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))
+            .sort((a, b) => {
+              const timeCmp = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
+              return timeCmp !== 0 ? timeCmp : a.order - b.order
+            })
         : []
+
+      // When a commercial block is due, skip pending items that come BEFORE
+      // it in the playlist — playout always moves forward.
+      if (scheduledDue.length > 0) {
+        const firstDueOrder = scheduledDue[0].order
+        const toSkip = pending.filter(i => i.order < firstDueOrder)
+        if (toSkip.length > 0) {
+          toSkip.forEach(i =>
+            dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...i, status: 'skipped' } })
+          )
+          await sleep(150)
+          continue
+        }
+      }
 
       const next = scheduledDue[0] ?? [...pending].sort((a, b) => a.order - b.order)[0]
 
       try {
         await playItem(next)
       } catch (err) {
-        // Unexpected error — log, mark item as error, keep sequence going
         console.error('[SpotMaster] playItem error for "' + next.title + '":', err)
         const stale = stateRef.current.playlist.find(i => i.id === next.id)
         if (stale && stale.status !== 'done' && stale.status !== 'skipped') {
@@ -630,20 +555,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Yield a microtask cycle so React can flush dispatches from playItem
-      // into stateRef before the next iteration reads the playlist.
-      await sleep(50)
+      await sleep(200)
     }
 
     // Sequence fully ended — clean up
     scheduleInterruptTimeRef.current = ''
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
-    activeInputNumRef.current = ''
 
-    if (!abortRef.current) cleanupInputs(10000)
+    // cleanupInputs reads activeInputRef internally, then zeros it.
+    // Do NOT zero activeInputRef before this call or it will remove nothing.
+    if (!abortRef.current) cleanupInputs(5000)
+    else activeInputRef.current = ''
     if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
-  }, [dispatch, playItem, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, playItem, loadNewInput, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
@@ -670,11 +595,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     scheduleInterruptTimeRef.current = ''
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
-    activeInputNumRef.current = ''
-    activeSlotRef.current = 'none'
     if (window.spotmaster) {
       await window.spotmaster.vmixStopFastPolling()
-      cleanupInputs(5000)
+      cleanupInputs(0)
     }
     stateRef.current.playlist
       .filter(i => i.status === 'playing')
@@ -701,9 +624,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     playItem(first).then(() => {
       dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
       dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
-      activeSlotRef.current = 'none'
       if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
-      cleanupInputs(10000)
+      // cleanupInputs reads and zeros activeInputRef internally
+      cleanupInputs(5000)
     })
   }, [dispatch, playItem, cleanupInputs])
 
@@ -713,9 +636,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!window.spotmaster) return
     window.spotmaster.onVmixFastStatus((rawStatus) => {
       const status = rawStatus as VmixStatus
-      const num = activeInputNumRef.current
+      const num = activeInputRef.current
       if (!num) return
-      const inp = status.inputs?.find(i => i.number === num)
+      const inp = status.inputs?.find(i => i.key === num || i.number === num)
       if (!inp || inp.duration <= 0) return
       const lastKnown = lastFastPosRef.current[num] ?? 0
       // Guard: position regressed by more than 2 s = audio ended and vMix reset it — skip

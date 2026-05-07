@@ -2,9 +2,13 @@
 // Time utilities for SpotMaster
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Returns current time as HH:MM:SS */
+/** Returns current time as HH:MM:SS (always zero-padded) */
 export function now(): string {
-  return new Date().toLocaleTimeString('pt-BR', { hour12: false })
+  const d = new Date()
+  const h = String(d.getHours()).padStart(2, '0')
+  const m = String(d.getMinutes()).padStart(2, '0')
+  const s = String(d.getSeconds()).padStart(2, '0')
+  return `${h}:${m}:${s}`
 }
 
 /** Formats seconds as MM:SS or HH:MM:SS */

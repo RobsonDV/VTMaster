@@ -139,6 +139,7 @@ export interface VmixStatus {
 
 export interface VmixInput {
   number: string
+  key: string        // vMix GUID — stable across input renumbering
   type: string
   title: string
   shortTitle: string

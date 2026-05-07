@@ -149,6 +149,33 @@
   overflow-y: auto;
 }
 
+.ab-form-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.ab-toggle-col {
+  flex-shrink: 0;
+}
+
+.ab-toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+
+/* Make time input picker visible on dark theme */
+input[type='time']::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
 .adbreak-items-header {
   display: flex;
   align-items: center;
