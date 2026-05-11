@@ -1,12 +1,13 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **10/05/2026** — Versão pós Fase 3 (Disparo global, Autoplay Comerciais, Pré-carregamento configurável)
+> Atualizado em **10/05/2026** — Versão 2.0.0 — Fase 4: Ações vMix na playlist + menu de contexto
 
 ---
 
 ## Índice
 
 1. [O que o VTMaster faz](#1-o-que-o-vtmaster-faz)
+   - **NOVO Fase 4:** Ações vMix e Menu de Contexto
 2. [Stack técnico](#2-stack-técnico)
 3. [Estrutura de arquivos](#3-estrutura-de-arquivos)
 4. [Histórico de fases e correções](#4-histórico-de-fases-e-correções)
@@ -170,6 +171,14 @@ VTMaster/
 - Scheduler de 30s com carga 1 minuto antes do horário (fixo)
 - Proteção contra carga dupla no mesmo dia (`lastLoadedDate`)
 - Fast polling (500ms) para barra de progresso em tempo real
+
+### Fase 4 — Ações vMix na Playlist + Menu de Contexto (10/05/2026)
+
+- **Ações vMix (`vmix_action`)**: novo tipo de item que executa qualquer comando HTTP no vMix — sem mídia, instantâneo, sem interromper a sequência
+- **Funções disponíveis**: `AudioOff`, `AudioOn`, `SetVolume`, `Fade`, `OverlayInput1`, `OverlayInput1Out`
+- **Caso de uso central**: Silenciar câmera → rodar comerciais → restaurar câmera — automático
+- **Menu de contexto (botão direito)**: Inserir Pausa, Inserir Ação vMix, Inserir Input vMix, Editar Horário, Duplicar, Pular, Marcar como Veiculado
+- **INSERT_PLAYLIST_ITEM_AFTER**: novo action no reducer que insere em posição específica
 
 ### Fase 3 — Disparo Global e Automação de Comerciais (10/05/2026)
 
@@ -421,6 +430,36 @@ interface PlaylistItem {
 }
 ```
 
+### VmixActionItem (novo — Fase 4)
+```typescript
+export interface VmixActionItem {
+  function: string    // 'AudioOff' | 'AudioOn' | 'SetVolume' | 'Fade' | 'OverlayInput1' | 'OverlayInput1Out'
+  input?: string      // GUID, nome ou número do input vMix
+  value?: string      // Para SetVolume (0–100), Fade (duração ms), etc.
+}
+```
+
+### SpotType (atualizado — Fase 4)
+```typescript
+export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros' | 'vmix_action'
+```
+
+### PlaylistItem (campo adicionado — Fase 4)
+```typescript
+// Campo adicional:
+vmixAction?: VmixActionItem  // presente somente quando type === 'vmix_action'
+```
+
+**Exemplo de sequência com Ação vMix:**
+```
+Ordem | Tipo         | Título              | vmixAction
+  1   | vmix_action  | Silenciar Câmera    | { function:'AudioOff', input:'Camera1' }
+  2   | spot         | Comercial 1         | —
+  3   | spot         | Comercial 2         | —
+  4   | vmix_action  | Restaurar Câmera    | { function:'AudioOn',  input:'Camera1' }
+  5   | programa     | Câmera ao Vivo      | —
+```
+
 ### AppSettings (atualizado — Fase 3)
 ```typescript
 interface AppSettings {
@@ -538,7 +577,7 @@ interface AppContextValue {
 
 ### Actions disponíveis
 
-**Playlist:** `SET_PLAYLIST`, `ADD_PLAYLIST_ITEM`, `UPDATE_PLAYLIST_ITEM`, `DELETE_PLAYLIST_ITEM`, `CLEAR_PLAYLIST`, `REORDER_PLAYLIST`
+**Playlist:** `SET_PLAYLIST`, `ADD_PLAYLIST_ITEM`, `UPDATE_PLAYLIST_ITEM`, `DELETE_PLAYLIST_ITEM`, `CLEAR_PLAYLIST`, `REORDER_PLAYLIST`, `INSERT_PLAYLIST_ITEM_AFTER` *(Fase 4 — insere em posição específica)*
 
 **Comercial:** `ADD_COMMERCIAL_BLOCK`, `UPDATE_COMMERCIAL_BLOCK`, `DELETE_COMMERCIAL_BLOCK`, `MARK_BLOCK_LOADED`, `ADD_CLIENT_SPOT`, `UPDATE_CLIENT_SPOT`, `DELETE_CLIENT_SPOT`, `SET_SPOT_ROTATION`
 
@@ -648,6 +687,27 @@ Crédito exibido em todas as telas: **"VTMaster · Desenvolvido por RobsonCostaD
 - [x] Exibe próximo spot de cada cliente no card do bloco
 - [x] Fast polling 500ms para barra de progresso em tempo real
 - [x] Interrupt do bloco comercial durante sequência em andamento
+
+### ✅ Fase 4 — Ações vMix e Menu de Contexto
+
+**Ações vMix na playlist:**
+- [x] Novo tipo `vmix_action` — executa comando HTTP no vMix instantaneamente
+- [x] Funções: `AudioOff`, `AudioOn`, `SetVolume`, `Fade`, `OverlayInput1`, `OverlayInput1Out`
+- [x] ItemModal com toggle Mídia / Ação vMix — seletor de função, input e valor
+- [x] Preview do comando gerado antes de salvar
+- [x] playItem() com early return para `vmix_action` (150ms, sem loop de wall-clock)
+- [x] Itens exibidos com fundo roxo e ícone ⚡ na playlist
+- [x] Registro no Log de Veiculação com detalhes do comando executado
+- [x] INSERT_PLAYLIST_ITEM_AFTER no reducer — insere em posição específica
+
+**Menu de contexto (botão direito):**
+- [x] Inserir Pausa após (5s de silêncio, sem comandos vMix)
+- [x] Inserir Ação vMix após → abre ItemModal no modo Ação vMix
+- [x] Inserir Input vMix após → abre painel de inputs
+- [x] Editar Horário Agendado → mini-modal com time picker
+- [x] Duplicar Item → cópia inserida logo abaixo
+- [x] Pular item
+- [x] Marcar como Veiculado
 
 ### ✅ Fase 3 — Disparo Global e Automação de Comerciais
 

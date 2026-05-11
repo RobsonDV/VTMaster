@@ -81,3 +81,4 @@
 | Fase 2 | 07/05/2026 | Sistema de Blocos Comerciais, round-robin, scheduler, fast polling |
 | Rebranding | 07/05/2026 | SpotMaster → VTMaster, logo, cor azul |
 | Fase 3 | 10/05/2026 | Disparo global, Autoplay Comerciais, pré-carregamento configurável, indicador visual |
+| Fase 4 | 10/05/2026 | Ações vMix na playlist (AudioOff/On, SetVolume, Fade, Overlay), menu de contexto (botão direito) |

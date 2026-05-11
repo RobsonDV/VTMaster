@@ -2,7 +2,7 @@
 
 > Software de veiculação comercial para emissoras de TV.
 > Stack: **Electron 41 + React 19 + TypeScript + Vite 8**
-> Desenvolvido por **RobsonCostaDV** — Última atualização: 10/05/2026
+> Desenvolvido por **RobsonCostaDV** — Última atualização: 10/05/2026 — **v2.0.0**
 
 ---
 
@@ -825,6 +825,83 @@ settings: { ...DEFAULT_SETTINGS, ...(settingsRaw as AppSettings) }
 
 ---
 
+## 16b. Ações vMix na Playlist (Fase 4)
+
+### O que são
+
+Itens do tipo `vmix_action` executam um comando HTTP direto no vMix sem carregar mídia. São instantâneos (150ms) e não afetam o input atualmente no ar.
+
+### Funções suportadas
+
+| Função | Parâmetros | Efeito |
+|--------|-----------|--------|
+| `AudioOff` | `Input` | Muta o áudio do input |
+| `AudioOn` | `Input` | Restaura o áudio do input |
+| `SetVolume` | `Input`, `Value` (0–100) | Ajusta o volume |
+| `Fade` | `Value` (duração ms) | Executa fade |
+| `OverlayInput1` | `Input` | Abre overlay 1 |
+| `OverlayInput1Out` | — | Fecha overlay 1 |
+
+### Fluxo em playItem()
+
+```typescript
+// Early return para vmix_action — antes de qualquer lógica de mídia:
+if (item.type === 'vmix_action' && item.vmixAction) {
+  const params = { Function: fn, Input?: input, Value?: value }
+  await window.spotmaster.vmixRequest(params)
+  await sleep(150)
+  dispatch(ADD_LOG)
+  dispatch(UPDATE_PLAYLIST_ITEM → 'done')
+  return   // ← não entra no loop de wall-clock
+}
+```
+
+### Caso de uso: Controle de Áudio em Bloco Comercial
+
+```
+1. ⚡ AudioOff → Camera1        (silencia ao vivo antes dos comerciais)
+2. 🎬 Spot 1 — Coca-Cola 30s
+3. 🎬 Spot 2 — Brahma 30s
+4. ⚡ AudioOn  → Camera1        (restaura ao vivo após os comerciais)
+5. 🎬 Câmera ao Vivo
+```
+
+### ItemModal — dois modos
+
+O modal de criação de item tem toggle **Mídia / Ação vMix**:
+- **Mídia**: comportamento original (arquivo, input vMix, duração)
+- **Ação vMix**: seletor de função + input + valor + preview do comando gerado
+
+### Menu de Contexto (botão direito na playlist)
+
+Componente `ContextMenu.tsx` renderizado no `PlaylistTable` ao clicar com botão direito:
+
+| Opção | Ação |
+|-------|------|
+| Inserir Pausa após | Cria item `type:'outros'` com `duration:5`, sem comandos vMix |
+| Inserir Ação vMix após | Abre ItemModal no modo vmix_action com `insertAfterOrder` |
+| Inserir Input vMix após | Abre VmixInputPanel com posição de destino |
+| Editar Horário Agendado | Mini-modal `ScheduleEditModal` com `<input type="time">` |
+| Duplicar | `INSERT_PLAYLIST_ITEM_AFTER` com cópia do item |
+| Pular / Marcar como Veiculado | Status direto sem confirmação |
+
+### INSERT_PLAYLIST_ITEM_AFTER (reducer)
+
+```typescript
+case 'INSERT_PLAYLIST_ITEM_AFTER': {
+  const sorted = [...state.playlist].sort((a, b) => a.order - b.order)
+  const insertIdx = sorted.findIndex(i => i.order === action.payload.afterOrder)
+  const spliced = [
+    ...sorted.slice(0, insertIdx + 1),
+    action.payload.item,
+    ...sorted.slice(insertIdx + 1),
+  ].map((i, idx) => ({ ...i, order: idx + 1 }))
+  return { ...state, playlist: spliced }
+}
+```
+
+---
+
 ## 17. Funcionalidades Implementadas
 
 ### Playlist
@@ -868,6 +945,20 @@ settings: { ...DEFAULT_SETTINGS, ...(settingsRaw as AppSettings) }
 - [x] Pré-carregamento configurável (1–60 min) no painel de Blocos
 - [x] Indicador visual `⚡ Aguardando disparo` com pulso roxo na playlist
 - [x] Blocos comerciais respeitam o toggle para auto-disparo
+
+### Ações vMix na Playlist (Fase 4)
+- [x] Tipo `vmix_action` com VmixActionItem (function, input, value)
+- [x] AudioOff, AudioOn, SetVolume, Fade, OverlayInput1/Out
+- [x] Early return em playItem() — 150ms, sem loop de wall-clock
+- [x] ItemModal com toggle Mídia / Ação vMix e preview do comando
+- [x] Visual diferenciado: fundo roxo, ícone ⚡, preview inline do comando
+- [x] Registro no Log com detalhes da ação executada
+
+### Menu de Contexto (Fase 4)
+- [x] Botão direito em qualquer linha da playlist abre ContextMenu
+- [x] Inserir Pausa, Ação vMix, Input vMix (com posição específica)
+- [x] Editar Horário Agendado via mini-modal
+- [x] Duplicar item, Pular, Marcar como Veiculado
 
 ### Blocos Comerciais
 - [x] Cadastro de spots por anunciante
