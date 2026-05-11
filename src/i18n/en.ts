@@ -190,6 +190,7 @@ const en: Translations = {
     programa: 'Program',
     bumper: 'Bumper',
     outros: 'Other',
+    vmix_action: 'vMix Action',
   },
 
   statuses: {

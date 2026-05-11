@@ -98,6 +98,7 @@ type Action =
   | { type: 'UPDATE_CLIENT_SPOT';      payload: ClientSpot }
   | { type: 'DELETE_CLIENT_SPOT';      payload: string }
   | { type: 'SET_SPOT_ROTATION';       payload: SpotRotation }
+  | { type: 'INSERT_PLAYLIST_ITEM_AFTER'; payload: { item: PlaylistItem; afterOrder: number } }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -179,6 +180,16 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, clientSpots: state.clientSpots.filter(s => s.id !== action.payload) }
     case 'SET_SPOT_ROTATION':
       return { ...state, spotRotation: action.payload }
+    case 'INSERT_PLAYLIST_ITEM_AFTER': {
+      const sorted = [...state.playlist].sort((a, b) => a.order - b.order)
+      const insertIdx = sorted.findIndex(i => i.order === action.payload.afterOrder)
+      const spliced = [
+        ...sorted.slice(0, insertIdx + 1),
+        action.payload.item,
+        ...sorted.slice(insertIdx + 1),
+      ].map((i, idx) => ({ ...i, order: idx + 1 }))
+      return { ...state, playlist: spliced }
+    }
     default:
       return state
   }
@@ -382,6 +393,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'playing' } })
     const actualTime = now()
+
+    // ── Ação vMix (comando instantâneo, sem mídia) ───────────────────────────
+    // Executa o comando HTTP no vMix, aguarda 150ms e marca como done.
+    // Não entra no loop de wall-clock nem afeta o input ativo no ar.
+    if (item.type === 'vmix_action' && item.vmixAction) {
+      const { function: fn, input, value } = item.vmixAction
+      const params: Record<string, string> = { Function: fn }
+      if (input) params.Input = input
+      if (value !== undefined && value !== '') params.Value = value
+      await window.spotmaster.vmixRequest(params)
+      await sleep(150)
+      dispatch({
+        type: 'ADD_LOG',
+        payload: {
+          id: crypto.randomUUID(),
+          date: new Date().toISOString().slice(0, 10),
+          itemId: item.id,
+          title: item.title,
+          actualTime,
+          duration: 0,
+          status: 'aired',
+          notes: `vMix: ${fn}${input ? ` → ${input}` : ''}${value ? ` (${value})` : ''}`,
+        } as PlayLog,
+      })
+      dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
+      return
+    }
+
     const { vmixStatus } = stateRef.current
     let onAirInput = ''
 

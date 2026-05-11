@@ -199,6 +199,7 @@ const pt = {
     programa: 'Programa',
     bumper: 'Bumper',
     outros: 'Outros',
+    vmix_action: 'Ação vMix',
   },
 
   // Spot statuses

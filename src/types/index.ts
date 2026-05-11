@@ -3,7 +3,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SpotStatus = 'pending' | 'playing' | 'done' | 'skipped' | 'error'
-export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros'
+export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros' | 'vmix_action'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// vMix Action Item — comando enviado diretamente ao vMix (sem mídia)
+// ─────────────────────────────────────────────────────────────────────────────
+export interface VmixActionItem {
+  function: string    // 'AudioOff' | 'AudioOn' | 'SetVolume' | 'Fade' | 'OverlayInput1' | 'OverlayInput1Out' | ...
+  input?: string      // GUID, nome ou número do input vMix (quando necessário)
+  value?: string      // Para SetVolume (0–100), Fade (duração em ms), etc.
+}
 export type Theme = 'dark' | 'light'
 export type Language = 'pt' | 'en'
 
@@ -29,15 +38,16 @@ export interface PlaylistItem {
   title: string
   clientId?: string
   clientName?: string
-  duration: number          // seconds
+  duration: number          // seconds (0 for vmix_action)
   scheduledTime?: string    // HH:MM:SS
   inputName?: string        // vMix input name/number
   type: SpotType
   status: SpotStatus
   filePath?: string         // local media file path (video/image/audio)
-  mediaType?: 'video' | 'image' | 'audio'  // detected from file extension
+  mediaType?: 'video' | 'image' | 'audio'
   notes?: string
   adBreakId?: string        // if part of an ad break
+  vmixAction?: VmixActionItem  // present only when type === 'vmix_action'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

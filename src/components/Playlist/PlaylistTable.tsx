@@ -1,13 +1,17 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
-import { Play, ListVideo, Square, Edit2, Trash2, CheckCircle, SkipForward, ChevronUp, ChevronDown, FileVideo } from 'lucide-react'
+import { Play, ListVideo, Square, Edit2, Trash2, CheckCircle, SkipForward, ChevronUp, ChevronDown, FileVideo, Zap } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { PlaylistItem, PlayLog, VmixInput, SpotType } from '../../types'
 import { formatDuration, formatTime, now } from '../../utils/time'
 import { spotTypeForVmix } from './VmixInputPanel'
+import ContextMenu, { type ContextMenuState } from './ContextMenu'
 import './PlaylistTable.css'
 
 interface PlaylistTableProps {
   onEditItem: (item: PlaylistItem) => void
+  onInsertVmixAction?: (afterOrder: number) => void
+  onInsertVmixInput?: (afterOrder: number) => void
+  onEditSchedule?: (item: PlaylistItem) => void
 }
 
 const STATUS_CLASS: Record<string, string> = {
@@ -58,12 +62,13 @@ function calcEndTimes(
   return result
 }
 
-export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
+export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsertVmixInput, onEditSchedule }: PlaylistTableProps) {
   const { state, dispatch, t, playItem, playSingleItem, startSequence, stopPlayback, saveToStorage } = useApp()
   const { playlist, settings } = state
   const { activeItemProgress } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
   // Live preview clock — ticks every second ONLY when not playing
   const [nowSecs, setNowSecs] = useState(nowSeconds)
@@ -113,6 +118,35 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
     }
     dispatch({ type: 'ADD_LOG', payload: log })
     dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'skipped' } })
+  }
+
+  // ── Context menu ──
+  const handleContextMenu = (e: React.MouseEvent, item: PlaylistItem, index: number) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, item, index })
+  }
+
+  const handleInsertPause = (afterOrder: number) => {
+    const pause: PlaylistItem = {
+      id: crypto.randomUUID(),
+      order: 0,
+      title: 'Pausa',
+      duration: 5,
+      type: 'outros',
+      status: 'pending',
+    }
+    dispatch({ type: 'INSERT_PLAYLIST_ITEM_AFTER', payload: { item: pause, afterOrder } })
+  }
+
+  const handleDuplicate = (item: PlaylistItem, afterOrder: number) => {
+    const copy: PlaylistItem = {
+      ...item,
+      id: crypto.randomUUID(),
+      order: 0,
+      status: 'pending',
+      title: `${item.title} (cópia)`,
+    }
+    dispatch({ type: 'INSERT_PLAYLIST_ITEM_AFTER', payload: { item: copy, afterOrder } })
   }
 
   // ── Delete ──
@@ -256,8 +290,9 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
                   return (
                   <Fragment key={item.id}>
                   <tr
-                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}`}
+                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}`}
                     onClick={() => setSelectedId(item.id)}
+                    onContextMenu={(e) => handleContextMenu(e, item, index)}
                     onDragOver={(e) => handleRowDragOver(e, index)}
                     onDrop={(e) => handleDrop(e, index)}
                     onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverIndex(null) }}
@@ -277,10 +312,20 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
 
                     <td className="cell-title">
                       <div className="title-cell">
-                        {item.filePath && <FileVideo size={12} className="file-icon" />}
+                        {item.type === 'vmix_action'
+                          ? <Zap size={12} className="file-icon" style={{ color: '#a78bfa' }} />
+                          : item.filePath && <FileVideo size={12} className="file-icon" />
+                        }
                         <span className="item-title">{item.title}</span>
                       </div>
-                      {item.notes && <span className="item-notes">{item.notes}</span>}
+                      {item.vmixAction && (
+                        <span className="item-notes" style={{ fontFamily: 'monospace', fontSize: '0.68rem' }}>
+                          {item.vmixAction.function}
+                          {item.vmixAction.input ? ` → ${item.vmixAction.input}` : ''}
+                          {item.vmixAction.value ? ` (${item.vmixAction.value})` : ''}
+                        </span>
+                      )}
+                      {!item.vmixAction && item.notes && <span className="item-notes">{item.notes}</span>}
                     </td>
 
                     <td className="cell-client">{item.clientName ?? '—'}</td>
@@ -403,6 +448,30 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
             <span style={{ color: 'var(--warning)' }}>{playlist.filter(i => i.status === 'pending').length} {t.statuses.pending.toLowerCase()}</span>
           </div>
         </>
+      )}
+
+      {/* ── Menu de contexto (botão direito) ── */}
+      {contextMenu && (
+        <ContextMenu
+          menu={contextMenu}
+          onClose={() => setContextMenu(null)}
+          onInsertPause={handleInsertPause}
+          onInsertVmixAction={(afterOrder) => {
+            setContextMenu(null)
+            onInsertVmixAction?.(afterOrder)
+          }}
+          onInsertVmixInput={(afterOrder) => {
+            setContextMenu(null)
+            onInsertVmixInput?.(afterOrder)
+          }}
+          onEditSchedule={(item) => {
+            setContextMenu(null)
+            onEditSchedule?.(item)
+          }}
+          onDuplicate={handleDuplicate}
+          onSkip={handleSkip}
+          onMarkDone={handleMarkDone}
+        />
       )}
     </div>
   )

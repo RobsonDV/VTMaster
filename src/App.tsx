@@ -18,6 +18,49 @@ import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
 type Panel = 'playlist' | 'adbreaks' | 'clients' | 'log' | 'reports'
 
+// Mini-modal para editar apenas o horário agendado de um item
+function ScheduleEditModal({ item, onClose }: { item: PlaylistItem; onClose: () => void }) {
+  const { dispatch } = useApp()
+  const [time, setTime] = useState(item.scheduledTime ?? '')
+
+  const handleSave = () => {
+    dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, scheduledTime: time || undefined } })
+    onClose()
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, minWidth: 280, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 12, color: 'var(--text-primary)' }}>
+          🕐 Editar Horário
+        </div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>{item.title}</div>
+        <input
+          type="time"
+          step="1"
+          value={time}
+          onChange={e => setTime(e.target.value)}
+          autoFocus
+          style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-primary)', border: '1px solid var(--accent)', borderRadius: 6, color: 'var(--text-primary)', fontSize: '1rem' }}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+          {time && (
+            <button onClick={() => { setTime('') }} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem' }}>
+              Limpar
+            </button>
+          )}
+          <button onClick={onClose} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem' }}>
+            Cancelar
+          </button>
+          <button onClick={handleSave} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+            Salvar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const { state, dispatch, t } = useApp()
   const [activePanel, setActivePanel] = useState<Panel>('playlist')
@@ -27,6 +70,10 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showVmixPanel, setShowVmixPanel] = useState(false)
   const [appVersion, setAppVersion] = useState('')
+  // Context menu callbacks: inserir ação vMix ou input vMix após um item específico
+  const [insertAfterOrder, setInsertAfterOrder] = useState<number | undefined>()
+  const [defaultItemMode, setDefaultItemMode] = useState<'media' | 'vmix_action'>('media')
+  const [scheduleEditItem, setScheduleEditItem] = useState<PlaylistItem | null>(null)
 
   useEffect(() => {
     window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
@@ -83,7 +130,22 @@ export default function App() {
         <main className="content-area">
           {activePanel === 'playlist' && (
             <div className="playlist-split">
-              <PlaylistTable onEditItem={(item) => { setEditingItem(item); setShowItemModal(true) }} />
+              <PlaylistTable
+                onEditItem={(item) => { setEditingItem(item); setShowItemModal(true) }}
+                onInsertVmixAction={(afterOrder) => {
+                  setInsertAfterOrder(afterOrder)
+                  setDefaultItemMode('vmix_action')
+                  setEditingItem(null)
+                  setShowItemModal(true)
+                }}
+                onInsertVmixInput={(afterOrder) => {
+                  setInsertAfterOrder(afterOrder)
+                  setDefaultItemMode('media')
+                  setEditingItem(null)
+                  setShowVmixPanel(true)
+                }}
+                onEditSchedule={(item) => { setScheduleEditItem(item) }}
+              />
               {showVmixPanel && <VmixInputPanel onClose={() => setShowVmixPanel(false)} />}
             </div>
           )}
@@ -94,8 +156,26 @@ export default function App() {
         </main>
       </div>
       <StatusBar />
-      {showItemModal && <ItemModal item={editingItem} onClose={() => { setShowItemModal(false); setEditingItem(null) }} />}
+      {showItemModal && (
+        <ItemModal
+          item={editingItem}
+          insertAfterOrder={editingItem ? undefined : insertAfterOrder}
+          defaultMode={editingItem ? undefined : defaultItemMode}
+          onClose={() => {
+            setShowItemModal(false)
+            setEditingItem(null)
+            setInsertAfterOrder(undefined)
+            setDefaultItemMode('media')
+          }}
+        />
+      )}
       {showAdBreakSelect && <AdBreakSelectModal onClose={() => setShowAdBreakSelect(false)} />}
+      {scheduleEditItem && (
+        <ScheduleEditModal
+          item={scheduleEditItem}
+          onClose={() => setScheduleEditItem(null)}
+        />
+      )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   )

@@ -1,15 +1,27 @@
 import { useState, useEffect } from 'react'
-import { X, Film, Image as ImageIcon, Music, Loader2 } from 'lucide-react'
+import { X, Film, Image as ImageIcon, Music, Loader2, Zap } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
-import type { PlaylistItem, SpotType } from '../../types'
+import type { PlaylistItem, SpotType, VmixActionItem } from '../../types'
 import './ItemModal.css'
 
 interface ItemModalProps {
   item?: PlaylistItem | null
   onClose: () => void
+  insertAfterOrder?: number   // quando vem do menu de contexto
+  defaultMode?: 'media' | 'vmix_action'
 }
 
 const SPOT_TYPES: SpotType[] = ['spot', 'vinheta', 'programa', 'bumper', 'outros']
+
+// ── Definição das funções vMix disponíveis ────────────────────────────────────
+const VMIX_FUNCTIONS = [
+  { value: 'AudioOff',       label: '🔇 Desligar Áudio',       hasInput: true,  hasValue: false, valuePlaceholder: '' },
+  { value: 'AudioOn',        label: '🔊 Ligar Áudio',           hasInput: true,  hasValue: false, valuePlaceholder: '' },
+  { value: 'SetVolume',      label: '🔉 Ajustar Volume',        hasInput: true,  hasValue: true,  valuePlaceholder: '0 – 100 (%)' },
+  { value: 'Fade',           label: '✨ Fade (transição)',       hasInput: false, hasValue: true,  valuePlaceholder: 'Duração em ms (ex: 1000)' },
+  { value: 'OverlayInput1',  label: '📺 Overlay 1 — Abrir',    hasInput: true,  hasValue: false, valuePlaceholder: '' },
+  { value: 'OverlayInput1Out', label: '📺 Overlay 1 — Fechar', hasInput: false, hasValue: false, valuePlaceholder: '' },
+] as const
 
 // ── Media type helpers ─────────────────────────────────────────────────────
 const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico','svg'])
@@ -52,29 +64,49 @@ const MediaIcon = ({ type, size = 13 }: { type: MediaType; size?: number }) => {
   return <Film size={size} />
 }
 
-export default function ItemModal({ item, onClose }: ItemModalProps) {
+export default function ItemModal({ item, onClose, insertAfterOrder, defaultMode }: ItemModalProps) {
   const { state, dispatch, t } = useApp()
   const { clients } = state
 
   const isEdit = !!item
+  const [mode, setMode] = useState<'media' | 'vmix_action'>(
+    defaultMode ?? (item?.type === 'vmix_action' ? 'vmix_action' : 'media')
+  )
 
+  // ── Formulário de mídia ──
   const [form, setForm] = useState({
     title: item?.title ?? '',
     clientId: item?.clientId ?? '',
     clientName: item?.clientName ?? '',
-    type: item?.type ?? 'spot' as SpotType,
+    type: (item?.type !== 'vmix_action' ? item?.type : 'spot') ?? 'spot' as SpotType,
     duration: item?.duration ?? 30,
     scheduledTime: item?.scheduledTime ?? '',
     inputName: item?.inputName ?? '',
     filePath: item?.filePath ?? '',
     notes: item?.notes ?? '',
   })
-
   const [durationStr, setDurationStr] = useState(String(item?.duration ?? 30))
   const [mediaType, setMediaType] = useState<MediaType>(() =>
     item?.filePath ? detectMediaType(item.filePath) : 'video'
   )
   const [detectingDuration, setDetectingDuration] = useState(false)
+
+  // ── Formulário de ação vMix ──
+  const [actionFn, setActionFn]     = useState(item?.vmixAction?.function ?? 'AudioOff')
+  const [actionInput, setActionInput] = useState(item?.vmixAction?.input ?? '')
+  const [actionValue, setActionValue] = useState(item?.vmixAction?.value ?? '')
+  const [actionTitle, setActionTitle] = useState(
+    item?.type === 'vmix_action' ? item.title : ''
+  )
+
+  const selectedFnDef = VMIX_FUNCTIONS.find(f => f.value === actionFn) ?? VMIX_FUNCTIONS[0]
+
+  // Auto-title para ações vMix quando o título estiver vazio
+  useEffect(() => {
+    if (mode !== 'vmix_action' || actionTitle) return
+    const def = VMIX_FUNCTIONS.find(f => f.value === actionFn)
+    if (def) setActionTitle(def.label)
+  }, [actionFn, mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync clientName when clientId changes
   useEffect(() => {
@@ -88,25 +120,58 @@ export default function ItemModal({ item, onClose }: ItemModalProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const dur = parseInt(durationStr) || 30
 
+    if (mode === 'vmix_action') {
+      if (!actionFn) return
+      const vmixAction: VmixActionItem = {
+        function: actionFn,
+        input: actionInput || undefined,
+        value: actionValue || undefined,
+      }
+      const title = actionTitle.trim() || selectedFnDef.label
+      const newItem: PlaylistItem = {
+        id: isEdit ? item!.id : crypto.randomUUID(),
+        order: isEdit ? item!.order : (state.playlist.length + 1),
+        title,
+        duration: 0,
+        type: 'vmix_action',
+        status: 'pending',
+        vmixAction,
+      }
+      if (isEdit) {
+        dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: newItem })
+      } else if (insertAfterOrder !== undefined) {
+        dispatch({ type: 'INSERT_PLAYLIST_ITEM_AFTER', payload: { item: newItem, afterOrder: insertAfterOrder } })
+      } else {
+        dispatch({ type: 'ADD_PLAYLIST_ITEM', payload: newItem })
+      }
+      onClose()
+      return
+    }
+
+    // Modo mídia
+    const dur = parseInt(durationStr) || 30
     if (!form.title.trim()) return
 
     if (isEdit && item) {
       dispatch({
         type: 'UPDATE_PLAYLIST_ITEM',
-        payload: { ...item, ...form, duration: dur, mediaType: form.filePath ? mediaType : undefined },
+        payload: { ...item, ...form, duration: dur, mediaType: form.filePath ? mediaType : undefined, vmixAction: undefined },
       })
     } else {
       const newItem: PlaylistItem = {
         id: crypto.randomUUID(),
-        order: state.playlist.length + 1,
+        order: insertAfterOrder !== undefined ? 0 : state.playlist.length + 1,
         ...form,
         duration: dur,
         status: 'pending',
         mediaType: form.filePath ? mediaType : undefined,
       }
-      dispatch({ type: 'ADD_PLAYLIST_ITEM', payload: newItem })
+      if (insertAfterOrder !== undefined) {
+        dispatch({ type: 'INSERT_PLAYLIST_ITEM_AFTER', payload: { item: newItem, afterOrder: insertAfterOrder } })
+      } else {
+        dispatch({ type: 'ADD_PLAYLIST_ITEM', payload: newItem })
+      }
     }
     onClose()
   }
@@ -124,6 +189,114 @@ export default function ItemModal({ item, onClose }: ItemModalProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="modal-form">
+
+          {/* ── Toggle de modo (só na criação) ── */}
+          {!isEdit && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+              <button
+                type="button"
+                onClick={() => setMode('media')}
+                style={{
+                  flex: 1, padding: '7px 0', borderRadius: 6, border: '1px solid var(--border)',
+                  background: mode === 'media' ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  color: mode === 'media' ? '#fff' : 'var(--text-secondary)',
+                  fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                🎬 Mídia / Input
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('vmix_action')}
+                style={{
+                  flex: 1, padding: '7px 0', borderRadius: 6, border: '1px solid var(--border)',
+                  background: mode === 'vmix_action' ? '#7c3aed' : 'var(--bg-tertiary)',
+                  color: mode === 'vmix_action' ? '#fff' : 'var(--text-secondary)',
+                  fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                <Zap size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                Ação vMix
+              </button>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════
+              MODO: AÇÃO vMIX
+          ════════════════════════════════════════════════════ */}
+          {mode === 'vmix_action' && (
+            <>
+              {/* Função */}
+              <div className="form-group">
+                <label>Função vMix *</label>
+                <select
+                  value={actionFn}
+                  onChange={e => { setActionFn(e.target.value); setActionTitle('') }}
+                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', width: '100%' }}
+                  autoFocus
+                >
+                  {VMIX_FUNCTIONS.map(f => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Input vMix (quando necessário) */}
+              {selectedFnDef.hasInput && (
+                <div className="form-group">
+                  <label>Input vMix (nome, número ou GUID)</label>
+                  <input
+                    type="text"
+                    value={actionInput}
+                    onChange={e => setActionInput(e.target.value)}
+                    placeholder="Ex: Camera1, 1, {GUID...}"
+                  />
+                  <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: 3, display: 'block' }}>
+                    Nome ou número do input no vMix que receberá o comando
+                  </span>
+                </div>
+              )}
+
+              {/* Valor (SetVolume, Fade, etc.) */}
+              {selectedFnDef.hasValue && (
+                <div className="form-group">
+                  <label>Valor</label>
+                  <input
+                    type="text"
+                    value={actionValue}
+                    onChange={e => setActionValue(e.target.value)}
+                    placeholder={selectedFnDef.valuePlaceholder}
+                  />
+                </div>
+              )}
+
+              {/* Título personalizado */}
+              <div className="form-group">
+                <label>Título (opcional)</label>
+                <input
+                  type="text"
+                  value={actionTitle}
+                  onChange={e => setActionTitle(e.target.value)}
+                  placeholder={selectedFnDef.label}
+                />
+              </div>
+
+              {/* Preview do comando */}
+              <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #7c3aed 10%, var(--bg-primary))', border: '1px solid color-mix(in srgb, #7c3aed 30%, transparent)', borderRadius: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                <span style={{ color: '#a78bfa', fontWeight: 700 }}>vMix</span>
+                {' → '}
+                <span style={{ color: 'var(--text-primary)' }}>{actionFn}</span>
+                {actionInput && <span style={{ color: '#86efac' }}>{` Input="${actionInput}"`}</span>}
+                {actionValue && <span style={{ color: '#fbbf24' }}>{` Value="${actionValue}"`}</span>}
+              </div>
+            </>
+          )}
+
+          {/* ════════════════════════════════════════════════════
+              MODO: MÍDIA / INPUT
+          ════════════════════════════════════════════════════ */}
+          {mode === 'media' && (
+            <>
           {/* Title */}
           <div className="form-group">
             <label>{t.common.title} *</label>
@@ -301,13 +474,19 @@ export default function ItemModal({ item, onClose }: ItemModalProps) {
               placeholder="Observações opcionais..."
             />
           </div>
+            </>
+          )}
 
           {/* Actions */}
           <div className="modal-actions">
             <button type="button" className="btn-cancel" onClick={onClose}>
               {t.common.cancel}
             </button>
-            <button type="submit" className="btn-save">
+            <button
+              type="submit"
+              className="btn-save"
+              style={mode === 'vmix_action' ? { background: '#7c3aed', borderColor: '#7c3aed' } : undefined}
+            >
               {isEdit ? t.common.save : t.common.add}
             </button>
           </div>

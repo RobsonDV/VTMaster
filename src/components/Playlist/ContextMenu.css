@@ -1,0 +1,77 @@
+.context-menu {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  min-width: 210px;
+  padding: 4px;
+  user-select: none;
+  animation: ctx-appear 0.1s ease;
+}
+
+@keyframes ctx-appear {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.ctx-header {
+  padding: 6px 10px 4px;
+}
+
+.ctx-item-name {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  max-width: 190px;
+}
+
+.ctx-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
+
+.ctx-section-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  padding: 4px 10px 2px;
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.1s;
+}
+
+.ctx-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.ctx-item--purple:hover {
+  background: color-mix(in srgb, #7c3aed 15%, var(--bg-secondary));
+  color: #a78bfa;
+}
+
+.ctx-hint {
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
