@@ -16,11 +16,14 @@ import type {
   VmixStatus,
   ClientSpot,
   CommercialBlock,
+  CommercialBlockItem,
   SpotRotation,
+  ProgramSlot,
+  WeeklyProgramGrid,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
-import { now } from '../utils/time'
+import { now, today } from '../utils/time'
 
 const DEFAULT_SETTINGS: AppSettings = {
   vmixHost: 'localhost',
@@ -38,6 +41,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 interface AppState {
   playlist: PlaylistItem[]
+  dateSchedules: Record<string, PlaylistItem[]>  // YYYY-MM-DD → programação daquela data
   adBreaks: AdBreak[]
   clients: Client[]
   playLog: PlayLog[]
@@ -50,10 +54,14 @@ interface AppState {
   commercialBlocks: CommercialBlock[]
   clientSpots: ClientSpot[]
   spotRotation: SpotRotation
+  weeklyGrid: WeeklyProgramGrid
 }
+
+const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
 
 const initialState: AppState = {
   playlist: [],
+  dateSchedules: {},
   adBreaks: [],
   clients: [],
   playLog: [],
@@ -66,6 +74,7 @@ const initialState: AppState = {
   commercialBlocks: [],
   clientSpots: [],
   spotRotation: {},
+  weeklyGrid: DEFAULT_WEEKLY_GRID,
 }
 
 type Action =
@@ -99,6 +108,15 @@ type Action =
   | { type: 'DELETE_CLIENT_SPOT';      payload: string }
   | { type: 'SET_SPOT_ROTATION';       payload: SpotRotation }
   | { type: 'INSERT_PLAYLIST_ITEM_AFTER'; payload: { item: PlaylistItem; afterOrder: number } }
+  | { type: 'SET_WEEKLY_GRID';      payload: WeeklyProgramGrid }
+  | { type: 'ADD_PROGRAM_SLOT';     payload: { day: number; slot: ProgramSlot } }
+  | { type: 'UPDATE_PROGRAM_SLOT';  payload: { day: number; slot: ProgramSlot } }
+  | { type: 'DELETE_PROGRAM_SLOT';  payload: { day: number; slotId: string } }
+  | { type: 'REORDER_PROGRAM_SLOTS';payload: { day: number; slots: ProgramSlot[] } }
+  | { type: 'SET_DATE_SCHEDULE';      payload: { date: string; items: PlaylistItem[] } }
+  | { type: 'UPDATE_SCHEDULE_ITEM';   payload: { date: string; item: PlaylistItem } }
+  | { type: 'DELETE_SCHEDULE_ITEM';   payload: { date: string; id: string } }
+  | { type: 'REORDER_DATE_SCHEDULE';  payload: { date: string; items: PlaylistItem[] } }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -190,6 +208,43 @@ function reducer(state: AppState, action: Action): AppState {
       ].map((i, idx) => ({ ...i, order: idx + 1 }))
       return { ...state, playlist: spliced }
     }
+    case 'SET_WEEKLY_GRID':
+      return { ...state, weeklyGrid: action.payload }
+    case 'ADD_PROGRAM_SLOT': {
+      const daySlots = [...(state.weeklyGrid[action.payload.day] ?? [])]
+      daySlots.push(action.payload.slot)
+      return { ...state, weeklyGrid: { ...state.weeklyGrid, [action.payload.day]: daySlots } }
+    }
+    case 'UPDATE_PROGRAM_SLOT': {
+      const daySlots = (state.weeklyGrid[action.payload.day] ?? []).map(s =>
+        s.id === action.payload.slot.id ? action.payload.slot : s
+      )
+      return { ...state, weeklyGrid: { ...state.weeklyGrid, [action.payload.day]: daySlots } }
+    }
+    case 'DELETE_PROGRAM_SLOT': {
+      const daySlots = (state.weeklyGrid[action.payload.day] ?? [])
+        .filter(s => s.id !== action.payload.slotId)
+        .map((s, i) => ({ ...s, order: i + 1 }))
+      return { ...state, weeklyGrid: { ...state.weeklyGrid, [action.payload.day]: daySlots } }
+    }
+    case 'REORDER_PROGRAM_SLOTS':
+      return { ...state, weeklyGrid: { ...state.weeklyGrid, [action.payload.day]: action.payload.slots } }
+    case 'SET_DATE_SCHEDULE':
+      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: action.payload.items } }
+    case 'UPDATE_SCHEDULE_ITEM': {
+      const d = action.payload.date
+      return { ...state, dateSchedules: { ...state.dateSchedules,
+        [d]: (state.dateSchedules[d] ?? []).map(i => i.id === action.payload.item.id ? action.payload.item : i),
+      }}
+    }
+    case 'DELETE_SCHEDULE_ITEM': {
+      const d = action.payload.date
+      return { ...state, dateSchedules: { ...state.dateSchedules,
+        [d]: (state.dateSchedules[d] ?? []).filter(i => i.id !== action.payload.id).map((i, idx) => ({ ...i, order: idx + 1 })),
+      }}
+    }
+    case 'REORDER_DATE_SCHEDULE':
+      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: action.payload.items } }
     default:
       return state
   }
@@ -203,9 +258,14 @@ interface AppContextValue {
   playItem: (item: PlaylistItem) => Promise<void>
   playSingleItem: () => void
   startSequence: () => void
+  startSchedule: () => void
+  startScheduleFromNow: () => void
+  startScheduleFromItem: (itemId: string) => void
+  pauseSchedule: () => void
   stopPlayback: () => Promise<void>
   loadBlockIntoPlaylist: (block: CommercialBlock) => void
   disparo: () => void
+  generatePlaylistFromGrid: (targetDate?: string, merge?: boolean) => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -244,29 +304,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // current item and continue to the next, without fully stopping.
   const disparoInterruptRef = useRef<boolean>(false)
 
-  // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
-  // Resolves round-robin rotation and inserts spots into the playlist tail.
-  // Called by the scheduler (auto) and by the "Recarregar" button (manual).
-  const loadBlockIntoPlaylist = useCallback((block: CommercialBlock) => {
-    const today = new Date().toISOString().slice(0, 10)
-    const { clientSpots, spotRotation, clients, playlist } = stateRef.current
-    const newRotation = { ...spotRotation }
-    const startOrder = playlist.length + 1
+  // Tracks which queue (playlist or daySchedule) runSequence is reading from.
+  // Changed by startSequence() and startSchedule() before invoking runSequence().
+  const activeQueueRef = useRef<'playlist' | 'schedule'>('playlist')
+
+  // Returns the currently active queue's items (live read via stateRef).
+  const getQueue = () =>
+    activeQueueRef.current === 'schedule'
+      ? (stateRef.current.dateSchedules[today()] ?? [])
+      : stateRef.current.playlist
+
+  // Dispatches a status update to whichever queue is active.
+  const updateQueueItem = (item: PlaylistItem) => {
+    if (activeQueueRef.current === 'schedule') {
+      dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: today(), item } })
+    } else {
+      dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: item })
+    }
+  }
+
+  // ── expandBlockItems ────────────────────────────────────────────────────────
+  // Converts a CommercialBlock's items into PlaylistItems (without dispatching).
+  // Returns [playlistItems, updatedRotation].
+  // Used by loadBlockIntoPlaylist (appends to playlist) and generatePlaylistFromGrid.
+  const expandBlockItems = useCallback((
+    block: CommercialBlock,
+    startOrder: number,
+    rotation: SpotRotation,
+  ): [PlaylistItem[], SpotRotation] => {
+    const { clientSpots, clients } = stateRef.current
+    const newRotation = { ...rotation }
+    const items: PlaylistItem[] = []
     let offset = 0
 
-    for (const slot of block.slots) {
-      const spots = clientSpots.filter(s => s.clientId === slot.clientId)
-      if (spots.length === 0) continue
-      const base = newRotation[slot.clientId] ?? 0
-      for (let i = 0; i < slot.spotsCount; i++) {
-        const spot = spots[(base + i) % spots.length]
-        // All spots share scheduledTime so runSequence finds them all in
-        // scheduledDue and plays them in order before touching anything else.
-        // scheduleInterruptTimeRef prevents the scheduler from re-interrupting
-        // for the same time value while the block is playing.
-        dispatch({
-          type: 'ADD_PLAYLIST_ITEM',
-          payload: {
+    const ordered = [...(block.items ?? [])].sort((a, b) => a.order - b.order)
+
+    for (const bi of ordered) {
+      if (bi.type === 'spot_client') {
+        const clientId = bi.clientId ?? ''
+        const spotsCount = bi.spotsCount ?? 1
+        const spots = clientSpots.filter(s => s.clientId === clientId)
+        if (spots.length === 0) continue
+        const base = newRotation[clientId] ?? 0
+        for (let i = 0; i < spotsCount; i++) {
+          const spot = spots[(base + i) % spots.length]
+          items.push({
             id: crypto.randomUUID(),
             order: startOrder + offset,
             title: spot.title,
@@ -279,30 +361,246 @@ export function AppProvider({ children }: { children: ReactNode }) {
             status: 'pending' as const,
             adBreakId: block.id,
             scheduledTime: block.scheduledTime,
-          },
+          })
+          offset++
+        }
+        newRotation[clientId] = (base + spotsCount) % spots.length
+      } else if (bi.type === 'vmix_action') {
+        items.push({
+          id: crypto.randomUUID(),
+          order: startOrder + offset,
+          title: bi.title ?? (bi.vmixAction?.function ?? 'Ação vMix'),
+          duration: 0,
+          type: 'vmix_action' as const,
+          status: 'pending' as const,
+          adBreakId: block.id,
+          scheduledTime: block.scheduledTime,
+          vmixAction: bi.vmixAction,
+        })
+        offset++
+      } else if (bi.type === 'vmix_input') {
+        items.push({
+          id: crypto.randomUUID(),
+          order: startOrder + offset,
+          title: bi.title ?? (bi.inputName ?? 'Input vMix'),
+          duration: bi.duration ?? 10,
+          type: 'outros' as const,
+          status: 'pending' as const,
+          adBreakId: block.id,
+          scheduledTime: block.scheduledTime,
+          inputName: bi.inputName,
         })
         offset++
       }
-      newRotation[slot.clientId] = (base + slot.spotsCount) % spots.length
     }
 
-    dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: today } })
+    return [items, newRotation]
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
+  // Expands a block's items and appends them to the playlist tail.
+  // Called by the scheduler (auto, manual workflow) and by "Recarregar" button.
+  const loadBlockIntoPlaylist = useCallback((block: CommercialBlock) => {
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const { playlist, spotRotation } = stateRef.current
+    const startOrder = playlist.length + 1
+
+    const [items, newRotation] = expandBlockItems(block, startOrder, spotRotation)
+    items.forEach(item => dispatch({ type: 'ADD_PLAYLIST_ITEM', payload: item }))
+
+    dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: dateStr } })
     dispatch({ type: 'SET_SPOT_ROTATION', payload: newRotation })
-  }, [dispatch]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, expandBlockItems])
+
+  // ── generatePlaylistFromGrid ─────────────────────────────────────────────────
+  // Builds the full day's playlist from:
+  //   1. Weekly grid template programs for today
+  //   2. Commercial blocks scheduled for today (already expanded into items)
+  // Sorts everything by scheduledTime and replaces the entire playlist.
+  // Marks commercial blocks as loaded so the scheduler won't duplicate them.
+  const generatePlaylistFromGrid = useCallback((targetDate?: string, merge = false) => {
+    const dateStr = targetDate ?? today()
+    // Parse day-of-week from the target date (midday avoids DST edge cases)
+    const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay()
+    const { weeklyGrid, commercialBlocks, spotRotation } = stateRef.current
+
+    // 1. Programs + linked blocks from weekly grid
+    const programItems: PlaylistItem[] = []
+    let currentRotation = { ...spotRotation }
+
+    const sortedSlots = (weeklyGrid[dayOfWeek] ?? [])
+      .slice()
+      .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime) || a.order - b.order)
+
+    for (let si = 0; si < sortedSlots.length; si++) {
+      const slot = sortedSlots[si]
+      if (slot.type === 'bloco_comercial' || slot.type === 'bloco_musical') {
+        if (slot.type === 'bloco_musical') {
+          // Calculate block duration from gap to the next slot
+          const nextSlot = sortedSlots[si + 1]
+          let durationMins = 20  // fallback
+          if (nextSlot) {
+            const toMins = (t: string) => {
+              const [h = 0, m = 0] = t.split(':').map(Number)
+              return h * 60 + m
+            }
+            durationMins = Math.max(1, toMins(nextSlot.scheduledTime) - toMins(slot.scheduledTime))
+          }
+          // Slot count: ~1 slot per 2 min for ≥20 min blocks; ~1 slot per 2.5 min for shorter blocks
+          const avgSongMins = durationMins <= 15 ? 2.5 : 2.0
+          const slotCount = Math.max(1, Math.round(durationMins / avgSongMins))
+
+          for (let n = 0; n < slotCount; n++) {
+            programItems.push({
+              id: crypto.randomUUID(),
+              order: 0,
+              title: slot.title,
+              type: 'vinheta' as const,
+              status: 'pending' as const,
+              scheduledTime: slot.scheduledTime,
+              duration: 0,
+              // No filePath, no adBreakId — plays freely, not affected by commercial disparo
+            })
+          }
+        } else {
+          // Commercial block: expand linked CommercialBlock
+          if (!slot.commercialBlockId) continue
+          const block = commercialBlocks.find(b => b.id === slot.commercialBlockId && b.enabled)
+          if (!block) continue
+          const blockWithTime = { ...block, scheduledTime: slot.scheduledTime }
+          const [expanded, newRot] = expandBlockItems(blockWithTime, 0, currentRotation)
+          if (expanded.length > 0) {
+            programItems.push(...expanded)
+          } else {
+            // Block exists but has no items yet — one placeholder so operator sees it
+            programItems.push({
+              id: crypto.randomUUID(),
+              order: 0,
+              title: block.name,
+              type: 'spot' as const,
+              status: 'pending' as const,
+              scheduledTime: slot.scheduledTime,
+              duration: 0,
+              adBreakId: block.id,
+            })
+          }
+          currentRotation = newRot
+        }
+      } else {
+        // Regular program slot — skip if not configured (no file, no input)
+        if (!slot.filePath && !slot.inputName && slot.type !== 'vmix_action') continue
+        programItems.push({
+          id: crypto.randomUUID(),
+          order: 0,
+          title: slot.title,
+          type: slot.type as import('../types').SpotType,
+          status: 'pending' as const,
+          scheduledTime: slot.scheduledTime,
+          filePath: slot.filePath,
+          inputName: slot.inputName,
+          duration: slot.duration,
+          mediaType: slot.mediaType,
+          notes: slot.notes,
+          vmixAction: slot.vmixAction,
+        })
+      }
+    }
+
+    // 2. Commercial blocks for today NOT already covered by the schedule slots
+    const linkedBlockIds = new Set(
+      sortedSlots
+        .filter(s => s.type === 'bloco_comercial' || s.type === 'bloco_musical')
+        .map(s => s.commercialBlockId)
+        .filter(Boolean)
+    )
+    const blocksForDay = commercialBlocks.filter(b => {
+      if (!b.enabled || linkedBlockIds.has(b.id)) return false
+      const days = b.daysOfWeek?.length ? b.daysOfWeek : [0, 1, 2, 3, 4, 5, 6]
+      return days.includes(dayOfWeek)
+    })
+
+    const blockItems: PlaylistItem[] = []
+    for (const block of blocksForDay) {
+      const [expanded, newRotation] = expandBlockItems(block, 0, currentRotation)
+      blockItems.push(...expanded)
+      currentRotation = newRotation
+    }
+
+    // 3. Sort newly-generated items by scheduledTime
+    const generated = [...programItems, ...blockItems].sort((a, b) =>
+      (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
+    )
+
+    const existing = stateRef.current.dateSchedules[dateStr] ?? []
+
+    let finalItems: PlaylistItem[]
+
+    if (merge && existing.length > 0) {
+      // ── Merge mode: keep everything already in the schedule,
+      //    add only items for times that don't exist yet ──────────────────────
+      const existingTimes = new Set(
+        existing.map(i => i.scheduledTime?.slice(0, 5)).filter(Boolean)
+      )
+      // Only keep newly-generated items whose HH:MM is not already covered
+      const toAdd = generated.filter(item => {
+        const hhmm = item.scheduledTime?.slice(0, 5)
+        return hhmm && !existingTimes.has(hhmm)
+      })
+
+      if (toAdd.length === 0) {
+        // Nothing new to add — schedule is already up-to-date
+        dispatch({ type: 'SET_SPOT_ROTATION', payload: currentRotation })
+        return
+      }
+
+      finalItems = [...existing, ...toAdd]
+        .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))
+        .map((item, idx) => ({ ...item, order: idx + 1 }))
+    } else {
+      // ── Replace mode: build fresh schedule from scratch ────────────────────
+      finalItems = generated.map((item, idx) => ({ ...item, order: idx + 1 }))
+    }
+
+    dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: dateStr, items: finalItems } })
+    dispatch({ type: 'SET_SPOT_ROTATION', payload: currentRotation })
+
+    // Mark commercial blocks as loaded so the scheduler doesn't duplicate them
+    if (dateStr === today()) {
+      blocksForDay.forEach(b => {
+        dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: dateStr } })
+      })
+    }
+  }, [dispatch, expandBlockItems])
 
   // ── Commercial block scheduler ───────────────────────────────────────────────
   // Checks every 30 s. X minutes before each enabled block's scheduledTime
   // (configured via settings.preloadMinutes, default 5), loads it into the
   // playlist (once per day). Auto-play only fires if autoplayComerciais is ON.
+  // Also detects day change and auto-generates the playlist from the weekly grid.
   useEffect(() => {
     if (state.isLoading) return
+    let lastDay = today()
     const interval = setInterval(() => {
-      const today = new Date().toISOString().slice(0, 10)
+      // ── Midnight watcher ──────────────────────────────────────────────────
+      const currentDay = today()
+      if (currentDay !== lastDay) {
+        lastDay = currentDay
+        generatePlaylistFromGrid(currentDay)
+        return  // skip block scheduler on this tick
+      }
+
+      const todayStr = today()
+      const dow = new Date().getDay()
       const d = new Date()
       const nowSecs = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
       const preloadSecs = (stateRef.current.settings.preloadMinutes ?? 5) * 60
       stateRef.current.commercialBlocks
-        .filter(b => b.enabled && b.lastLoadedDate !== today)
+        .filter(b => {
+          if (!b.enabled || b.lastLoadedDate === todayStr) return false
+          // daysOfWeek filter: undefined/empty = all days
+          const days = b.daysOfWeek?.length ? b.daysOfWeek : [0, 1, 2, 3, 4, 5, 6]
+          return days.includes(dow)
+        })
         .forEach(b => {
           const [h = 0, m = 0, s = 0] = b.scheduledTime.split(':').map(Number)
           const blockSecs   = h * 3600 + m * 60 + s
@@ -313,7 +611,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         })
     }, 30_000)
     return () => clearInterval(interval)
-  }, [state.isLoading, loadBlockIntoPlaylist])
+  }, [state.isLoading, loadBlockIntoPlaylist, generatePlaylistFromGrid])
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -391,7 +689,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const playItem = useCallback(async (item: PlaylistItem, nextFilePath?: string) => {
     if (!window.spotmaster) return
 
-    dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'playing' } })
+    updateQueueItem({ ...item, status: 'playing' })
     const actualTime = now()
 
     // ── Ação vMix (comando instantâneo, sem mídia) ───────────────────────────
@@ -417,7 +715,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           notes: `vMix: ${fn}${input ? ` → ${input}` : ''}${value ? ` (${value})` : ''}`,
         } as PlayLog,
       })
-      dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
+      updateQueueItem({ ...item, status: 'done' })
       return
     }
 
@@ -590,9 +888,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Mark done. Items interrupted by a scheduled block go 'done' —
     // playout always moves forward, never returns to what was playing.
-    const fresh = stateRef.current.playlist.find(i => i.id === item.id)
+    const fresh = getQueue().find(i => i.id === item.id)
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
-      dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...fresh, status: 'done' } })
+      updateQueueItem({ ...fresh, status: 'done' })
     }
   }, [dispatch, loadNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -612,8 +910,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         disparoInterruptRef.current = false
       }
 
-      // ── Read live playlist ───────────────────────────────────────────────
-      const pending = stateRef.current.playlist.filter(i => i.status === 'pending')
+      // ── Read live queue (playlist or daySchedule) ────────────────────────
+      const pending = getQueue().filter(i => i.status === 'pending')
       if (pending.length === 0) break
 
       const currentTime = now()
@@ -631,20 +929,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         })
 
       // When a commercial block is due, skip pending items that come BEFORE
-      // it in the playlist — playout always moves forward.
+      // it in the queue — playout always moves forward.
       if (scheduledDue.length > 0) {
         const firstDueOrder = scheduledDue[0].order
         const toSkip = pending.filter(i => i.order < firstDueOrder)
         if (toSkip.length > 0) {
-          toSkip.forEach(i =>
-            dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...i, status: 'skipped' } })
-          )
+          toSkip.forEach(i => updateQueueItem({ ...i, status: 'skipped' }))
           await sleep(150)
           continue
         }
       }
 
       const next = scheduledDue[0] ?? [...pending].sort((a, b) => a.order - b.order)[0]
+
+      // Instantly skip items with no playable content (no file, no vMix input, not a vMix action).
+      // These are empty musical slots that the operator hasn't filled yet.
+      if (!next.filePath && !next.inputName && next.type !== 'vmix_action') {
+        updateQueueItem({ ...next, status: 'skipped' })
+        await sleep(50)
+        continue
+      }
 
       // Look ahead: find the next file-based pending item so playItem can preload it
       const pendingByOrder = [...pending].sort((a, b) => a.order - b.order)
@@ -654,9 +958,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await playItem(next, afterNext?.filePath)
       } catch (err) {
         console.error('[SpotMaster] playItem error for "' + next.title + '":', err)
-        const stale = stateRef.current.playlist.find(i => i.id === next.id)
+        const stale = getQueue().find(i => i.id === next.id)
         if (stale && stale.status !== 'done' && stale.status !== 'skipped') {
-          dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...stale, status: 'error' } })
+          updateQueueItem({ ...stale, status: 'error' })
         }
       }
 
@@ -699,11 +1003,159 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
-    // Guard: don't start if already playing or nothing pending
     if (stateRef.current.isSequencePlaying) return
     const hasPending = stateRef.current.playlist.some(i => i.status === 'pending')
     if (!hasPending) return
+    activeQueueRef.current = 'playlist'
+    abortRef.current = false
+    scheduleInterruptRef.current = false
+    dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
+    if (window.spotmaster) {
+      window.spotmaster.vmixStartFastPolling(
+        stateRef.current.settings.vmixHost,
+        stateRef.current.settings.vmixPort
+      )
+    }
+    runSequence()
+  }, [dispatch, runSequence])
 
+  // Inicia a programação a partir do bloco cujo horário é o mais próximo
+  // do horário atual (sem ultrapassar). Itens de blocos anteriores são
+  // marcados como 'skipped' antes de iniciar o runSequence.
+  const startScheduleFromNow = useCallback(() => {
+    if (stateRef.current.isSequencePlaying) return
+
+    const todayStr = today()
+    const schedule = stateRef.current.dateSchedules[todayStr] ?? []
+
+    const d = new Date()
+    const nowHHMM = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+
+    // Unique block times sorted ascending
+    const blockTimes = [...new Set(
+      schedule.map(i => i.scheduledTime?.slice(0, 5) ?? '00:00'),
+    )].sort()
+
+    // Latest block at or before now (the "current" block)
+    const currentBlockTime = blockTimes.filter(t => t <= nowHHMM).pop()
+
+    let updatedSchedule = schedule
+    if (currentBlockTime) {
+      updatedSchedule = schedule.map(item => ({
+        ...item,
+        status: (item.scheduledTime?.slice(0, 5) ?? '00:00') < currentBlockTime
+          && item.status === 'pending'
+            ? ('skipped' as const)
+            : item.status,
+      }))
+      // Update stateRef immediately so runSequence reads the correct data
+      stateRef.current = {
+        ...stateRef.current,
+        dateSchedules: { ...stateRef.current.dateSchedules, [todayStr]: updatedSchedule },
+      }
+      dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: updatedSchedule } })
+    }
+
+    if (!updatedSchedule.some(i => i.status === 'pending')) return
+
+    dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
+    activeQueueRef.current = 'schedule'
+    abortRef.current = false
+    runSequence()
+  }, [dispatch, runSequence])
+
+  // Inicia a partir de um item específico (direito no card → "Iniciar daqui").
+  // Itens ANTES do alvo (por order) são marcados 'skipped'.
+  // O item alvo é forçado para 'pending'. Funciona mesmo com a sequência ativa.
+  const startScheduleFromItem = useCallback(async (itemId: string) => {
+    const todayStr = today()
+    const schedule = stateRef.current.dateSchedules[todayStr] ?? []
+    const target   = schedule.find(i => i.id === itemId)
+    if (!target) return
+
+    const isPlaying = stateRef.current.isSequencePlaying
+
+    // Build desired schedule: skip items before target, ensure target is pending
+    const updatedSchedule = schedule.map(item => {
+      if (item.id === itemId) return { ...item, status: 'pending' as const }
+      if (item.order < target.order && (item.status === 'pending' || item.status === 'playing')) {
+        return { ...item, status: 'skipped' as const }
+      }
+      return item
+    })
+
+    if (isPlaying) {
+      // Signal abort — playItem's progress loop checks this every 300 ms
+      abortRef.current = true
+      scheduleInterruptRef.current  = false
+      disparoInterruptRef.current   = false
+      dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
+      // Wait for playItem to finish its cycle and runSequence to exit
+      await new Promise(r => setTimeout(r, 450))
+    }
+
+    // Apply the new schedule to stateRef immediately so runSequence reads it
+    stateRef.current = {
+      ...stateRef.current,
+      isSequencePlaying: false,
+      dateSchedules: { ...stateRef.current.dateSchedules, [todayStr]: updatedSchedule },
+    }
+    dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: updatedSchedule } })
+
+    if (!updatedSchedule.some(i => i.status === 'pending')) return
+
+    await new Promise(r => setTimeout(r, 50))
+    dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
+    activeQueueRef.current = 'schedule'
+    abortRef.current = false
+    runSequence()
+  }, [dispatch, runSequence])
+
+  // Para a sequência e mantém o item atual como 'pending' para retomar depois.
+  const pauseSchedule = useCallback(() => {
+    if (!stateRef.current.isSequencePlaying) return
+
+    const todayStr     = today()
+    const schedule     = stateRef.current.dateSchedules[todayStr] ?? []
+    const playingId    = schedule.find(i => i.status === 'playing')?.id
+    const activeInput  = activeInputRef.current
+
+    // Pause vMix input if possible (media files support Pause)
+    if (window.spotmaster && activeInput) {
+      window.spotmaster.vmixRequest({ Function: 'Pause', Input: activeInput }).catch(() => {})
+    }
+
+    // Stop the sequence engine
+    abortRef.current = true
+    scheduleInterruptRef.current = false
+    disparoInterruptRef.current  = false
+    dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
+
+    // After playItem finishes cleanup (~300 ms), reset the paused item to pending
+    // so the user can resume with "Iniciar daqui" or "Iniciar Programação"
+    if (playingId) {
+      setTimeout(() => {
+        const fresh = stateRef.current.dateSchedules[todayStr] ?? []
+        const updated = fresh.map(item => ({
+          ...item,
+          status: item.id === playingId && (item.status === 'done' || item.status === 'playing')
+            ? 'pending' as const
+            : item.status,
+        }))
+        stateRef.current = {
+          ...stateRef.current,
+          dateSchedules: { ...stateRef.current.dateSchedules, [todayStr]: updated },
+        }
+        dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: updated } })
+      }, 450)
+    }
+  }, [dispatch])
+
+  const startSchedule = useCallback(() => {
+    if (stateRef.current.isSequencePlaying) return
+    const hasPending = (stateRef.current.dateSchedules[today()] ?? []).some(i => i.status === 'pending')
+    if (!hasPending) return
+    activeQueueRef.current = 'schedule'
     abortRef.current = false
     scheduleInterruptRef.current = false
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
@@ -739,12 +1191,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: g })
       }
     }
-    stateRef.current.playlist
+    getQueue()
       .filter(i => i.status === 'playing')
-      .forEach(i =>
-        dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...i, status: 'pending' } })
-      )
-  }, [dispatch, cleanupInputs])
+      .forEach(i => updateQueueItem({ ...i, status: 'pending' }))
+  }, [dispatch, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── disparo ─────────────────────────────────────────────────────────────────
   // Global trigger command: starts sequence if idle, or advances to next item
@@ -754,9 +1204,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       disparoInterruptRef.current = true
       abortRef.current = true
     } else {
-      startSequence()
+      // Start whichever queue the operator last used (or playlist as default)
+      if (activeQueueRef.current === 'schedule') {
+        startSchedule()
+      } else {
+        startSequence()
+      }
     }
-  }, [startSequence]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── playSingleItem ──────────────────────────────────────────────────────────
   const playSingleItem = useCallback(() => {
@@ -884,28 +1339,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.settings.triggerEnabled, state.settings.triggerKey, disparo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Scheduler: autoPlay geral (itens sem adBreakId) ────────────────────────
-  // Monitora itens com scheduledTime na playlist que não são de bloco comercial.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
       if (!stateRef.current.settings.autoPlay) return
-
       const currentTime = now()
-      const scheduledDue = stateRef.current.playlist.filter(
-        i =>
-          i.status === 'pending' &&
-          !i.adBreakId &&
-          i.scheduledTime &&
-          i.scheduledTime <= currentTime
+      const scheduledDue = getQueue().filter(
+        i => i.status === 'pending' && !i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
       )
       if (scheduledDue.length === 0) return
-
       const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
       if (scheduleInterruptTimeRef.current === triggerTime) return
-
       if (!stateRef.current.isSequencePlaying) {
         scheduleInterruptTimeRef.current = triggerTime
-        startSequence()
+        activeQueueRef.current === 'schedule' ? startSchedule() : startSequence()
       } else {
         scheduleInterruptTimeRef.current = triggerTime
         scheduleInterruptRef.current = true
@@ -913,43 +1360,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSequence])
+  }, [state.isLoading, startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Scheduler: Autoplay Comerciais (blocos com adBreakId) ──────────────────
-  // Independente do autoPlay geral. Quando ON, garante que o bloco comercial
-  // dispara EXATAMENTE no horário programado, interrompendo o que estiver
-  // tocando. Tem prioridade absoluta sobre qualquer outra mídia em execução.
-  // Quando OFF, o bloco aguarda sua vez na fila da playlist normalmente.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
       if (!stateRef.current.settings.autoplayComerciais) return
-
       const currentTime = now()
-      const scheduledDue = stateRef.current.playlist.filter(
-        i =>
-          i.status === 'pending' &&
-          !!i.adBreakId &&
-          i.scheduledTime &&
-          i.scheduledTime <= currentTime
+      const scheduledDue = getQueue().filter(
+        i => i.status === 'pending' && !!i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
       )
       if (scheduledDue.length === 0) return
-
       const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
       if (scheduleInterruptTimeRef.current === triggerTime) return
-
       if (!stateRef.current.isSequencePlaying) {
         scheduleInterruptTimeRef.current = triggerTime
-        startSequence()
+        activeQueueRef.current === 'schedule' ? startSchedule() : startSequence()
       } else {
-        // Prioridade absoluta: interrompe o item atual e inicia o bloco comercial
         scheduleInterruptTimeRef.current = triggerTime
         scheduleInterruptRef.current = true
         abortRef.current = true
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSequence])
+  }, [state.isLoading, startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load all data on startup ───────────────────────────────────────────────
   useEffect(() => {
@@ -960,7 +1395,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       try {
         const [settingsRaw, playlistRaw, adBreaksRaw, clientsRaw, logRaw,
-               blocksRaw, spotsRaw, rotationRaw, panelRaw] =
+               blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -971,7 +1406,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('clientSpots'),
             window.spotmaster.loadData('spotRotation'),
             window.spotmaster.loadData('activePanel'),
+            window.spotmaster.loadData('weeklyGrid'),
+            window.spotmaster.loadData('dateSchedules'),
           ])
+        // Migrate old-format blocks (slots[]) to new format (items[])
+        const migrateBlock = (b: CommercialBlock): CommercialBlock => {
+          if (b.items?.length) return b
+          const items: CommercialBlockItem[] = (b.slots ?? []).map((slot, i) => ({
+            id: crypto.randomUUID(),
+            order: i + 1,
+            type: 'spot_client' as const,
+            clientId: slot.clientId,
+            spotsCount: slot.spotsCount,
+          }))
+          return { ...b, items, slots: undefined }
+        }
+        const rawBlocks = ((blocksRaw as CommercialBlock[]) ?? []).map(migrateBlock)
+
         dispatch({
           type: 'LOAD_ALL',
           payload: {
@@ -980,10 +1431,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             adBreaks:         (adBreaksRaw as AdBreak[])          ?? [],
             clients:          (clientsRaw as Client[])            ?? [],
             playLog:          (logRaw as PlayLog[])               ?? [],
-            commercialBlocks: (blocksRaw as CommercialBlock[])    ?? [],
+            commercialBlocks: rawBlocks,
             clientSpots:      (spotsRaw as ClientSpot[])          ?? [],
             spotRotation:     (rotationRaw as SpotRotation)       ?? {},
             activePanel:      (typeof panelRaw === 'string' ? panelRaw : null) ?? 'playlist',
+            weeklyGrid:       { ...DEFAULT_WEEKLY_GRID, ...((gridRaw as WeeklyProgramGrid) ?? {}) },
+            dateSchedules:    (dateSchedulesRaw as Record<string, PlaylistItem[]>) ?? {},
           },
         })
       } catch {
@@ -1051,8 +1504,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!state.isLoading) saveToStorage('activePanel', state.activePanel)
   }, [state.activePanel, state.isLoading, saveToStorage])
 
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('weeklyGrid', state.weeklyGrid)
+  }, [state.weeklyGrid, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('dateSchedules', state.dateSchedules)
+  }, [state.dateSchedules, state.isLoading, saveToStorage])
+
+  // ── Auto-load today's schedule on startup ───────────────────────────────────
+  // If today's date has no schedule stored, generate from the weekly template.
+  useEffect(() => {
+    if (state.isLoading) return
+    if (!state.dateSchedules[today()]) {
+      generatePlaylistFromGrid(today())
+    }
+  }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, stopPlayback, loadBlockIntoPlaylist, disparo }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid }}>
       {children}
     </AppContext.Provider>
   )

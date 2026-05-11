@@ -6,6 +6,8 @@ const en: Translations = {
 
   nav: {
     playlist: 'Playlist',
+    grade: 'Grid',
+    programacao: 'On Air',
     adBreaks: 'Ad Breaks',
     clients: 'Advertisers',
     log: 'Playout Log',
@@ -62,6 +64,44 @@ const en: Translations = {
     autoPlayScheduled: 'Auto-play by Schedule',
   },
 
+  schedule: {
+    title: "Today's Schedule",
+    reload: 'Reload from Grid',
+    reloadConfirm: "Reload today's schedule from the grid? Current items will be replaced.",
+    empty: "No programs loaded. Go to the Grid tab and click \"Load Today's Schedule\".",
+    loadedFor: 'Schedule for',
+    playSchedule: 'Start Schedule',
+  },
+
+  grade: {
+    title: 'Programming Structure',
+    loadToday: 'Apply On Air',
+    loadTodayConfirm: 'Regenerate today\'s On Air schedule from this template? Confirm?',
+    addPrograma: 'Program',
+    addBlocoMusical: 'Music Block',
+    addBlocoComercial: 'Ad Block',
+    editSlot: 'Edit Slot',
+    newSlot: 'New Slot',
+    emptyDay: 'No slots configured for this day. Use the + buttons above to build the structure.',
+    days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    daysLong: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+    notConfigured: 'Not configured',
+    selectBlock: 'Select Block',
+    scheduledTime: 'Time',
+    duration: 'Duration (s)',
+    file: 'File',
+    inputVmix: 'vMix Input',
+    today: 'today',
+    slotTypes: {
+      programa: 'Program',
+      vinheta: 'Jingle',
+      bumper: 'Bumper',
+      bloco_musical: 'Music Block',
+      bloco_comercial: 'Ad Block',
+      outros: 'Other',
+    },
+  },
+
   adBreaks: {
     title: 'Ad Breaks',
     // Blocks tab
@@ -79,6 +119,14 @@ const en: Translations = {
     enabled: 'Active',
     preloadMinutes: 'Pre-load (min before)',
     awaitingTrigger: 'Awaiting trigger',
+    daysOfWeek: 'Days of Week',
+    daysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    blockItems: 'Block Items',
+    addSpotClient: 'Client Spot',
+    addVmixAction: 'vMix Action',
+    addVmixInput: 'vMix Input',
+    spotsLabel: 'spots',
+    inputDuration: 'Duration (s)',
     // Spots tab
     emptySpots: 'No spots registered for this advertiser.',
     addSpot: 'Add Spot',
@@ -107,6 +155,10 @@ const en: Translations = {
     phone: 'Phone',
     notes: 'Notes',
     spotCount: 'Aired Spots',
+    manageSpots: 'Spots',
+    spots: 'Registered Spots',
+    noSpots: 'No spots registered for this advertiser.',
+    addSpot: 'Add Spot',
   },
 
   log: {

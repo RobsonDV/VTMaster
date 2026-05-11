@@ -57,7 +57,7 @@ export default function AdBreakSelectModal({ onClose }: AdBreakSelectModalProps)
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{block.scheduledTime.slice(0,5)} — {block.name}</div>
                   <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-                    {block.slots.reduce((a, s) => a + s.spotsCount, 0)} spot{block.slots.reduce((a, s) => a + s.spotsCount, 0) !== 1 ? 's' : ''}
+                    {(block.items ?? []).filter(i => i.type === 'spot_client').reduce((a, i) => a + (i.spotsCount ?? 1), 0)} itens
                     {block.lastLoadedDate === new Date().toISOString().slice(0,10) && (
                       <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ Carregado hoje</span>
                     )}

@@ -1,16 +1,18 @@
-# VTMaster
+# VTMaster v3.0
 
-Software desktop de veiculacao comercial para emissoras de TV com integracao nativa ao vMix.
+Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
 ## Sobre o projeto
 
-O VTMaster automatiza a execucao de playlists comerciais, incluindo:
+O VTMaster automatiza a execução da grade de programação diária, incluindo:
 
-- Sequencia automatica de playout (PlayInput -> PreviewInput -> Cut)
-- Autoplay por horario agendado
-- Blocos comerciais com round-robin por anunciante
-- Painel de inputs do vMix com arrastar e soltar para a playlist
-- Log de veiculacao e geracao de relatorios PDF
+- Grade semanal de programação (Estrutura): blocos musicais, blocos comerciais e programas
+- Programação do Dia com view em cards por bloco, drag-and-drop e menu de contexto
+- Sequência automática de playout no vMix (PlayInput → PreviewInput → Cut)
+- Blocos comerciais com round-robin por anunciante e expansão inline de spots
+- Disparo global via tecla configurável (funciona minimizado)
+- Autoplay por horário agendado
+- Log de veiculação e geração de relatórios PDF
 
 Stack principal:
 
@@ -19,23 +21,21 @@ Stack principal:
 - TypeScript 6
 - Vite 8
 
-## Documentacao
+## Documentação
 
-Use este mapa para navegar na documentacao oficial do projeto:
-
-- [docs/INDEX.md](docs/INDEX.md): indice central e trilhas por perfil
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes tecnicos completos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional e backlog
-- [release/LEIA-ME.md](release/LEIA-ME.md): guia de uso para operador final
+- [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v3.0
+- [release/LEIA-ME.md](release/LEIA-ME.md): guia de uso para operador
 
 ## Requisitos
 
 - Windows 10/11 64-bit
 - Node.js 20+
 - npm 10+
-- vMix 20+ (para uso em producao)
+- vMix 20+ (para uso em produção)
 
-## Instalar dependencias
+## Instalar dependências
 
 ```bash
 npm install
@@ -47,56 +47,63 @@ npm install
 npm run dev
 ```
 
-Esse comando:
+## Scripts disponíveis
 
-1. Compila o processo Electron (pasta electron -> dist-electron)
-2. Sobe o servidor Vite (porta 5173)
-3. Abre a janela Electron apontando para o frontend em dev
+| Script | Ação |
+|--------|------|
+| `npm run dev` | Ambiente de desenvolvimento completo |
+| `npm run electron:compile` | Compila apenas código Electron |
+| `npm run build` | Build de produção (frontend + Electron) |
+| `npm run build:dist` | Gera instaladores via electron-builder |
+| `npm run lint` | Executa ESLint |
 
-## Scripts disponiveis
-
-- `npm run dev`: ambiente de desenvolvimento completo
-- `npm run electron:compile`: compila apenas codigo Electron
-- `npm run build`: build de producao (frontend + Electron)
-- `npm run build:dist`: gera instaladores via electron-builder
-- `npm run lint`: executa ESLint
-- `npm run preview`: preview local do build web
-
-## Build de distribuicao
+## Build de distribuição
 
 ```bash
 npm run build:dist
 ```
 
-Artefatos sao gerados em `release/`, incluindo:
+Artefatos gerados em `release/`:
 
-- `VTMaster-1.0.0-Setup.exe`
-- `VTMaster-1.0.0-Portable.exe`
+- `VTMaster-3.0.0-Setup.exe` — instalador NSIS
+- `VTMaster-3.0.0-Portable.exe` — executável portátil
 
 ## Estrutura principal
 
-```text
-spotmaster/
-  electron/              # main process, preload e integracao com vMix
-  src/                   # app React (UI, estado, componentes)
-  docs/                  # documentacao tecnica e estado do projeto
-  release/               # artefatos de distribuicao
-  dist/                  # build frontend
-  dist-electron/         # build Electron
+```
+VTMaster/
+  electron/              # main process, preload e integração vMix
+  src/
+    store/               # AppContext — estado global, motor de playout, scheduler
+    components/
+      Grade/             # Estrutura semanal (template de programação)
+      DaySchedule/       # Programação do Dia (card-view, drag-and-drop)
+      AdBreaks/          # Blocos comerciais com expansão inline
+      Clients/           # Cadastro de anunciantes e spots
+      Playlist/          # Playlist manual
+      Log/               # Log de veiculação
+      Reports/           # PDF
+    types/               # Todos os tipos TypeScript
+    i18n/                # PT e EN
+    utils/               # time.ts
+  docs/                  # Documentação técnica
+  release/               # Artefatos de distribuição
 ```
 
-## Persistencia local
+## Persistência local
 
-Os dados do usuario ficam em `%APPDATA%/SpotMaster/` (Windows), incluindo:
+Dados salvos em `%APPDATA%/SpotMaster/` (Windows):
 
-- configuracoes
-- playlist
-- blocos comerciais
-- anunciantes
-- spots por anunciante
-- log de veiculacao
+- `settings.json` — configurações
+- `playlist.json` — playlist manual
+- `commercialBlocks.json` — blocos comerciais
+- `clientSpots.json` — spots por anunciante
+- `weeklyGrid.json` — grade semanal (Estrutura)
+- `dateSchedules.json` — programações por data
+- `spotRotation.json` — índices de rodízio
+- `playLog.json` — histórico de veiculação
 
-## Licenca
+## Licença
 
-Este projeto esta licenciado sob GNU AGPL v3.
+Este projeto está licenciado sob GNU AGPL v3.
 Veja [LICENSE](LICENSE).

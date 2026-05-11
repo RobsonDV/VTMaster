@@ -12,11 +12,13 @@ import ClientsPanel from './components/Clients/ClientsPanel'
 import LogPanel from './components/Log/LogPanel'
 import ReportsPanel from './components/Reports/ReportsPanel'
 import SettingsModal from './components/Settings/SettingsModal'
+import GradePanel from './components/Grade/GradePanel'
+import DaySchedulePanel from './components/DaySchedule/DaySchedulePanel'
 import type { PlaylistItem } from './types'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
-type Panel = 'playlist' | 'adbreaks' | 'clients' | 'log' | 'reports'
+type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports'
 
 // Mini-modal para editar apenas o horário agendado de um item
 function ScheduleEditModal({ item, onClose }: { item: PlaylistItem; onClose: () => void }) {
@@ -74,17 +76,25 @@ export default function App() {
   const [insertAfterOrder, setInsertAfterOrder] = useState<number | undefined>()
   const [defaultItemMode, setDefaultItemMode] = useState<'media' | 'vmix_action'>('media')
   const [scheduleEditItem, setScheduleEditItem] = useState<PlaylistItem | null>(null)
+  // Persists the selected date across Programação tab navigation
+  const [scheduleDate, setScheduleDate] = useState(() => {
+    // Use the useApp today(), but defer to avoid stale closure on module load
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
 
   useEffect(() => {
     window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
   }, [])
 
   const navItems = [
-    { id: 'playlist' as Panel,  label: t.nav.playlist },
-    { id: 'adbreaks' as Panel,  label: t.nav.adBreaks },
-    { id: 'clients' as Panel,   label: t.nav.clients },
-    { id: 'log' as Panel,       label: t.nav.log },
-    { id: 'reports' as Panel,   label: t.nav.reports },
+    { id: 'playlist' as Panel,    label: t.nav.playlist },
+    { id: 'programacao' as Panel, label: t.nav.programacao },
+    { id: 'grade' as Panel,       label: t.nav.grade },
+    { id: 'adbreaks' as Panel,    label: t.nav.adBreaks },
+    { id: 'clients' as Panel,     label: t.nav.clients },
+    { id: 'log' as Panel,         label: t.nav.log },
+    { id: 'reports' as Panel,     label: t.nav.reports },
   ]
 
   const handleSetPanel = (panel: Panel) => {
@@ -149,6 +159,13 @@ export default function App() {
               {showVmixPanel && <VmixInputPanel onClose={() => setShowVmixPanel(false)} />}
             </div>
           )}
+          {activePanel === 'programacao' && (
+            <DaySchedulePanel
+              selectedDate={scheduleDate}
+              onDateChange={setScheduleDate}
+            />
+          )}
+          {activePanel === 'grade' && <GradePanel onNavigate={handleSetPanel} />}
           {activePanel === 'adbreaks' && <AdBreaksPanel />}
           {activePanel === 'clients' && <ClientsPanel />}
           {activePanel === 'log' && <LogPanel />}

@@ -1,8 +1,8 @@
 {
   "name": "vtmaster",
   "private": true,
-  "version": "2.0.0",
-  "description": "VTMaster - Software de Veiculação Comercial para TV",
+  "version": "3.0.0",
+  "description": "VTMaster - Software de Playout para TV/Rádio com integração vMix",
   "author": "RobsonCostaDV",
   "main": "dist-electron/main.js",
   "type": "module",

@@ -6,6 +6,8 @@ const pt = {
   // Navigation
   nav: {
     playlist: 'Playlist',
+    grade: 'Estrutura',
+    programacao: 'Programação',
     adBreaks: 'Blocos Comerciais',
     clients: 'Anunciantes',
     log: 'Log de Veiculação',
@@ -64,6 +66,46 @@ const pt = {
     autoPlayScheduled: 'Autoplay por Horário',
   },
 
+  // Programação do Dia
+  schedule: {
+    title: 'Programação do Dia',
+    reload: 'Recarregar da Grade',
+    reloadConfirm: 'Recarregar a programação do dia da grade? Os itens atuais serão substituídos.',
+    empty: 'Nenhum programa carregado. Acesse a aba Grade e clique em "Carregar Programação de Hoje".',
+    loadedFor: 'Programação de',
+    playSchedule: 'Iniciar Programação',
+  },
+
+  // Estrutura de Programação (grade semanal)
+  grade: {
+    title: 'Estrutura de Programação',
+    loadToday: 'Aplicar no Ar',
+    loadTodayConfirm: 'Regenerar a Programação do Dia com base neste template? Confirmar?',
+    addPrograma: 'Programa',
+    addBlocoMusical: 'Bloco Musical',
+    addBlocoComercial: 'Bloco Comercial',
+    editSlot: 'Editar Slot',
+    newSlot: 'Novo Slot',
+    emptyDay: 'Nenhum slot configurado para este dia. Use os botões + acima para montar a estrutura.',
+    days: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'],
+    daysLong: ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'],
+    notConfigured: 'Não configurado',
+    selectBlock: 'Selecionar Bloco',
+    scheduledTime: 'Horário',
+    duration: 'Duração (s)',
+    file: 'Arquivo',
+    inputVmix: 'Input vMix',
+    today: 'hoje',
+    slotTypes: {
+      programa: 'Programa',
+      vinheta: 'Vinheta',
+      bumper: 'Bumper',
+      bloco_musical: 'Bloco Musical',
+      bloco_comercial: 'Bloco Comercial',
+      outros: 'Outros',
+    },
+  },
+
   // Ad Breaks
   adBreaks: {
     title: 'Blocos Comerciais',
@@ -82,6 +124,14 @@ const pt = {
     enabled: 'Ativo',
     preloadMinutes: 'Pré-carregar (min antes)',
     awaitingTrigger: 'Aguardando disparo',
+    daysOfWeek: 'Dias da Semana',
+    daysShort: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'],
+    blockItems: 'Itens do Bloco',
+    addSpotClient: 'Spot de Cliente',
+    addVmixAction: 'Ação vMix',
+    addVmixInput: 'Input vMix',
+    spotsLabel: 'spots',
+    inputDuration: 'Duração (s)',
     // Spots tab
     emptySpots: 'Nenhum spot cadastrado para este anunciante.',
     addSpot: 'Adicionar Spot',
@@ -111,6 +161,10 @@ const pt = {
     phone: 'Telefone',
     notes: 'Observações',
     spotCount: 'Spots Veiculados',
+    manageSpots: 'Spots',
+    spots: 'Spots Cadastrados',
+    noSpots: 'Nenhum spot cadastrado para este anunciante.',
+    addSpot: 'Adicionar Spot',
   },
 
   // Log

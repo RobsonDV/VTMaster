@@ -240,6 +240,7 @@ input[type='time']::-webkit-calendar-picker-indicator {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+  flex-shrink: 0;   /* prevent collapse when many cards in a flex column scroll container */
 }
 
 .adbreak-card-header {
@@ -249,6 +250,7 @@ input[type='time']::-webkit-calendar-picker-indicator {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-tertiary);
+  min-height: 48px;
 }
 
 .adbreak-card-header strong {
@@ -477,6 +479,13 @@ input[type='time']::-webkit-calendar-picker-indicator {
   font-size: 0.78rem;
   color: var(--text-secondary);
   margin: 4px 0;
+}
+
+/* ── Inline editor (accordion) ── */
+.ab-inline-editor {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-primary) 80%, var(--bg-secondary));
 }
 
 /* Small icon action buttons inside card */

@@ -290,7 +290,7 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
                   return (
                   <Fragment key={item.id}>
                   <tr
-                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}`}
+                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}${item.adBreakId ? ' row-commercial' : ''}${item.type === 'programa' && !item.adBreakId ? ' row-programa' : ''}`}
                     onClick={() => setSelectedId(item.id)}
                     onContextMenu={(e) => handleContextMenu(e, item, index)}
                     onDragOver={(e) => handleRowDragOver(e, index)}

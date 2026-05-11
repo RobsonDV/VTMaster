@@ -1,0 +1,292 @@
+/* ── Grade de Programação ── */
+
+.grade-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.grade-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.grade-panel-header h2 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.grade-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Day tabs ── */
+.grade-day-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 20px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.grade-day-tab {
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  border-bottom: 2px solid transparent;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+
+.grade-day-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.grade-day-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 700;
+}
+
+.grade-day-tab.is-today {
+  position: relative;
+}
+
+.grade-day-tab.is-today::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+/* ── Content ── */
+.grade-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Section ── */
+.grade-section-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Program slot row ── */
+.grade-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.grade-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.grade-slot-row:hover {
+  background: var(--bg-hover);
+}
+
+.grade-slot-row.type-programa {
+  border-left: 3px solid #0ea5e9;
+}
+
+.grade-slot-row.type-vinheta {
+  border-left: 3px solid #8b5cf6;
+}
+
+.grade-slot-row.type-bumper {
+  border-left: 3px solid #f59e0b;
+}
+
+.grade-slot-row.type-outros {
+  border-left: 3px solid var(--text-secondary);
+}
+
+.grade-slot-time {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 50px;
+  font-variant-numeric: tabular-nums;
+}
+
+.grade-slot-title {
+  flex: 1;
+  font-size: 0.83rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grade-slot-type {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.grade-slot-dur {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.grade-slot-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.grade-slot-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+}
+
+.grade-slot-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.grade-slot-btn.danger:hover {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+/* ── Commercial block row (read-only) ── */
+.grade-commercial-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, #f59e0b 6%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
+  border-left: 3px solid #f59e0b;
+  border-radius: 6px;
+}
+
+.grade-commercial-time {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #f59e0b;
+  min-width: 50px;
+  font-variant-numeric: tabular-nums;
+}
+
+.grade-commercial-name {
+  flex: 1;
+  font-size: 0.83rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.grade-commercial-badge {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #f59e0b 15%, transparent);
+  color: #f59e0b;
+  white-space: nowrap;
+}
+
+.grade-empty {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* ── Add button ── */
+.grade-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.12s;
+  margin-top: 4px;
+}
+
+.grade-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* ── Load Today button ── */
+.grade-load-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.12s;
+  white-space: nowrap;
+}
+
+.grade-load-btn:hover { opacity: 0.88; }

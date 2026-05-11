@@ -75,22 +75,71 @@ export interface ClientSpot {
   duration: number          // seconds
 }
 
-/** Quantos spots de um cliente entram em um bloco */
+/** Quantos spots de um cliente entram em um bloco (LEGADO — mantido para migração) */
 export interface BlockClientSlot {
   clientId: string
   spotsCount: number
 }
 
-/** Um bloco comercial agendado — dispara todo dia no horário marcado */
+/** Tipo de item dentro de um bloco comercial */
+export type CommercialBlockItemType = 'spot_client' | 'vmix_action' | 'vmix_input'
+
+/** Item ordenado dentro de um bloco comercial (mini-playlist) */
+export interface CommercialBlockItem {
+  id: string
+  order: number
+  type: CommercialBlockItemType
+  title?: string           // label de exibição
+  // spot_client
+  clientId?: string
+  spotsCount?: number      // quantos spots do cliente (round-robin)
+  // vmix_action
+  vmixAction?: VmixActionItem
+  // vmix_input
+  inputName?: string
+  duration?: number        // segundos que o input fica no ar
+}
+
+/** Um bloco comercial agendado — mini-playlist de itens ordenados */
 export interface CommercialBlock {
   id: string
   name: string
   scheduledTime: string     // HH:MM:SS
-  slots: BlockClientSlot[]
+  items: CommercialBlockItem[]
+  slots?: BlockClientSlot[] // LEGADO — apenas para migração de dados antigos
   enabled: boolean
   createdAt: string
   lastLoadedDate?: string   // YYYY-MM-DD — evita carga dupla no mesmo dia
+  daysOfWeek?: number[]     // 0=Dom…6=Sáb; undefined = todos os dias
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Estrutura de Programação Semanal
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Tipos de slot na estrutura semanal — inclui tipos de bloco além dos SpotTypes */
+export type ScheduleSlotType = SpotType | 'bloco_comercial' | 'bloco_musical'
+
+/** Um slot no template semanal */
+export interface ProgramSlot {
+  id: string
+  order: number
+  title: string
+  type: ScheduleSlotType
+  scheduledTime: string           // HH:MM:SS
+  // Para programa / vinheta / outros:
+  filePath?: string
+  inputName?: string
+  duration: number                // segundos
+  mediaType?: 'video' | 'audio' | 'image'
+  // Para bloco_comercial / bloco_musical:
+  commercialBlockId?: string      // referência ao CommercialBlock
+  notes?: string
+  vmixAction?: VmixActionItem
+}
+
+/** Mapa dia-da-semana → lista de slots. Chave: 0=Dom … 6=Sáb */
+export type WeeklyProgramGrid = Record<number, ProgramSlot[]>
 
 /** Controle de rodízio persistido: clientId → próximo índice (0-based) */
 export interface SpotRotation {

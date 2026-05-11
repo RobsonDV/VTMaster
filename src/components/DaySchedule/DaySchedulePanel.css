@@ -1,0 +1,326 @@
+/* ── Programação do Dia — Block Card View ── */
+
+.day-schedule-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.day-schedule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.day-schedule-header h2 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.day-schedule-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.day-schedule-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  transition: all 0.12s;
+}
+
+.day-schedule-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.day-schedule-btn.accent {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.day-schedule-btn.accent:hover { opacity: 0.88; }
+.day-schedule-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Progress bar ── */
+.day-progress-bar {
+  height: 26px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+
+.day-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: width 0.3s linear;
+}
+
+.day-progress-label {
+  position: relative;
+  z-index: 1;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Block list scroll area ── */
+.day-schedule-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Block card ── */
+.block-card {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  flex-shrink: 0;  /* prevent height collapse in scroll flex container */
+}
+
+.block-card.musical {
+  border-color: color-mix(in srgb, #6366f1 35%, transparent);
+  background: color-mix(in srgb, #6366f1 6%, var(--bg-secondary));
+}
+
+.block-card.commercial {
+  border-color: color-mix(in srgb, #22c55e 35%, transparent);
+  background: color-mix(in srgb, #22c55e 6%, var(--bg-secondary));
+}
+
+.block-card.program {
+  border-color: color-mix(in srgb, #0ea5e9 35%, transparent);
+  background: color-mix(in srgb, #0ea5e9 6%, var(--bg-secondary));
+}
+
+/* ── Block card header ── */
+.block-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.block-card.musical .block-card-header   { background: color-mix(in srgb, #6366f1 18%, var(--bg-tertiary)); }
+.block-card.commercial .block-card-header { background: color-mix(in srgb, #22c55e 18%, var(--bg-tertiary)); }
+.block-card.program .block-card-header    { background: color-mix(in srgb, #0ea5e9 18%, var(--bg-tertiary)); }
+
+.block-card-time {
+  font-size: 1rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+
+.block-card.musical .block-card-time   { color: #818cf8; }
+.block-card.commercial .block-card-time { color: #4ade80; }
+.block-card.program .block-card-time    { color: #38bdf8; }
+
+.block-card-name {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.block-card-meta {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.block-card-status {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.block-card.musical .block-card-status   { background: color-mix(in srgb, #6366f1 20%, transparent); color: #818cf8; }
+.block-card.commercial .block-card-status { background: color-mix(in srgb, #22c55e 20%, transparent); color: #4ade80; }
+
+/* ── Block items list ── */
+.block-items-list {
+  padding: 4px 0;
+}
+
+.block-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  transition: background 0.1s;
+}
+
+.block-item-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.block-item-row.playing {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.block-item-row.done, .block-item-row.skipped {
+  opacity: 0.45;
+}
+
+/* ── Drag handle ── */
+.block-item-drag-handle {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  opacity: 0.35;
+  cursor: grab;
+  flex-shrink: 0;
+  padding: 0 2px;
+  transition: opacity 0.1s;
+}
+.block-item-row:hover .block-item-drag-handle { opacity: 0.7; }
+.block-item-row.dragging { opacity: 0.35; background: var(--bg-hover); }
+.block-item-row.drag-over {
+  border-top: 2px solid var(--accent) !important;
+  margin-top: -1px;
+}
+
+.block-item-num {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  min-width: 18px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.block-item-title {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-item-title.empty {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.block-item-dur {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.block-item-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.block-item-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+}
+
+.block-item-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.block-item-btn.green:hover { background: color-mix(in srgb, #22c55e 15%, transparent); color: #22c55e; }
+.block-item-btn.danger:hover { background: color-mix(in srgb, var(--error) 12%, transparent); color: var(--error); }
+
+.block-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 12px;
+  padding: 5px 10px;
+  border: 1px dashed color-mix(in srgb, #6366f1 40%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: #818cf8;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.block-add-btn:hover {
+  border-color: #6366f1;
+  background: color-mix(in srgb, #6366f1 8%, transparent);
+}
+
+/* ── Inline progress inside playing item ── */
+.block-item-inline-progress {
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 1px;
+  overflow: hidden;
+  width: 60px;
+  flex-shrink: 0;
+}
+
+.block-item-inline-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s linear;
+}
+
+/* ── Empty state ── */
+.day-schedule-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+/* ── Footer ── */
+.day-schedule-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
