@@ -579,18 +579,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const currentTime = now()
       const { autoPlay, autoplayComerciais } = stateRef.current.settings
-      const scheduledDue = autoPlay
-        ? pending
-            .filter(i =>
-              i.scheduledTime &&
-              i.scheduledTime <= currentTime &&
-              (!i.adBreakId || autoplayComerciais)
-            )
-            .sort((a, b) => {
-              const timeCmp = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
-              return timeCmp !== 0 ? timeCmp : a.order - b.order
-            })
-        : []
+      // Itens com prioridade de horário: comerciais (autoplayComerciais) OU gerais (autoPlay)
+      const scheduledDue = pending
+        .filter(i => {
+          if (!i.scheduledTime || i.scheduledTime > currentTime) return false
+          if (i.adBreakId) return autoplayComerciais  // bloco comercial: prioridade própria
+          return autoPlay                              // item geral: depende do autoPlay
+        })
+        .sort((a, b) => {
+          const timeCmp = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
+          return timeCmp !== 0 ? timeCmp : a.order - b.order
+        })
 
       // When a commercial block is due, skip pending items that come BEFORE
       // it in the playlist — playout always moves forward.
@@ -845,43 +844,66 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [state.settings.triggerEnabled, state.settings.triggerKey, disparo]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Autoplay scheduler ─────────────────────────────────────────────────────
-  // Every second: if autoPlay is ON and there are pending items whose
-  // scheduledTime has arrived, either start the sequence (if idle) or
-  // interrupt the currently playing item so the block fires on time.
-  // Commercial block items (adBreakId) only auto-trigger if autoplayComerciais is ON.
+  // ── Scheduler: autoPlay geral (itens sem adBreakId) ────────────────────────
+  // Monitora itens com scheduledTime na playlist que não são de bloco comercial.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
       if (!stateRef.current.settings.autoPlay) return
-      const { autoplayComerciais } = stateRef.current.settings
 
       const currentTime = now()
       const scheduledDue = stateRef.current.playlist.filter(
         i =>
           i.status === 'pending' &&
+          !i.adBreakId &&
           i.scheduledTime &&
-          i.scheduledTime <= currentTime &&
-          (!i.adBreakId || autoplayComerciais)
+          i.scheduledTime <= currentTime
       )
       if (scheduledDue.length === 0) return
 
-      // Determine the earliest due time to use as the trigger key
-      const triggerTime = scheduledDue
-        .map(i => i.scheduledTime!)
-        .sort()[0]
-
-      // Anti-loop: this trigger was already handled — skip until the sequence
-      // ends and clears scheduleInterruptTimeRef
+      const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
       if (scheduleInterruptTimeRef.current === triggerTime) return
 
       if (!stateRef.current.isSequencePlaying) {
-        // Idle — start normally; runSequence will prioritise scheduled items
         scheduleInterruptTimeRef.current = triggerTime
         startSequence()
       } else {
-        // Already playing — signal an interrupt so the current item is cut
-        // and the block takes over immediately
+        scheduleInterruptTimeRef.current = triggerTime
+        scheduleInterruptRef.current = true
+        abortRef.current = true
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [state.isLoading, startSequence])
+
+  // ── Scheduler: Autoplay Comerciais (blocos com adBreakId) ──────────────────
+  // Independente do autoPlay geral. Quando ON, garante que o bloco comercial
+  // dispara EXATAMENTE no horário programado, interrompendo o que estiver
+  // tocando. Tem prioridade absoluta sobre qualquer outra mídia em execução.
+  // Quando OFF, o bloco aguarda sua vez na fila da playlist normalmente.
+  useEffect(() => {
+    if (state.isLoading) return
+    const interval = setInterval(() => {
+      if (!stateRef.current.settings.autoplayComerciais) return
+
+      const currentTime = now()
+      const scheduledDue = stateRef.current.playlist.filter(
+        i =>
+          i.status === 'pending' &&
+          !!i.adBreakId &&
+          i.scheduledTime &&
+          i.scheduledTime <= currentTime
+      )
+      if (scheduledDue.length === 0) return
+
+      const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
+      if (scheduleInterruptTimeRef.current === triggerTime) return
+
+      if (!stateRef.current.isSequencePlaying) {
+        scheduleInterruptTimeRef.current = triggerTime
+        startSequence()
+      } else {
+        // Prioridade absoluta: interrompe o item atual e inicia o bloco comercial
         scheduleInterruptTimeRef.current = triggerTime
         scheduleInterruptRef.current = true
         abortRef.current = true
