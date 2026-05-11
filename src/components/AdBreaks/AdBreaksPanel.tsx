@@ -242,9 +242,15 @@ function SpotForm({ spot, onSave, onCancel }: {
 
 // ─── Main Panel ──────────────────────────────────────────────────────────────
 export default function AdBreaksPanel() {
-  const { state, dispatch, loadBlockIntoPlaylist } = useApp()
-  const { commercialBlocks, clientSpots, clients, spotRotation } = state
+  const { state, dispatch, loadBlockIntoPlaylist, saveToStorage } = useApp()
+  const { commercialBlocks, clientSpots, clients, spotRotation, settings } = state
   const today = new Date().toISOString().slice(0, 10)
+
+  const handlePreloadMinutesChange = (val: number) => {
+    const next = { ...settings, preloadMinutes: Math.max(1, Math.min(60, val)) }
+    dispatch({ type: 'SET_SETTINGS', payload: next })
+    saveToStorage('settings', next)
+  }
 
   const [tab, setTab] = useState<'blocks' | 'spots'>('blocks')
   const [editingBlock, setEditingBlock] = useState<CommercialBlock | null | undefined>(undefined)
@@ -342,6 +348,20 @@ export default function AdBreaksPanel() {
       {/* ── BLOCKS TAB ──────────────────────────────────── */}
       {tab === 'blocks' && (
         <div className="adbreaks-list">
+          {/* Preload minutes config */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            <Clock size={13} />
+            <span>Pré-carregar blocos</span>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={settings.preloadMinutes ?? 5}
+              onChange={e => handlePreloadMinutesChange(parseInt(e.target.value) || 5)}
+              style={{ width: 52, padding: '2px 6px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', fontSize: '0.8rem', textAlign: 'center' }}
+            />
+            <span>min antes do horário agendado</span>
+          </div>
           {commercialBlocks.length === 0 ? (
             <div className="panel-empty">
               Nenhum bloco cadastrado. Crie um bloco para agendar intervalos comerciais automaticamente.

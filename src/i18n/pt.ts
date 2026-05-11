@@ -27,6 +27,10 @@ const pt = {
     connect: 'Conectar vMix',
     disconnect: 'Desconectar',
     browseVmixInputs: 'Inputs do vMix',
+    disparoOn: 'Disparo ON',
+    disparoOff: 'Disparo OFF',
+    autoplayComerciaisOn: 'Autoplay Comerc. ON',
+    autoplayComerciaisOff: 'Autoplay Comerc. OFF',
   },
 
   // Playlist
@@ -76,6 +80,8 @@ const pt = {
     loadedToday: 'Carregado hoje',
     totalDuration: 'Duração Total',
     enabled: 'Ativo',
+    preloadMinutes: 'Pré-carregar (min antes)',
+    awaitingTrigger: 'Aguardando disparo',
     // Spots tab
     emptySpots: 'Nenhum spot cadastrado para este anunciante.',
     addSpot: 'Adicionar Spot',
@@ -165,6 +171,14 @@ const pt = {
     save: 'Salvar',
     cancel: 'Cancelar',
     testConnection: 'Testar Conexão',
+    disparo: 'Disparo',
+    disparoKey: 'Tecla de Disparo',
+    disparoCaptureBtn: 'Capturar Tecla',
+    disparoCancelBtn: 'Cancelar',
+    disparoClearBtn: 'Limpar',
+    disparoCapturing: '⚡ Pressione qualquer tecla...',
+    disparoNone: 'Nenhuma tecla configurada',
+    disparoHint: 'Funciona mesmo com o app minimizado. Botões MIDI e de controles podem ser mapeados para esta tecla.',
   },
 
   // Status Bar

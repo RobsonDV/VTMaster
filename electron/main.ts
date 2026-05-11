@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut } from 'electron'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
@@ -16,6 +16,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+let registeredTriggerKey: string | null = null
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data store (userData JSON files)
@@ -95,6 +96,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -226,4 +231,33 @@ ipcMain.handle('vmix-start-fast-polling', (_event, host: string, port: number) =
 ipcMain.handle('vmix-stop-fast-polling', () => {
   stopVmixFastPolling()
   return true
+})
+
+// Register global trigger shortcut (Disparo)
+// Gamepad e MIDI são gerenciados no renderer — apenas teclas de teclado usam globalShortcut
+ipcMain.handle('register-trigger', (_event, key: string) => {
+  if (registeredTriggerKey) {
+    try { globalShortcut.unregister(registeredTriggerKey) } catch {}
+    registeredTriggerKey = null
+  }
+  // Gamepad e MIDI são tratados no renderer via polling/Web MIDI API
+  if (key.startsWith('GAMEPAD:') || key.startsWith('MIDI:')) return true
+  try {
+    const success = globalShortcut.register(key, () => {
+      mainWindow?.webContents.send('trigger-fired')
+    })
+    registeredTriggerKey = success ? key : null
+    return success
+  } catch {
+    registeredTriggerKey = null
+    return false
+  }
+})
+
+// Unregister global trigger shortcut
+ipcMain.handle('unregister-trigger', () => {
+  if (registeredTriggerKey) {
+    try { globalShortcut.unregister(registeredTriggerKey) } catch {}
+    registeredTriggerKey = null
+  }
 })

@@ -119,6 +119,10 @@ export interface AppSettings {
   autoPlay: boolean
   defaultInputName?: string
   spotmasterInputName?: string  // legacy: name used in settings modal
+  triggerEnabled: boolean
+  triggerKey: string | null
+  autoplayComerciais: boolean
+  preloadMinutes: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,12 +185,16 @@ export interface SpotMasterAPI {
   vmixStopPolling: () => Promise<boolean>
   onVmixStatus: (callback: (status: VmixStatus) => void) => void
   removeVmixStatusListener: () => void
-  // Fast polling (500ms) — used during active playback for progress & end detection
   vmixStartFastPolling: (host: string, port: number) => Promise<boolean>
   vmixStopFastPolling: () => Promise<boolean>
   onVmixFastStatus: (callback: (status: VmixStatus) => void) => void
   removeVmixFastStatusListener: () => void
   openExternal: (url: string) => Promise<void>
+  // Disparo (global trigger)
+  registerTrigger: (key: string) => Promise<boolean>
+  unregisterTrigger: () => Promise<void>
+  onTriggerFired: (callback: () => void) => void
+  removeTriggerListener: () => void
 }
 
 declare global {

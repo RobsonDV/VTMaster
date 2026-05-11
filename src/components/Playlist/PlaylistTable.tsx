@@ -248,10 +248,15 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
                 </tr>
               </thead>
               <tbody>
-                {playlist.map((item, index) => (
+                {playlist.map((item, index) => {
+                  const isAwaitingTrigger =
+                    !!item.adBreakId &&
+                    item.status === 'pending' &&
+                    !settings.autoplayComerciais
+                  return (
                   <Fragment key={item.id}>
                   <tr
-                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}`}
+                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}`}
                     onClick={() => setSelectedId(item.id)}
                     onDragOver={(e) => handleRowDragOver(e, index)}
                     onDrop={(e) => handleDrop(e, index)}
@@ -304,9 +309,15 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
                     </td>
 
                     <td>
-                      <span className={`status-badge ${STATUS_CLASS[item.status]}`}>
-                        {t.statuses[item.status]}
-                      </span>
+                      {isAwaitingTrigger ? (
+                        <span className="status-badge status-awaiting-trigger" title={t.adBreaks.awaitingTrigger}>
+                          ⚡ {t.adBreaks.awaitingTrigger}
+                        </span>
+                      ) : (
+                        <span className={`status-badge ${STATUS_CLASS[item.status]}`}>
+                          {t.statuses[item.status]}
+                        </span>
+                      )}
                     </td>
 
                     <td className="cell-actions">
@@ -367,7 +378,8 @@ export default function PlaylistTable({ onEditItem }: PlaylistTableProps) {
                     </tr>
                   )}
                   </Fragment>
-                ))}
+                  )
+                })}
                 {/* Drop zone for inserting after the last item */}
                 <tr
                   className={`playlist-drop-end${dragOverIndex === playlist.length ? ' drag-insert-above' : ''}`}

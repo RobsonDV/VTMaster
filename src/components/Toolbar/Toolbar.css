@@ -1,24 +1,41 @@
 .toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  height: 52px;
+  flex-direction: column;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  gap: 8px;
   user-select: none;
+}
+
+/* Fileira superior: logo + ações de playlist + vMix */
+.toolbar-row-top {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  height: 48px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Fileira inferior: Disparo, Autoplay, tema, idioma, configurações */
+.toolbar-row-bottom {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  height: 40px;
+  gap: 4px;
+  background: color-mix(in srgb, var(--bg-primary) 40%, var(--bg-secondary));
 }
 
 .toolbar-brand {
   display: flex;
   align-items: center;
-  min-width: 200px;
+  min-width: 180px;
+  flex-shrink: 0;
 }
 
 .brand-logo {
-  height: 38px;
+  height: 34px;
   object-fit: contain;
   filter: drop-shadow(0 0 6px rgba(14,165,233,0.3));
 }
@@ -29,11 +46,20 @@
   gap: 4px;
   flex-wrap: nowrap;
   overflow-x: auto;
+  flex: 1;
+}
+
+.toolbar-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  margin-left: auto;
 }
 
 .toolbar-separator {
   width: 1px;
-  height: 24px;
+  height: 20px;
   background: var(--border);
   margin: 0 4px;
   flex-shrink: 0;

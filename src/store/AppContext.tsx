@@ -30,6 +30,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   language: 'pt',
   autoConnect: false,
   autoPlay: false,
+  triggerEnabled: false,
+  triggerKey: null,
+  autoplayComerciais: false,
+  preloadMinutes: 5,
 }
 
 interface AppState {
@@ -190,6 +194,7 @@ interface AppContextValue {
   startSequence: () => void
   stopPlayback: () => Promise<void>
   loadBlockIntoPlaylist: (block: CommercialBlock) => void
+  disparo: () => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -224,6 +229,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ghost inputs accumulate in the vMix project. Permanent vMix inputs
   // (inputName) never pass through loadNewInput, so they are never in this Set.
   const spotmasterGuidsRef = useRef<Set<string>>(new Set())
+  // Set by disparo() during active playback — signals runSequence to skip
+  // current item and continue to the next, without fully stopping.
+  const disparoInterruptRef = useRef<boolean>(false)
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
   // Resolves round-robin rotation and inserts spots into the playlist tail.
@@ -272,20 +280,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [dispatch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Commercial block scheduler ───────────────────────────────────────────────
-  // Checks every 30 s. 1 minute before each enabled block's scheduledTime,
-  // loads it into the playlist (once per day).
+  // Checks every 30 s. X minutes before each enabled block's scheduledTime
+  // (configured via settings.preloadMinutes, default 5), loads it into the
+  // playlist (once per day). Auto-play only fires if autoplayComerciais is ON.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
       const today = new Date().toISOString().slice(0, 10)
       const d = new Date()
       const nowSecs = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
+      const preloadSecs = (stateRef.current.settings.preloadMinutes ?? 5) * 60
       stateRef.current.commercialBlocks
         .filter(b => b.enabled && b.lastLoadedDate !== today)
         .forEach(b => {
           const [h = 0, m = 0, s = 0] = b.scheduledTime.split(':').map(Number)
           const blockSecs   = h * 3600 + m * 60 + s
-          const triggerSecs = blockSecs - 60
+          const triggerSecs = blockSecs - preloadSecs
           if (nowSecs >= triggerSecs && nowSecs < blockSecs) {
             loadBlockIntoPlaylist(b)
           }
@@ -557,9 +567,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     while (true) {
       // ── Handle abort ─────────────────────────────────────────────────────
       if (abortRef.current) {
-        if (!scheduleInterruptRef.current) break
+        if (!scheduleInterruptRef.current && !disparoInterruptRef.current) break
         abortRef.current = false
         scheduleInterruptRef.current = false
+        disparoInterruptRef.current = false
       }
 
       // ── Read live playlist ───────────────────────────────────────────────
@@ -567,10 +578,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (pending.length === 0) break
 
       const currentTime = now()
-      const { autoPlay } = stateRef.current.settings
+      const { autoPlay, autoplayComerciais } = stateRef.current.settings
       const scheduledDue = autoPlay
         ? pending
-            .filter(i => i.scheduledTime && i.scheduledTime <= currentTime)
+            .filter(i =>
+              i.scheduledTime &&
+              i.scheduledTime <= currentTime &&
+              (!i.adBreakId || autoplayComerciais)
+            )
             .sort((a, b) => {
               const timeCmp = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
               return timeCmp !== 0 ? timeCmp : a.order - b.order
@@ -693,6 +708,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       )
   }, [dispatch, cleanupInputs])
 
+  // ── disparo ─────────────────────────────────────────────────────────────────
+  // Global trigger command: starts sequence if idle, or advances to next item
+  // if already playing. Called by the global keyboard shortcut (trigger-fired).
+  const disparo = useCallback(() => {
+    if (stateRef.current.isSequencePlaying) {
+      disparoInterruptRef.current = true
+      abortRef.current = true
+    } else {
+      startSequence()
+    }
+  }, [startSequence]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── playSingleItem ──────────────────────────────────────────────────────────
   const playSingleItem = useCallback(() => {
     if (stateRef.current.isSequencePlaying) return
@@ -742,18 +769,100 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.spotmaster?.removeVmixFastStatusListener()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Disparo: listen for trigger-fired from main process ────────────────────
+  useEffect(() => {
+    if (!window.spotmaster?.onTriggerFired) return
+    window.spotmaster.onTriggerFired(() => {
+      if (stateRef.current.settings.triggerEnabled) disparo()
+    })
+    return () => window.spotmaster?.removeTriggerListener()
+  }, [disparo])
+
+  // ── Disparo: register/unregister global shortcut (teclado) ──────────────────
+  // Gamepad e MIDI são gerenciados pelos effects abaixo — não via globalShortcut
+  useEffect(() => {
+    if (state.isLoading || !window.spotmaster?.registerTrigger) return
+    const { triggerEnabled, triggerKey } = state.settings
+    const isKeyboard = triggerKey && !triggerKey.startsWith('GAMEPAD:') && !triggerKey.startsWith('MIDI:')
+    if (triggerEnabled && isKeyboard) {
+      window.spotmaster.registerTrigger(triggerKey!)
+    } else {
+      window.spotmaster.unregisterTrigger()
+    }
+  }, [state.settings.triggerEnabled, state.settings.triggerKey, state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Disparo: polling de Gamepad ──────────────────────────────────────────────
+  useEffect(() => {
+    const { triggerEnabled, triggerKey } = state.settings
+    if (!triggerEnabled || !triggerKey?.startsWith('GAMEPAD:')) return
+    const parts    = triggerKey.split(':')
+    const gpIndex  = parseInt(parts[1] ?? '0')
+    const btnIndex = parseInt(parts[3] ?? '0')
+    let wasPressed = false
+    const interval = setInterval(() => {
+      const gp = navigator.getGamepads()[gpIndex]
+      if (!gp) return
+      const pressed = gp.buttons[btnIndex]?.pressed ?? false
+      if (pressed && !wasPressed) disparo()
+      wasPressed = pressed
+    }, 50)
+    return () => clearInterval(interval)
+  }, [state.settings.triggerEnabled, state.settings.triggerKey, disparo]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Disparo: listener MIDI ───────────────────────────────────────────────────
+  useEffect(() => {
+    const { triggerEnabled, triggerKey } = state.settings
+    if (!triggerEnabled || !triggerKey?.startsWith('MIDI:')) return
+    if (!navigator.requestMIDIAccess) return
+    const suffix = triggerKey.slice(5)   // ex: '60' ou 'CC74'
+    const isCC   = suffix.startsWith('CC')
+    const target = parseInt(isCC ? suffix.slice(2) : suffix)
+    let midiAccess: MIDIAccess | null = null
+
+    navigator.requestMIDIAccess().then((access) => {
+      midiAccess = access
+      const handler = (event: MIDIMessageEvent) => {
+        const data = event.data
+        if (!data || data.length < 2) return
+        const status = data[0] & 0xf0
+        const num    = data[1]
+        const vel    = data[2] ?? 127
+        if (!stateRef.current.settings.triggerEnabled) return
+        if (isCC  && status === 0xb0 && num === target && vel > 63) disparo()
+        if (!isCC && status === 0x90 && num === target && vel > 0)  disparo()
+      }
+      access.inputs.forEach(input => { input.onmidimessage = handler })
+      // Atualiza quando novos inputs conectam
+      access.onstatechange = () => {
+        access.inputs.forEach(input => { input.onmidimessage = handler })
+      }
+    }).catch(() => {})
+
+    return () => {
+      if (midiAccess) {
+        midiAccess.inputs.forEach(input => { input.onmidimessage = null })
+      }
+    }
+  }, [state.settings.triggerEnabled, state.settings.triggerKey, disparo]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Autoplay scheduler ─────────────────────────────────────────────────────
   // Every second: if autoPlay is ON and there are pending items whose
   // scheduledTime has arrived, either start the sequence (if idle) or
   // interrupt the currently playing item so the block fires on time.
+  // Commercial block items (adBreakId) only auto-trigger if autoplayComerciais is ON.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
       if (!stateRef.current.settings.autoPlay) return
+      const { autoplayComerciais } = stateRef.current.settings
 
       const currentTime = now()
       const scheduledDue = stateRef.current.playlist.filter(
-        i => i.status === 'pending' && i.scheduledTime && i.scheduledTime <= currentTime
+        i =>
+          i.status === 'pending' &&
+          i.scheduledTime &&
+          i.scheduledTime <= currentTime &&
+          (!i.adBreakId || autoplayComerciais)
       )
       if (scheduledDue.length === 0) return
 
@@ -882,7 +991,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.activePanel, state.isLoading, saveToStorage])
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, stopPlayback, loadBlockIntoPlaylist }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, stopPlayback, loadBlockIntoPlaylist, disparo }}>
       {children}
     </AppContext.Provider>
   )

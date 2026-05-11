@@ -1,63 +1,83 @@
-# VTMaster - Indice de Documentacao
+# VTMaster — Índice de Documentação
 
-Este arquivo centraliza toda a documentacao do projeto.
+> Última atualização: 10/05/2026
+
+---
 
 ## Por perfil
 
-### Operacao (emissora / playout)
-
-1. [release/LEIA-ME.md](../release/LEIA-ME.md)
-2. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md)
+### Operação (emissora / playout)
+1. [release/LEIA-ME.md](../release/LEIA-ME.md) — Manual do operador
+2. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md) — Funcionalidades disponíveis
 
 ### Desenvolvimento
+1. [README.md](../README.md) — Início rápido
+2. [docs/DEVELOPMENT.md](DEVELOPMENT.md) — Documentação técnica completa
+3. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md) — Estado do produto, fases, backlog
 
-1. [README.md](../README.md)
-2. [docs/DEVELOPMENT.md](DEVELOPMENT.md)
-3. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md)
+### Release e distribuição
+1. [README.md](../README.md) — Scripts de build
+2. [release/LEIA-ME.md](../release/LEIA-ME.md) — Manual do instalador
 
-### Release e distribuicao
+---
 
-1. [README.md](../README.md) (secao build de distribuicao)
-2. [release/LEIA-ME.md](../release/LEIA-ME.md)
-
-## Conteudo de cada documento
+## Conteúdo de cada documento
 
 ### [README.md](../README.md)
-
-- Visao geral do VTMaster
-- Como instalar dependencias
+- Visão geral e instalação
 - Como executar em desenvolvimento
 - Scripts npm
-- Build de distribuicao
-- Persistencia local
-- Licenca
+- Build de distribuição
+- Licença
 
 ### [docs/DEVELOPMENT.md](DEVELOPMENT.md)
-
 - Arquitetura completa (Electron, React, IPC, estado global)
-- Fluxo de playout com vMix
-- Protocolo local-media
-- Tipos de dados e i18n
-- Persistencia e componentes
+- Motor de playout: GUID-based, wall-clock, limpeza garantida
+- Sistema de Disparo global (globalShortcut, captura de tecla, disparoInterruptRef)
+- Sistema de Blocos Comerciais (scheduler, round-robin, autoplayComerciais)
+- API `window.spotmaster` completa (preload.ts)
+- Protocolo local-media://
+- API do vMix (funções, sequência de corte, polling)
+- Componentes: Toolbar, PlaylistTable, SettingsModal, AdBreaksPanel
+- Tipos de dados, i18n, persistência
 
 ### [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md)
-
-- Estado consolidado do produto
-- Bugs corrigidos e decisoes tecnicas
-- Funcionalidades implementadas
-- Itens ainda nao implementados (backlog)
+- Histórico de fases (Fase 1, 2 e 3)
+- Bugs corrigidos e decisões técnicas
+- Fluxos de negócio (playlist, blocos comerciais, disparo)
+- Tipos de dados completos com comentários
+- Estado global (AppState, AppContextValue, Actions)
+- Persistência de dados e migração de versões
+- Checklist de funcionalidades implementadas por fase
+- Backlog — o que ainda não está implementado
 
 ### [release/LEIA-ME.md](../release/LEIA-ME.md)
+- Manual para o operador de emissora
+- Primeiros passos e configuração
+- Como usar o Disparo
+- Como configurar blocos comerciais
+- Integração com vMix
 
-- Manual para usuario final
-- Primeiros passos operacionais
-- Funcionalidades de negocio
-- Integracao com vMix
-- Privacidade e armazenamento local
+---
 
 ## Ordem recomendada de leitura
 
-1. Comece em [README.md](../README.md)
-2. Aprofunde em [docs/DEVELOPMENT.md](DEVELOPMENT.md)
-3. Consulte status e roadmap em [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md)
-4. Para treinamento de operador, use [release/LEIA-ME.md](../release/LEIA-ME.md)
+**Para desenvolvedores:**
+1. [README.md](../README.md) — rodar o projeto
+2. [DEVELOPMENT.md](DEVELOPMENT.md) — entender a arquitetura
+3. [ESTADO_ATUAL.md](ESTADO_ATUAL.md) — estado, decisões e backlog
+
+**Para operadores:**
+1. [release/LEIA-ME.md](../release/LEIA-ME.md) — instalar e usar
+2. [ESTADO_ATUAL.md](ESTADO_ATUAL.md) seção 13 — lista do que funciona
+
+---
+
+## Histórico de versões
+
+| Fase | Data | O que foi feito |
+|------|------|----------------|
+| Fase 1 | antes de 07/05/2026 | Motor de playout GUID-based, wall-clock, A/B Roll, limpeza garantida |
+| Fase 2 | 07/05/2026 | Sistema de Blocos Comerciais, round-robin, scheduler, fast polling |
+| Rebranding | 07/05/2026 | SpotMaster → VTMaster, logo, cor azul |
+| Fase 3 | 10/05/2026 | Disparo global, Autoplay Comerciais, pré-carregamento configurável, indicador visual |

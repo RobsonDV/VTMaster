@@ -1,8 +1,8 @@
-﻿# VTMaster — Documentação de Desenvolvimento
+# VTMaster — Documentação de Desenvolvimento
 
-> Software de veiculação comercial para emissoras de TV.  
-> Stack: **Electron 41 + React 19 + TypeScript + Vite 8**  
-> Desenvolvido por **RobsonCostaDV**
+> Software de veiculação comercial para emissoras de TV.
+> Stack: **Electron 41 + React 19 + TypeScript + Vite 8**
+> Desenvolvido por **RobsonCostaDV** — Última atualização: 10/05/2026
 
 ---
 
@@ -13,79 +13,100 @@
 3. [Stack Técnico](#3-stack-técnico)
 4. [Configuração e Build](#4-configuração-e-build)
 5. [Processo Principal — Electron](#5-processo-principal--electron)
-6. [Protocolo local-media://](#6-protocolo-local-media)
-7. [API do vMix](#7-api-do-vmix)
-8. [Motor de Playout](#8-motor-de-playout)
-9. [Gerenciamento de Estado](#9-gerenciamento-de-estado)
-10. [Componentes](#10-componentes)
-11. [Tipos de Dados](#11-tipos-de-dados)
-12. [Internacionalização](#12-internacionalização)
-13. [Persistência de Dados](#13-persistência-de-dados)
-14. [Funcionalidades Implementadas](#14-funcionalidades-implementadas)
+6. [API window.spotmaster (preload.ts)](#6-api-windowspotmaster-preloadts)
+7. [Protocolo local-media://](#7-protocolo-local-media)
+8. [API do vMix](#8-api-do-vmix)
+9. [Motor de Playout](#9-motor-de-playout)
+10. [Sistema de Blocos Comerciais](#10-sistema-de-blocos-comerciais)
+11. [Sistema de Disparo Global](#11-sistema-de-disparo-global)
+12. [Gerenciamento de Estado](#12-gerenciamento-de-estado)
+13. [Componentes](#13-componentes)
+14. [Tipos de Dados](#14-tipos-de-dados)
+15. [Internacionalização](#15-internacionalização)
+16. [Persistência de Dados](#16-persistência-de-dados)
+17. [Funcionalidades Implementadas](#17-funcionalidades-implementadas)
 
 ---
 
 ## 1. Visão Geral
 
-O **VTMaster** é um software desktop para emissoras de TV controlarem a veiculação de spots comerciais via integração com o software de produção ao vivo **vMix**.
+O **VTMaster** é um software desktop para emissoras de TV controlarem a veiculação de spots comerciais via integração com o **vMix**.
 
 **Fluxo principal:**
-1. Operador monta uma playlist com itens (spots de arquivo, câmeras, gráficos)
-2. Clica em **Iniciar Playlist**
-3. VTMaster adiciona cada clipe ao vMix automaticamente, dá play e corta para o ar — um a um, sem intervenção manual
-4. Ao final, remove todos os inputs criados (gerenciamento não-destrutivo)
+1. Operador monta playlist com itens (spots, vinhetas, câmeras, gráficos)
+2. Inicia a sequência via botão, autoplay por horário, ou **Disparo** (atalho global)
+3. VTMaster carrega cada clipe no vMix via HTTP, dá play e corta para o ar — automaticamente
+4. Ao final, remove todos os inputs criados sem afetar câmeras/NDI/gráficos existentes
+
+**Pilares técnicos:**
+- **GUID-based**: inputs identificados por GUID estável, não por número (evita conflito ao renumerar)
+- **Wall-clock**: timing por `Date.now()`, não por polling de estado do vMix
+- **Limpeza garantida**: `spotmasterGuidsRef` rastreia todos os inputs e limpa ao final
+- **Disparo global**: `globalShortcut` do Electron funciona mesmo com app minimizado
 
 ---
 
 ## 2. Estrutura de Arquivos
 
 ```
-spotmaster/
+VTMaster/
 ├── electron/
-│   ├── main.ts          → Processo principal Electron (IPC, janela, protocolos)
-│   ├── preload.cts      → Bridge renderer↔main via contextBridge (DEVE ser CJS)
-│   ├── preload.ts       → Arquivo auxiliar de tipos (não compilado diretamente)
-│   └── vmix.ts          → Integração HTTP com a API do vMix
+│   ├── main.ts              → Processo principal: janela, IPC, protocolos, globalShortcut
+│   ├── preload.ts           → Bridge renderer↔main via contextBridge (window.spotmaster)
+│   └── vmix.ts              → Integração HTTP com vMix (polling normal 2s + fast 500ms)
 │
 ├── src/
-│   ├── main.tsx         → Entry point React
-│   ├── App.tsx          → Layout raiz, navegação de painéis, modais globais
-│   ├── App.css          → Variáveis CSS, layout, sidebar, scrollbars
+│   ├── main.tsx             → Entry point React
+│   ├── App.tsx              → Layout raiz, navegação, modais globais
+│   ├── App.css              → Variáveis CSS, layout, sidebar, scrollbars, tema
+│   │
 │   ├── types/
-│   │   └── index.ts     → Todas as interfaces e tipos do app
+│   │   └── index.ts         → Todos os tipos e interfaces do app
+│   │
 │   ├── store/
-│   │   └── AppContext.tsx → Estado global (useReducer), motor de playout, vMix
+│   │   └── AppContext.tsx   → Estado global (useReducer), motor de playout, schedulers
+│   │
 │   ├── i18n/
-│   │   ├── index.ts     → Função getTranslations()
-│   │   ├── pt.ts        → Strings em Português Brasileiro
-│   │   └── en.ts        → Strings em Inglês
+│   │   ├── index.ts         → getTranslations(language)
+│   │   ├── pt.ts            → Strings PT-BR (fonte da verdade dos tipos)
+│   │   └── en.ts            → Strings EN
+│   │
 │   ├── utils/
-│   │   └── time.ts      → now(), formatDuration(), parseDuration(), today()
+│   │   └── time.ts          → now(), formatDuration(), parseDuration(), today()
+│   │
 │   └── components/
-│       ├── Toolbar/     → Barra de ferramentas principal
-│       ├── StatusBar/   → Rodapé: status vMix, item atual, próximo
+│       ├── Toolbar/
+│       │   ├── Toolbar.tsx          → Toolbar: playlist, vMix, Disparo, Autoplay Comerciais, tema, idioma
+│       │   └── Toolbar.css
+│       ├── StatusBar/
+│       │   ├── StatusBar.tsx        → Rodapé: vMix status, item atual, próximo, Recording/Streaming
+│       │   └── StatusBar.css
 │       ├── Playlist/
-│       │   ├── PlaylistTable.tsx    → Tabela principal + controles de transporte
+│       │   ├── PlaylistTable.tsx    → Tabela + controles de transporte + indicador de disparo
 │       │   ├── PlaylistTable.css
 │       │   ├── ItemModal.tsx        → Criar/editar item da playlist
 │       │   ├── ItemModal.css
-│       │   ├── VmixInputPanel.tsx   → Painel lateral inline de inputs do vMix
+│       │   ├── VmixInputPanel.tsx   → Painel lateral de inputs do vMix (drag & drop)
 │       │   └── VmixInputPanel.css
-│       ├── AdBreaks/    → Blocos comerciais (templates reutilizáveis)
-│       ├── Clients/     → Cadastro de anunciantes
-│       ├── Log/         → Log de veiculação (comprovante)
-│       ├── Reports/     → Geração de relatórios PDF
-│       └── Settings/    → Modal de configurações
+│       ├── AdBreaks/
+│       │   ├── AdBreaksPanel.tsx    → Blocos comerciais + config pré-carregamento
+│       │   └── AdBreaksPanel.css
+│       ├── Clients/
+│       │   ├── ClientsPanel.tsx     → Cadastro de anunciantes
+│       │   └── ClientsPanel.css
+│       ├── Log/
+│       │   ├── LogPanel.tsx         → Histórico de veiculação com filtros e exportação CSV
+│       │   └── LogPanel.css
+│       ├── Reports/
+│       │   ├── ReportsPanel.tsx     → Geração de PDF (diário e por anunciante)
+│       │   └── ReportsPanel.css
+│       └── Settings/
+│           └── SettingsModal.tsx    → Modal de configurações + seção Disparo
 │
-├── docs/
-│   └── DEVELOPMENT.md   → Este arquivo
-├── dist/                → Build do React (gerado por Vite)
-├── dist-electron/       → Build do Electron (gerado por tsc)
-├── vite.config.ts
-├── tsconfig.json
-├── tsconfig.app.json
-├── tsconfig.electron.json
-└── package.json
+└── docs/
+    ├── DEVELOPMENT.md       → Este arquivo
+    ├── ESTADO_ATUAL.md      → Estado do produto, fases, backlog
+    └── INDEX.md             → Índice geral da documentação
 ```
 
 ---
@@ -100,7 +121,8 @@ spotmaster/
 | Build | Vite 8 + Rolldown |
 | Ícones | lucide-react |
 | PDF | jsPDF + jspdf-autotable |
-| Internacionalização | Custom (pt.ts / en.ts) |
+| i18n | Custom (pt.ts / en.ts) |
+| Atalho global | Electron globalShortcut |
 
 ---
 
@@ -109,8 +131,8 @@ spotmaster/
 ### Scripts disponíveis
 
 ```bash
-npm run dev           # Compilar Electron + iniciar Vite + abrir Electron em dev
-npm run build         # Build completo para produção (tsc + vite build + electron:compile)
+npm run dev           # Compilar Electron + Vite dev server + abrir janela
+npm run build         # Build completo (tsc + vite build + electron:compile)
 npm run build:dist    # Build + empacotamento (electron-builder → pasta release/)
 npm run electron:compile  # Apenas compilar TypeScript do Electron
 ```
@@ -118,24 +140,14 @@ npm run electron:compile  # Apenas compilar TypeScript do Electron
 ### Como o `dev` funciona
 
 ```
-tsc -p tsconfig.electron.json   → compila electron/ → dist-electron/
-vite (dev server em :5173)
-wait-on tcp:5173 && electron .  → abre janela carregando http://localhost:5173
+tsc -p tsconfig.electron.json   → dist-electron/
+vite dev (porta 5173)
+wait-on tcp:5173 → electron .   → carrega http://localhost:5173
 ```
 
-> O Vite pode usar porta 5174 se 5173 já estiver em uso. Isso é normal.
+### Arquivo preload
 
-### tsconfig.electron.json
-
-Compila apenas `electron/**/*`:
-- `target: ES2022`, `module: ESNext`, `outDir: dist-electron`
-- `preload.cts` → `dist-electron/preload.cjs` — Electron não carrega preload ESM, portanto o arquivo DEVE ser `.cts` (TypeScript CJS)
-
-### vite.config.ts
-
-- `base: './'` — importante para que o build de produção resolva caminhos corretamente
-- `outDir: 'dist'`
-- Dev server fixado em porta 5173
+O arquivo `preload.ts` é compilado pelo tsconfig como `preload.cts` → `dist-electron/preload.cjs`. O Electron não carrega preload em formato ESM — **o arquivo DEVE resultar em CJS**.
 
 ---
 
@@ -149,58 +161,114 @@ Compila apenas `electron/**/*`:
 mainWindow = new BrowserWindow({
   width: 1280, height: 800,
   webPreferences: {
-    preload: join(__dirname, 'preload.cjs'),  // DEVE ser .cjs
+    preload: join(__dirname, 'preload.cjs'),
     contextIsolation: true,
     nodeIntegration: false,
   },
 })
 ```
 
-Em desenvolvimento carrega `http://localhost:5173`. Em produção carrega `dist/index.html`.
+### Registro do Disparo global
 
-### preload.cts
+```typescript
+import { globalShortcut } from 'electron'
+let registeredTriggerKey: string | null = null
 
-Bridge de segurança entre o renderer (React) e o processo principal via `contextBridge`.
+// IPC: registrar atalho
+ipcMain.handle('register-trigger', (_event, key: string) => {
+  if (registeredTriggerKey) globalShortcut.unregister(registeredTriggerKey)
+  const success = globalShortcut.register(key, () => {
+    mainWindow?.webContents.send('trigger-fired')
+  })
+  registeredTriggerKey = success ? key : null
+  return success
+})
 
-**CRÍTICO:** deve ser `.cts` para compilar para `.cjs`. O Electron não carrega preload em formato ESM.
+// IPC: cancelar atalho
+ipcMain.handle('unregister-trigger', () => {
+  if (registeredTriggerKey) {
+    globalShortcut.unregister(registeredTriggerKey)
+    registeredTriggerKey = null
+  }
+})
 
-API exposta em `window.spotmaster`:
+// Limpar ao fechar o app
+app.on('will-quit', () => globalShortcut.unregisterAll())
+```
 
-| Método | Descrição |
-|--------|-----------|
-| `saveData(key, data)` | Salva JSON em arquivo no userData |
-| `loadData(key)` | Carrega JSON do userData |
-| `getVersion()` | Versão do app |
-| `exportPlaylist(data)` | Salva playlist como arquivo JSON |
-| `importPlaylist()` | Abre diálogo e importa JSON |
-| `exportPDF(filePath, buffer)` | Salva PDF no disco |
-| `browseVideoFile()` | Diálogo de abertura de arquivo de mídia |
-| `vmixRequest(params)` | Requisição HTTP para a API do vMix |
-| `vmixStartPolling(host, port)` | Inicia polling de status do vMix (2s) |
-| `vmixStopPolling()` | Para o polling |
-| `onVmixStatus(callback)` | Listener para status enviado pelo processo principal |
-| `removeVmixStatusListener()` | Remove o listener |
-| `openExternal(url)` | Abre URL no browser do sistema |
+### IPC Handlers completos
 
-### Armazenamento de dados
-
-Arquivos JSON gravados em `app.getPath('userData')/SpotMaster/`:
-`settings.json`, `playlist.json`, `adBreaks.json`, `clients.json`, `playLog.json`
+| Handler | Descrição |
+|---------|-----------|
+| `save-data` | Grava JSON em userData/SpotMaster/{key}.json |
+| `load-data` | Lê JSON do userData |
+| `get-version` | Retorna app.getVersion() |
+| `open-external` | Abre URL no browser do sistema |
+| `export-playlist` | Diálogo de salvar → grava JSON |
+| `import-playlist` | Diálogo de abrir → retorna JSON |
+| `export-pdf` | Diálogo de salvar → grava buffer PDF |
+| `browse-video-file` | Diálogo de abrir arquivo de mídia |
+| `vmix-request` | Requisição HTTP para a API do vMix |
+| `vmix-start-polling` | Inicia polling 2s → envia `vmix-status` via IPC |
+| `vmix-stop-polling` | Para o polling |
+| `vmix-start-fast-polling` | Inicia polling 500ms → envia `vmix-fast-status` |
+| `vmix-stop-fast-polling` | Para o fast polling |
+| `register-trigger` | Registra globalShortcut → envia `trigger-fired` |
+| `unregister-trigger` | Cancela o globalShortcut registrado |
 
 ---
 
-## 6. Protocolo local-media://
+## 6. API window.spotmaster (preload.ts)
+
+Bridge de segurança entre renderer (React) e processo principal via `contextBridge`.
+
+```typescript
+interface SpotMasterAPI {
+  // Persistência
+  saveData(key: string, data: unknown): Promise<void>
+  loadData(key: string): Promise<unknown>
+  getVersion(): Promise<string>
+  openExternal(url: string): Promise<void>
+
+  // Arquivos
+  exportPlaylist(data: unknown): Promise<string | null>
+  importPlaylist(): Promise<unknown>
+  exportPDF(filePath: string, buffer: number[]): Promise<boolean>
+  browseVideoFile(): Promise<string | null>
+
+  // vMix — polling normal (2s)
+  vmixRequest(params: Record<string, string>): Promise<{ success: boolean; data?: string; error?: string }>
+  vmixStartPolling(host: string, port: number): Promise<boolean>
+  vmixStopPolling(): Promise<boolean>
+  onVmixStatus(callback: (status: VmixStatus) => void): void
+  removeVmixStatusListener(): void
+
+  // vMix — fast polling (500ms) para progresso em tempo real
+  vmixStartFastPolling(host: string, port: number): Promise<boolean>
+  vmixStopFastPolling(): Promise<boolean>
+  onVmixFastStatus(callback: (status: VmixStatus) => void): void
+  removeVmixFastStatusListener(): void
+
+  // Disparo global
+  registerTrigger(key: string): Promise<boolean>
+  unregisterTrigger(): Promise<void>
+  onTriggerFired(callback: () => void): void
+  removeTriggerListener(): void
+}
+```
+
+---
+
+## 7. Protocolo local-media://
 
 ### Problema
 
-O renderer React é servido de `http://localhost:5173` em dev. Carregar arquivos locais via `file:///` a partir dessa origem é bloqueado por CSP/CORS — isso impede a leitura de duração de vídeos/áudios via HTML5.
+Em desenvolvimento, o renderer é servido de `http://localhost:5173`. Carregar arquivos via `file:///` é bloqueado por CSP/CORS, impedindo a leitura de duração de vídeos/áudios via HTML5.
 
 ### Solução
 
-Um protocolo customizado `local-media://` é registrado no Electron:
-
 ```typescript
-// Antes do app.whenReady() — OBRIGATÓRIO:
+// Antes de app.whenReady() — OBRIGATÓRIO ser antes:
 protocol.registerSchemesAsPrivileged([{
   scheme: 'local-media',
   privileges: { secure: true, stream: true, supportFetchAPI: true, corsEnabled: true }
@@ -216,18 +284,20 @@ protocol.handle('local-media', (request) => {
 ### Uso no renderer
 
 ```typescript
-// ItemModal.tsx
 function toLocalMediaUrl(filePath: string): string {
   return 'local-media:///' + filePath.replace(/\\/g, '/')
 }
 // 'C:\Videos\spot.mp4' → 'local-media:///C:/Videos/spot.mp4'
-```
 
-A função `readMediaDuration()` cria um elemento `<video>` ou `<audio>` com essa URL e lê `element.duration` via `onloadedmetadata`. Timeout de 10s.
+// Detecta duração via HTML5:
+const el = document.createElement('video')
+el.src = toLocalMediaUrl(filePath)
+el.onloadedmetadata = () => resolve(Math.round(el.duration))
+```
 
 ---
 
-## 7. API do vMix
+## 8. API do vMix
 
 **Arquivo:** `electron/vmix.ts`
 
@@ -235,159 +305,278 @@ A função `readMediaDuration()` cria um elemento `<video>` ou `<audio>` com ess
 
 ```
 GET http://{host}:{port}/api/?{params}
-GET http://{host}:{port}/api/           ← sem parâmetros retorna o XML de status completo
+GET http://{host}:{port}/api/           ← sem parâmetros → XML de status completo
 ```
 
 > **ATENÇÃO:** a barra antes do `?` é obrigatória: `/api/?Function=...`
 
-### Funções utilizadas pelo SpotMaster
+### Funções utilizadas
 
-| Função vMix | Parâmetros | Descrição |
-|-------------|-----------|-----------|
-| `AddInput` | `Value=Video\|C:\path\file.mp4` | Adiciona vídeo como novo input |
-| `AddInput` | `Value=Image\|C:\path\img.png` | Adiciona imagem |
-| `AddInput` | `Value=AudioFile\|C:\path\audio.mp3` | Adiciona áudio |
-| `SetPosition` | `Input=N&Value=0` | Rebobina para posição 0 |
-| `PlayInput` | `Input=N` | Inicia reprodução do input N |
-| `PreviewInput` | `Input=N` | Envia input N para o Preview |
-| `Cut` | *(sem parâmetros)* | Corta o Preview para o Program |
-| `RemoveInput` | `Input=N` | Remove o input N |
+| Função | Parâmetros | Descrição |
+|--------|-----------|-----------|
+| `AddInput` | `Value=Video\|C:\path\file.mp4` | Carrega vídeo |
+| `AddInput` | `Value=Image\|C:\path\img.png` | Carrega imagem |
+| `AddInput` | `Value=AudioFile\|C:\path\audio.mp3` | Carrega áudio |
+| `SetPosition` | `Input=GUID&Value=0` | Rebobina para posição 0 |
+| `PlayInput` | `Input=GUID` | Inicia reprodução |
+| `PreviewInput` | `Input=GUID` | Envia para o Preview |
+| `Cut` | *(sem parâmetros)* | Corta Preview → Program |
+| `RemoveInput` | `Input=GUID` | Remove o input |
 
-### Sequência correta para ir ao ar — IMPORTANTE
+### Sequência correta de corte
 
 ```
-❌ ERRADO:  Cut&Input=N   (o parâmetro Input é ignorado no Cut HTTP)
+❌ ERRADO:  Cut&Input=GUID   (parâmetro Input é ignorado no Cut HTTP)
 
 ✅ CORRETO:
-1. PlayInput&Input=N       → inicia reprodução
-2. sleep(300ms)            → vMix começa o decode
-3. PreviewInput&Input=N    → coloca no Preview
+1. PlayInput(GUID)      → inicia reprodução (necessário para vídeos)
+2. sleep(300ms)         → vMix começa decodificação
+3. PreviewInput(GUID)   → coloca no Preview
 4. sleep(100ms)
-5. Cut                     → Preview vai ao Program
+5. Cut                  → Preview vai ao Program
 ```
 
-O `Cut` da API HTTP do vMix sempre corta o que **já está no Preview**. Por isso é obrigatório usar `PreviewInput` antes.
+O `Cut` do vMix HTTP sempre corta o que **já está no Preview**.
 
-### Polling
+### Polling duplo
 
-`startVmixPolling(host, port, callback)` consulta `/api/` a cada **2 segundos**, parseia o XML e envia o status para o renderer via IPC (`vmix-status`).
+| Modo | Intervalo | Uso |
+|------|-----------|-----|
+| Normal | 2s | Status bar, conexão, lista de inputs |
+| Fast | 500ms | Barra de progresso durante reprodução ativa |
 
 ---
 
-## 8. Motor de Playout
+## 9. Motor de Playout
 
-**Arquivo:** `src/store/AppContext.tsx` — funções `playItem()`, `runSequence()`
+**Arquivo:** `src/store/AppContext.tsx`
 
 ### Princípio: GUID-based, wall-clock, limpeza garantida
 
-O SpotMaster **nunca remove inputs pré-existentes** do vMix. Inputs de câmeras, gráficos e NDI ficam intocados. Cada arquivo carregado recebe um GUID único (atributo `key` do XML do vMix) que é estável e nunca muda mesmo quando o vMix renumera os inputs.
-
 ```
-vMix tem inputs 1, 2, 3 (câmera, gráfico, NDI)
-SpotMaster carrega spot.mp4    → GUID_A (ex: {abc-123})
-SpotMaster carrega vinheta.mp4 → GUID_B (ex: {def-456})
-vMix renumera → spot vira 5, vinheta vira 6
-SpotMaster usa GUID_A e GUID_B — nunca os números → zero erro de input errado
+vMix tem inputs 1 (câmera), 2 (NDI), 3 (gráfico)
+VTMaster carrega spot.mp4    → GUID_A = "{abc-123}"
+VTMaster carrega vinheta.mp4 → GUID_B = "{def-456}"
+vMix renumera (RemoveInput de outro) → spots viram 4 e 5
+VTMaster usa GUID_A e GUID_B — nunca os números → zero erro
 Ao final: Remove GUID_A e GUID_B. Inputs 1, 2, 3 intocados.
 ```
 
 ### Refs de controle
 
 ```typescript
-activeInputRef       // GUID do input atualmente no ar (string vazia se input permanente)
-preloadedInputRef    // { guid, filePath } do próximo input já carregado em background
-spotmasterGuidsRef   // Set<string> — todos os GUIDs desta sessão (cleanup garantido)
-abortRef             // true quando stopPlayback() foi chamado
+activeInputRef        // GUID do input atualmente no ar ('' para inputs permanentes)
+preloadedInputRef     // { guid, filePath } do próximo input já carregado em background
+spotmasterGuidsRef    // Set<string> — todos os GUIDs desta sessão (cleanup garantido)
+abortRef              // true quando stopPlayback() ou um interrupt foi chamado
+scheduleInterruptRef  // interrupt foi pelo scheduler → runSequence retoma em vez de parar
+disparoInterruptRef   // interrupt foi pelo Disparo → runSequence retoma em vez de parar
 ```
 
-### Dois tipos de item na playlist
-
-| Campo | Tipo | SpotMaster faz |
-|-------|------|---------------|
-| `filePath` | Arquivo local | `AddInput` → GUID → toca → `RemoveInput` após uso |
-| `inputName` | Input permanente do vMix | Apenas `PlayInput`/`PreviewInput`/`Cut` — **nunca** `RemoveInput` |
-
-### Fluxo de `playItem(item, nextFilePath?)`
-
-```
-1. UPDATE_PLAYLIST_ITEM → status: 'playing'
-
-2. Se item.filePath:
-   a. Checar preloadedInputRef:
-      → filePath bate? Usar GUID pronto (sem delay)
-      → Stale? RemoveInput no stale, carregar agora
-      → Vazio? loadNewInput(filePath) agora
-   b. loadNewInput:
-      - Detectar tipo: Video | AudioFile | Image
-      - getMaxInputNum() → baseline
-      - AddInput → vMix carrega o arquivo
-      - pollForNewInput(prevMax) → obtém GUID via XML (até 10s)
-      - spotmasterGuidsRef.add(guid) ← registra para limpeza garantida
-      - sleep(1000ms) → bufferização
-      - SetPosition(0) → rebobina (exceto imagens)
-   c. Vídeo: PlayInput + sleep(300ms)
-   d. PreviewInput + sleep(100ms) + Cut
-   e. Áudio: sleep(500ms) + PlayInput + sleep(200ms)
-   f. RemoveInput(prevGuid) com 5s de delay
-   g. activeInputRef.current = guid
-
-3. Se item.inputName (input permanente):
-   a. RemoveInput(prevGuid) com 5s se havia arquivo anterior
-   b. activeInputRef.current = '' ← NUNCA armazena input permanente
-   c. SetPosition + PlayInput + PreviewInput + Cut
-
-4. ADD_LOG
-
-5. Wall-clock loop:
-   - totalMs = max(item.duration × 1000, 3000ms)
-   - Se duration=0: lê duração real do XML do vMix
-   - sleep(300ms) a cada tick, verifica abortRef
-   - Quando remaining ≤ 10s e nextFilePath existe:
-     → loadNewInput em background → preloadedInputRef
-     → se abort: RemoveInput no guid preloadado
-
-6. UPDATE_PLAYLIST_ITEM → status: 'done'
-```
-
-### Limpeza garantida ao fim de cada sessão
-
-Ao fim de `runSequence` ou em `stopPlayback`, além dos cleanups individuais:
+### loadNewInput(filePath)
 
 ```typescript
-// Varre o Set completo — pega qualquer input que escapou por erro/abort
-for (const guid of spotmasterGuidsRef.current) {
-  window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: guid })
+const guid = await loadNewInput(filePath)
+// Internamente:
+// 1. Detecta tipo: Video | AudioFile | Image (por extensão)
+// 2. getMaxInputNum() → linha de base para pollForNewInput
+// 3. AddInput → vMix carrega o arquivo
+// 4. pollForNewInput(prevMax) → aguarda GUID (até 10s, 50 tentativas × 200ms)
+// 5. spotmasterGuidsRef.add(guid) ← cleanup garantido ao final da sessão
+// 6. sleep(1000ms) → vMix decodifica/bufferiza
+// 7. SetPosition(0) → rebobina (exceto imagens)
+```
+
+### playItem(item, nextFilePath?)
+
+```typescript
+// 1. UPDATE_PLAYLIST_ITEM → status: 'playing'
+// 2. Se item.filePath:
+//    - Usar preloadedInputRef se filePath bate (zero dead air)
+//    - Ou loadNewInput agora
+//    - PlayInput (vídeo) + PreviewInput + Cut
+//    - RemoveInput(prevGuid) com 5s de delay
+// 3. Se item.inputName (permanente):
+//    - activeInputRef = '' (nunca armazenado)
+//    - PlayInput + PreviewInput + Cut
+// 4. ADD_LOG
+// 5. Wall-clock loop (300ms ticks):
+//    - Verifica abortRef e disparoInterruptRef
+//    - Quando remaining ≤ 10s e nextFilePath: loadNewInput em background → preloadedInputRef
+// 6. UPDATE_PLAYLIST_ITEM → status: 'done'
+```
+
+### runSequence()
+
+Loop `while(true)` que lê a playlist ao vivo a cada iteração:
+
+```typescript
+while (true) {
+  // Handle abort / interrupt
+  if (abortRef.current) {
+    if (!scheduleInterruptRef.current && !disparoInterruptRef.current) break
+    // Interrupt: limpa refs e continua (não para)
+    abortRef.current = false
+    scheduleInterruptRef.current = false
+    disparoInterruptRef.current = false
+  }
+
+  // Lê playlist ao vivo
+  const pending = stateRef.current.playlist.filter(i => i.status === 'pending')
+  if (pending.length === 0) break
+
+  // Determina próximo item (scheduledDue tem prioridade)
+  const { autoPlay, autoplayComerciais } = stateRef.current.settings
+  const scheduledDue = autoPlay
+    ? pending.filter(i =>
+        i.scheduledTime <= currentTime &&
+        (!i.adBreakId || autoplayComerciais)   // blocos só auto-disparam se ON
+      ).sort(...)
+    : []
+  const next = scheduledDue[0] ?? firstByOrder(pending)
+
+  // Preload antecipado: próximo arquivo-based após next
+  const afterNext = pending.find(i => i.order > next.order && !!i.filePath)
+
+  await playItem(next, afterNext?.filePath)
 }
+
+// Limpeza final
+cleanupInputs(5000)
+for (const g of spotmasterGuidsRef.current) RemoveInput(g)
 spotmasterGuidsRef.current.clear()
 ```
 
-### Detecção de tipo de mídia
+### disparo()
 
 ```typescript
-IMAGE_EXTS = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico']
-AUDIO_EXTS = ['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff']
-// qualquer outra extensão → Video
-```
-
-### Ciclo A/B Roll (gapless)
-
-```
-Item A no ar
-  → imediatamente inicia preload de B em background
-  → A termina → B já está carregado → Cut para B sem dead air
-```
-
-### Cleanup automático
-
-5 segundos após o fim da playlist (ou ao pressionar Parar):
-```typescript
-RemoveInput para cada num em createdInputNumsRef
-createdInputNumsRef = []
+const disparo = () => {
+  if (stateRef.current.isSequencePlaying) {
+    // Avança para o próximo item (interrupt seguro)
+    disparoInterruptRef.current = true
+    abortRef.current = true
+  } else {
+    startSequence()
+  }
+}
 ```
 
 ---
 
-## 9. Gerenciamento de Estado
+## 10. Sistema de Blocos Comerciais
+
+### Scheduler (30s)
+
+```typescript
+useEffect(() => {
+  const interval = setInterval(() => {
+    const preloadSecs = (stateRef.current.settings.preloadMinutes ?? 5) * 60
+    commercialBlocks
+      .filter(b => b.enabled && b.lastLoadedDate !== today)
+      .forEach(b => {
+        const blockSecs   = parseTime(b.scheduledTime)
+        const triggerSecs = blockSecs - preloadSecs
+        if (nowSecs >= triggerSecs && nowSecs < blockSecs) {
+          loadBlockIntoPlaylist(b)
+        }
+      })
+  }, 30_000)
+}, [state.isLoading, loadBlockIntoPlaylist])
+```
+
+### loadBlockIntoPlaylist(block)
+
+1. Para cada `BlockClientSlot` do bloco:
+   - Filtra spots do cliente em `clientSpots`
+   - A partir do índice em `spotRotation[clientId]`, pega `spotsCount` spots (com wrap)
+   - `ADD_PLAYLIST_ITEM` para cada spot (status `pending`, `scheduledTime = block.scheduledTime`)
+   - Avança o índice de rotação
+2. `MARK_BLOCK_LOADED` com a data de hoje
+3. `SET_SPOT_ROTATION` com índices atualizados
+
+### Autoplay Comerciais
+
+O toggle `autoplayComerciais` controla se itens com `adBreakId` disparam automaticamente:
+
+```typescript
+// Scheduler de autoplay (verifica a cada 1s):
+const scheduledDue = playlist.filter(i =>
+  i.status === 'pending' &&
+  i.scheduledTime <= currentTime &&
+  (!i.adBreakId || autoplayComerciais)   // ← a chave
+)
+```
+
+Quando **OFF**: bloco carrega na playlist mas fica `pending` com indicador visual roxo pulsante. O operador dispara manualmente ou via Disparo.
+
+---
+
+## 11. Sistema de Disparo Global
+
+### Configuração da tecla (SettingsModal.tsx)
+
+```typescript
+// Modo captura: escuta o próximo keydown
+useEffect(() => {
+  if (!isCapturing) return
+  const handler = (e: KeyboardEvent) => {
+    e.preventDefault()
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return
+    set('triggerKey', keyEventToAccelerator(e))
+    setIsCapturing(false)
+  }
+  window.addEventListener('keydown', handler, true)
+  return () => window.removeEventListener('keydown', handler, true)
+}, [isCapturing])
+
+// Conversão de KeyboardEvent para accelerator Electron
+function keyEventToAccelerator(e: KeyboardEvent): string {
+  const parts: string[] = []
+  if (e.ctrlKey)  parts.push('CommandOrControl')
+  if (e.altKey)   parts.push('Alt')
+  if (e.shiftKey) parts.push('Shift')
+  const keyMap = { ' ': 'Space', 'ArrowUp': 'Up', 'Enter': 'Return', /* ... */ }
+  parts.push(keyMap[e.key] ?? e.key.toUpperCase())
+  return parts.join('+')
+}
+```
+
+### Registro automático (AppContext.tsx)
+
+```typescript
+// Reage a mudanças em triggerEnabled e triggerKey
+useEffect(() => {
+  if (state.isLoading || !window.spotmaster?.registerTrigger) return
+  if (triggerEnabled && triggerKey) {
+    window.spotmaster.registerTrigger(triggerKey)
+  } else {
+    window.spotmaster.unregisterTrigger()
+  }
+}, [state.settings.triggerEnabled, state.settings.triggerKey, state.isLoading])
+
+// Listener do evento (vem do processo principal via IPC)
+useEffect(() => {
+  window.spotmaster.onTriggerFired(() => {
+    if (stateRef.current.settings.triggerEnabled) disparo()
+  })
+  return () => window.spotmaster.removeTriggerListener()
+}, [disparo])
+```
+
+### Suporte a dispositivos externos
+
+O VTMaster suporta qualquer dispositivo que possa ser mapeado para uma tecla de teclado:
+
+| Dispositivo | Como mapear |
+|-------------|-------------|
+| Teclado | Direto — qualquer tecla |
+| Controle MIDI | Software como MIDI2LR, Bome MIDI Translator |
+| Gamepad/joystick | Software como antimicro, JoyToKey |
+| Botão USB HID | Drivers do fabricante ou AutoHotkey |
+
+---
+
+## 12. Gerenciamento de Estado
 
 **Arquivo:** `src/store/AppContext.tsx`
 
@@ -395,274 +584,315 @@ createdInputNumsRef = []
 
 ```typescript
 interface AppState {
-  playlist:          PlaylistItem[]
-  adBreaks:          AdBreak[]
-  clients:           Client[]
-  playLog:           PlayLog[]
-  settings:          AppSettings
-  vmixStatus:        VmixStatus
-  activePanel:       string
-  isLoading:         boolean
-  isSequencePlaying: boolean
+  playlist:           PlaylistItem[]
+  adBreaks:           AdBreak[]            // legacy
+  clients:            Client[]
+  playLog:            PlayLog[]
+  settings:           AppSettings
+  vmixStatus:         VmixStatus
+  activePanel:        string
+  isLoading:          boolean
+  isSequencePlaying:  boolean
+  activeItemProgress: { inputNum: string; position: number; duration: number } | null
+  commercialBlocks:   CommercialBlock[]
+  clientSpots:        ClientSpot[]
+  spotRotation:       SpotRotation
 }
 ```
 
-### Actions principais
+### AppSettings (completo)
 
-| Action | Payload | Descrição |
-|--------|---------|-----------|
-| `ADD_PLAYLIST_ITEM` | `PlaylistItem` | Adiciona ao final |
-| `UPDATE_PLAYLIST_ITEM` | `PlaylistItem` | Atualiza por id |
-| `DELETE_PLAYLIST_ITEM` | `string` (id) | Remove e renumera orders |
-| `REORDER_PLAYLIST` | `PlaylistItem[]` | Substitui array completo |
-| `CLEAR_PLAYLIST` | — | Esvazia a playlist |
-| `SET_SEQUENCE_PLAYING` | `boolean` | Liga/desliga sequência |
-| `SET_VMIX_STATUS` | `VmixStatus` | Atualiza conexão vMix |
-| `SET_SETTINGS` | `AppSettings` | Atualiza configurações |
-| `ADD_LOG` | `PlayLog` | Adiciona ao log de veiculação |
+```typescript
+interface AppSettings {
+  vmixHost:            string   // 'localhost'
+  vmixPort:            number   // 8088
+  stationName:         string
+  theme:               'dark' | 'light'
+  language:            'pt' | 'en'
+  autoConnect:         boolean
+  autoPlay:            boolean  // autoplay geral por scheduledTime
+  spotmasterInputName?: string
+  // Fase 3:
+  triggerEnabled:      boolean  // atalho global registrado e ativo
+  triggerKey:          string | null  // accelerator Electron ou null
+  autoplayComerciais:  boolean  // blocos comerciais disparam automaticamente
+  preloadMinutes:      number   // minutos antes do horário para pré-carregar (padrão: 5)
+}
+```
 
 ### Padrão stateRef (anti-stale-closure)
 
 ```typescript
 const stateRef = useRef(state)
 useEffect(() => { stateRef.current = state })
-```
 
-Dentro de `setTimeout`, `setInterval` e callbacks assíncronos use sempre `stateRef.current` em vez de `state` direto — caso contrário o valor ficará "congelado" no momento em que o callback foi criado.
-
-### Autoplay por horário
-
-```typescript
-setInterval(() => {
-  if (!stateRef.current.settings.autoPlay) return
-  const currentTime = now() // HH:MM:SS
-  stateRef.current.playlist
-    .filter(i => i.status === 'pending' && i.scheduledTime === currentTime)
-    .forEach(item => playItem(item))
-}, 1000)
+// Em callbacks assíncronos, setTimeout, setInterval → sempre stateRef.current
+// Nunca usar `state` diretamente (valor congelado no momento da criação do closure)
 ```
 
 ---
 
-## 10. Componentes
-
-### PlaylistTable
-
-Tabela principal da playlist com controles de transporte.
-
-**Colunas:** `# | Horário | Título | Anunciante | Tipo | Duração | Término | Input vMix | Status | Ações`
-
-**Coluna Término:**
-
-| Estado | Comportamento |
-|--------|--------------|
-| Playlist parada | Estimativa ao vivo: calcula com base no relógio atual (tick 1s) |
-| Playlist iniciada | Congela no horário exato em que Iniciar foi pressionado |
-| Após parar | Volta ao modo estimativa ao vivo |
-
-Lógica: `calcEndTimes(playlist, anchor)` — percorre itens ordenados, acumula `duration` a partir do cursor. Se item tem `scheduledTime`, ancora o cursor naquele horário. Itens `done`/`skipped` são ignorados.
-
-**Coluna Input vMix:**
-- Items com `filePath`: badge `📁 Auto`
-- Items com `inputName`: mostra o número/nome direto
-
-**Controles de transporte:**
-- `▶ Iniciar Playlist` → `startSequence()` — executa todos os `pending` em ordem até o final
-- `⏹ Parar` → `stopPlayback()` — para a sequência (item atual termina naturalmente no vMix)
-- Badge `● Executando` quando `isSequencePlaying === true`
-- Checkbox **Autoplay por Horário**
-
-**Drag & Drop (receber do VmixInputPanel):**
-- Cada `<tr>` é drop target para tipo `application/vmix-input`
-- Linha `.playlist-drop-end` no final aceita drop após o último item
-- CSS `.drag-insert-above`: linha azul de indicação de inserção
-- Ao soltar: `insertVmixInput(inp, atIndex)` — insere na posição e renumera todos os `order`
-
----
-
-### VmixInputPanel
-
-Painel lateral inline exibido ao lado da PlaylistTable.
-
-**Abertura:** botão `MonitorPlay` na Toolbar → toggle `showVmixPanel` no `App.tsx`
-
-**Funcionalidades:**
-- Lista todos os inputs existentes no vMix
-- Ícone por tipo: Camera→câmera, NDI→WiFi, Video→Film, Image→ImageIcon, AudioFile→Music, GT/Browser/Xaml→Monitor, Mix→Layers, Colour→Radio
-- Estado do input: Running (verde), Paused (amarelo), outros (cinza)
-- Busca em tempo real por nome, número ou tipo
-- Botão ↺ atualiza sem fechar o painel
-- Cada item é `draggable`: `dataTransfer.setData('application/vmix-input', JSON.stringify(inp))`
-- Botão `+` adiciona ao final da playlist
-
-**Mapeamento de tipo vMix → SpotType:**
-
-| Tipo vMix | SpotType |
-|-----------|---------|
-| Camera, NDI | `programa` |
-| Video, VideoList | `spot` |
-| GT, Browser, Xaml | `vinheta` |
-| demais | `outros` |
-
----
-
-### ItemModal
-
-Modal para criar ou editar item da playlist.
-
-**Campos:** Título, Anunciante, Tipo, Duração, Horário Agendado, Notas, Arquivo de Mídia, Input vMix
-
-**Arquivo de mídia:**
-1. Botão Browse → `browseVideoFile()` → diálogo nativo
-2. Preenche título pelo nome do arquivo
-3. Detecta tipo pela extensão
-4. Lê duração automaticamente via `readMediaDuration()` (protocolo `local-media://`)
-5. Imagens: duração padrão 10s, editável manualmente
-6. Exibe badge "Gerenciado automaticamente pelo SpotMaster" no campo Input vMix
-
----
-
-### StatusBar
-
-Rodapé fixo com:
-- Status vMix: ponto verde/vermelho + edição + badges Recording/Streaming
-- Item atualmente no ar
-- Próximo item pendente
-- Contagem total da playlist
-
----
+## 13. Componentes
 
 ### Toolbar
 
-- Botões: Nova Playlist, Importar, Exportar, Adicionar Item, Inserir Bloco Comercial
-- Toggle Tema dark/light
-- Toggle Idioma PT/EN
-- Botão Conectar/Desconectar vMix (com indicador de status)
-- Botão **Inputs do vMix** (ícone MonitorPlay) — desabilitado quando não conectado
+Botões disponíveis (da esquerda para a direita):
+
+| Grupo | Botões (só na aba Playlist) |
+|-------|---------------------------|
+| Playlist | Nova, Importar, Exportar, + Adicionar Item, Inputs vMix, Inserir Bloco, Limpar |
+| vMix | Conectar/Desconectar vMix |
+| Disparo *(sempre visível)* | **Disparo ON/OFF** (cinza=off, verde=on; desabilitado sem tecla configurada) |
+| Comerciais *(sempre visível)* | **Autoplay Comerc. ON/OFF** (cinza=off, verde=on) |
+| Utilitários | Tema dark/light, Idioma PT/EN, Configurações |
+
+### PlaylistTable
+
+**Controles de transporte:**
+- `▶ Play` — toca apenas o primeiro item pendente
+- `▶▶ Iniciar Playlist` — executa toda a sequência
+- `⏹ Parar` — interrompe a sequência
+- Badge `● Executando` quando `isSequencePlaying`
+- Checkbox **Autoplay por Horário**
+
+**Coluna Status — estados especiais:**
+- `⚡ Aguardando disparo` (roxo pulsante) — item com `adBreakId` e `status: pending` quando `autoplayComerciais = false`
+- `● Veiculando` (verde) — item atualmente no ar
+- `✓ Veiculado`, `⏭ Pulado`, `⚠ Erro`, `⧗ Pendente`
+
+**CSS da animação de disparo:**
+```css
+@keyframes trigger-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px transparent; }
+  50%       { box-shadow: inset 0 0 0 1px rgba(168,85,247,0.5); }
+}
+.row-awaiting-trigger {
+  animation: trigger-pulse 2s ease-in-out infinite;
+  background: color-mix(in srgb, #a855f7 5%, transparent) !important;
+}
+```
+
+**Coluna Término:**
+- Parado: estimativa ao vivo (tick 1s a partir do relógio atual)
+- Tocando: ancorado no horário exato em que a sequência iniciou
+- Itens com `scheduledTime` re-ancoram o cursor naquele horário
+
+**Drag & Drop:**
+- Cada linha é drop target para `application/vmix-input`
+- Linha `.playlist-drop-end` aceita drop após o último item
+- Ao soltar: `insertVmixInput(inp, atIndex)` — insere e renumera todos os `order`
+
+### SettingsModal
+
+Seções:
+1. **Dados da Emissora** — nome da emissora
+2. **Integração vMix** — host, porta, autoConnect, autoPlay, testar conexão
+3. **Disparo** — captura de tecla, exibição do accelerator configurado, botão limpar
+4. **Aparência** — tema, idioma
+
+**Seção Disparo:**
+- Campo de exibição da tecla configurada (ou "Nenhuma tecla configurada")
+- Botão "Capturar Tecla" → entra em modo captura (borda azul pulsante)
+- Em modo captura: próximo `keydown` (exceto modificadores puros) é capturado e salvo
+- Botão "Limpar" remove a tecla configurada (aparece somente se há tecla)
+
+### AdBreaksPanel
+
+**Aba Grade de Blocos:**
+- Campo de pré-carregamento no topo: "Pré-carregar blocos [X] min antes do horário agendado"
+- Lista de blocos ordenados por horário
+- Cada card: horário, nome, duração estimada, badges "Carregado hoje" / "Não disparou"
+- Linha de slots: `[Anunciante] × N → próximo spot`
+- Botões: ↺ Recarregar, toggle ativo/inativo, editar, excluir
+
+**Aba Spots dos Clientes:**
+- Lista de anunciantes expansível
+- Cada anunciante: lista de spots com ícone de tipo, título, duração
+- Formulário de spot: browse arquivo → detecção automática de tipo e duração
 
 ---
 
-## 11. Tipos de Dados
+## 14. Tipos de Dados
 
 ### PlaylistItem
-
 ```typescript
 interface PlaylistItem {
-  id:            string      // UUID
-  order:         number      // posição (1-based)
-  title:         string
-  clientId?:     string
-  clientName?:   string
-  duration:      number      // segundos
-  scheduledTime?: string     // HH:MM:SS — autoplay
-  inputName?:    string      // número/nome de input vMix pré-existente
-  type:          SpotType    // 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros'
-  status:        SpotStatus  // 'pending' | 'playing' | 'done' | 'skipped' | 'error'
-  filePath?:     string      // caminho absoluto do arquivo local
-  mediaType?:    'video' | 'image' | 'audio'
-  notes?:        string
-  adBreakId?:    string
+  id: string
+  order: number             // 1-based
+  title: string
+  clientId?: string
+  clientName?: string
+  duration: number          // segundos
+  scheduledTime?: string    // HH:MM:SS
+  inputName?: string        // input vMix pré-existente
+  type: SpotType            // 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros'
+  status: SpotStatus        // 'pending' | 'playing' | 'done' | 'skipped' | 'error'
+  filePath?: string
+  mediaType?: 'video' | 'image' | 'audio'
+  notes?: string
+  adBreakId?: string        // referência ao CommercialBlock gerador
 }
 ```
 
-**Regra de uso:**
-- `filePath` presente → SpotMaster faz `AddInput` automaticamente no vMix
-- `inputName` presente (sem filePath) → SpotMaster usa o input pré-existente diretamente
-- Nunca devem causar conflito: se o usuário selecionar um arquivo, `inputName` fica vazio
+**Regra de exclusividade:**
+- `filePath` → VTMaster faz `AddInput` automaticamente
+- `inputName` (sem filePath) → VTMaster usa input pré-existente (nunca remove)
+- Nunca os dois juntos: o modal limpa `inputName` quando o usuário seleciona arquivo
 
-### AppSettings
-
+### CommercialBlock
 ```typescript
-interface AppSettings {
-  vmixHost:    string   // padrão: 'localhost'
-  vmixPort:    number   // padrão: 8088
-  stationName: string
-  theme:       'dark' | 'light'
-  language:    'pt' | 'en'
-  autoConnect: boolean  // conectar vMix ao iniciar o app
-  autoPlay:    boolean  // autoplay por horário agendado
+interface CommercialBlock {
+  id: string
+  name: string
+  scheduledTime: string     // HH:MM:SS
+  slots: BlockClientSlot[]
+  enabled: boolean
+  createdAt: string
+  lastLoadedDate?: string   // YYYY-MM-DD — evita carga dupla no mesmo dia
+}
+```
+
+### ClientSpot
+```typescript
+interface ClientSpot {
+  id: string
+  clientId: string
+  title: string
+  filePath: string
+  mediaType: 'video' | 'audio' | 'image'
+  duration: number
+}
+```
+
+### SpotRotation
+```typescript
+interface SpotRotation {
+  [clientId: string]: number  // próximo índice de round-robin (0-based)
 }
 ```
 
 ---
 
-## 12. Internacionalização
+## 15. Internacionalização
 
-**Arquivos:** `src/i18n/pt.ts`, `src/i18n/en.ts`, `src/i18n/index.ts`
+**Arquivos:** `src/i18n/pt.ts` (fonte da verdade), `en.ts`, `index.ts`
 
 ```typescript
-// Acesso nos componentes via useApp():
 const { t } = useApp()
-t.playlist.playSequence    // 'Iniciar Playlist' / 'Start Playlist'
-t.statuses.playing         // 'Executando' / 'Playing'
-t.types.spot               // 'Spot'
-t.toolbar.browseVmixInputs // 'Inputs do vMix'
+t.toolbar.disparoOn          // 'Disparo ON'
+t.adBreaks.awaitingTrigger   // 'Aguardando disparo'
+t.settings.disparoCapturing  // '⚡ Pressione qualquer tecla...'
 ```
 
-O tipo `Translations` é derivado de `pt.ts`. Ao adicionar uma chave em `pt.ts`, o TypeScript exige que ela exista em `en.ts` também.
+O tipo `Translations` é inferido de `pt.ts`. Ao adicionar uma chave em `pt.ts`, o TypeScript exige a mesma chave em `en.ts` — checagem em tempo de compilação.
+
+**Chaves adicionadas na Fase 3:**
+
+| Seção | Chaves |
+|-------|--------|
+| `toolbar` | `disparoOn`, `disparoOff`, `autoplayComerciaisOn`, `autoplayComerciaisOff` |
+| `settings` | `disparo`, `disparoKey`, `disparoCaptureBtn`, `disparoCancelBtn`, `disparoClearBtn`, `disparoCapturing`, `disparoNone`, `disparoHint` |
+| `adBreaks` | `preloadMinutes`, `awaitingTrigger` |
 
 ---
 
-## 13. Persistência de Dados
+## 16. Persistência de Dados
+
+**Localização:** `%APPDATA%\SpotMaster\` (Windows)
 
 | Chave | Arquivo | Conteúdo |
 |-------|---------|----------|
-| `settings` | settings.json | Configurações do app |
-| `playlist` | playlist.json | Itens da playlist atual |
-| `adBreaks` | adBreaks.json | Blocos comerciais salvos |
-| `clients` | clients.json | Anunciantes cadastrados |
+| `settings` | settings.json | AppSettings completo (inclui Fase 3) |
+| `playlist` | playlist.json | Playlist atual |
+| `adBreaks` | adBreaks.json | Blocos legacy (compatibilidade) |
+| `clients` | clients.json | Anunciantes |
 | `playLog` | playLog.json | Histórico de veiculação |
+| `commercialBlocks` | commercialBlocks.json | Grade de blocos |
+| `clientSpots` | clientSpots.json | Spots por anunciante |
+| `spotRotation` | spotRotation.json | Índices de rodízio |
+| `activePanel` | activePanel.json | Último painel ativo |
 
-Salvar: `saveToStorage(key, data)` → `window.spotmaster.saveData(key, data)` → `writeFileSync` no main process  
-Carregar: executado no startup em `loadAll()` via `Promise.all` de cinco `loadData()` simultâneos
+**Estratégia de migração:**
+```typescript
+// Startup: merge com defaults garante retrocompatibilidade
+settings: { ...DEFAULT_SETTINGS, ...(settingsRaw as AppSettings) }
+// Campos novos (Fase 3) recebem seus defaults em instalações antigas
+```
+
+**Auto-save:** cada campo tem `useEffect` próprio que dispara ao mudar (não durante `isLoading`).
+
+**Startup:** `loadAll()` usa `Promise.all` para carregar os 9 arquivos simultaneamente → `LOAD_ALL` único dispatch.
 
 ---
 
-## 14. Funcionalidades Implementadas
+## 17. Funcionalidades Implementadas
 
 ### Playlist
 - [x] Criar, editar, excluir itens
-- [x] Reordenar com botões ▲▼
-- [x] Drag & drop de inputs do vMix direto para posição específica na playlist
-- [x] Coluna Término: ao vivo antes do play; ancorada no horário exato após iniciar
-- [x] Exportar/importar playlist como JSON
-- [x] Inserir bloco comercial completo na playlist
+- [x] Reordenar com ▲▼
+- [x] Drag & drop de inputs do vMix para posição específica
+- [x] Coluna Término: estimativa ao vivo / ancorada ao iniciar
+- [x] Exportar/importar como JSON
+- [x] Inserir bloco comercial na playlist
 
 ### Mídia
-- [x] Selecionar arquivo de vídeo, imagem ou áudio via diálogo nativo
-- [x] Detecção automática do tipo de mídia pela extensão
-- [x] Leitura automática de duração via `local-media://` + HTML5
+- [x] Selecionar arquivo (vídeo, imagem, áudio) via diálogo nativo
+- [x] Detecção automática de tipo pela extensão
+- [x] Leitura de duração via `local-media://` + HTML5 (timeout 10s)
 - [x] Imagens: duração padrão 10s, editável
 - [x] Auto-preenchimento do título pelo nome do arquivo
 
-### Veiculação (vMix)
-- [x] Conexão HTTP com vMix (host/porta configuráveis)
-- [x] Polling de status a cada 2s
-- [x] Slots não-destrutivos: cada clipe recebe o próximo slot disponível sem afetar inputs existentes
-- [x] A/B Roll gapless: próximo item pré-carregado em background
-- [x] Sequência completa automática: Iniciar → executa todos até o final sem intervenção
-- [x] Corte correto: `PlayInput` → `PreviewInput` → `Cut` (sem parâmetro Input no Cut)
-- [x] Suporte a vídeos (`Video|`), imagens (`Image|`) e áudios (`AudioFile|`)
-- [x] Limpeza automática 5s após o fim da playlist
-- [x] Input pré-existente: `PreviewInput` + `Cut` sem criar novo slot
-- [x] Autoplay por horário agendado (campo `scheduledTime`)
+### Veiculação
+- [x] Sequência completa automática (while loop lendo playlist ao vivo)
+- [x] Corte correto: PlayInput → PreviewInput → Cut
+- [x] Slots não-destrutivos (câmeras/NDI/gráficos intocados)
+- [x] GUID-based (estável após renumeração do vMix)
+- [x] A/B Roll gapless (preload antecipado 10s antes do fim)
+- [x] Limpeza garantida via spotmasterGuidsRef
+- [x] Autoplay por `scheduledTime`
+- [x] Try/catch por item: erros não quebram a sequência
+- [x] Fast polling 500ms para barra de progresso em tempo real
+- [x] Suporte a vídeo, áudio e imagem
 
-### Painel de Inputs vMix
-- [x] Lista todos os inputs existentes com ícone por tipo e estado
-- [x] Filtro por nome, número ou tipo
-- [x] Botão ↺ atualiza sem fechar
-- [x] Drag & drop para inserir em posição específica na playlist
-- [x] Botão `+` para adicionar ao final
+### Disparo Global (Fase 3)
+- [x] Captura de qualquer tecla/combinação no modal de configurações
+- [x] Registro via `globalShortcut` do Electron (funciona minimizado)
+- [x] Inicia sequência se parado
+- [x] Avança para próximo item se tocando (`disparoInterruptRef`)
+- [x] Limpeza automática ao fechar o app
+- [x] Botão ON/OFF na toolbar (desabilitado sem tecla)
+- [x] Suporte a dispositivos MIDI/controle via mapeamento de tecla
+
+### Automação de Comerciais (Fase 3)
+- [x] Toggle "Autoplay Comerciais" na toolbar
+- [x] Pré-carregamento configurável (1–60 min) no painel de Blocos
+- [x] Indicador visual `⚡ Aguardando disparo` com pulso roxo na playlist
+- [x] Blocos comerciais respeitam o toggle para auto-disparo
+
+### Blocos Comerciais
+- [x] Cadastro de spots por anunciante
+- [x] Criação de blocos com horário e slots
+- [x] Scheduler 30s: carga X min antes do horário (configurável)
+- [x] Round-robin contínuo entre execuções
+- [x] Proteção contra carga dupla no mesmo dia
+- [x] Botão "Recarregar Agora"
+- [x] Interrupt de bloco durante sequência em andamento
+
+### Painel vMix
+- [x] Lista inputs com ícone por tipo e estado
+- [x] Filtro por nome/número/tipo
+- [x] Drag & drop para posição específica na playlist
+- [x] Botão + para adicionar ao final
 
 ### Log e Relatórios
-- [x] Log automático de cada item veiculado (horário agendado vs. horário real)
+- [x] Log automático (horário agendado vs. real)
+- [x] Filtros por data, anunciante, status
+- [x] Exportar CSV
 - [x] Relatório diário em PDF
 - [x] Relatório por anunciante com período
-- [x] Exportar PDF via diálogo nativo de salvar
 
 ### Interface
-- [x] Tema escuro e claro (toggle na toolbar)
-- [x] Internacionalização PT/EN
-- [x] Barra de status inferior (vMix, item atual, próximo)
-- [x] Badges Recording/Streaming na StatusBar
-- [x] Layout split: PlaylistTable + VmixInputPanel lado a lado
+- [x] Tema dark/light (toggle)
+- [x] Bilíngue PT-BR / EN
+- [x] Status bar: vMix, item atual, próximo, Recording, Streaming
+- [x] Identidade visual VTMaster (logo, azul `#0ea5e9`)
