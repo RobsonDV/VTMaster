@@ -163,6 +163,19 @@ html, body, #root {
   opacity: 0.9;
   font-size: 0.65rem;
 }
+.dev-version {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-bottom: 3px;
+  letter-spacing: 0.3px;
+  opacity: 1;
+}
 
 /* ── Scrollbars ── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }

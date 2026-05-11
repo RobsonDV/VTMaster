@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { Settings } from 'lucide-react'
 import { useApp } from './store/AppContext'
 import Toolbar from './components/Toolbar/Toolbar'
@@ -26,6 +26,11 @@ export default function App() {
   const [showAdBreakSelect, setShowAdBreakSelect] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showVmixPanel, setShowVmixPanel] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
+  }, [])
 
   const navItems = [
     { id: 'playlist' as Panel,  label: t.nav.playlist },
@@ -71,6 +76,7 @@ export default function App() {
           </button>
           <div className="dev-credit">
             <strong>VTMaster</strong>
+            {appVersion && <span className="dev-version">v{appVersion}</span>}
             Desenvolvido por<br />RobsonCostaDV
           </div>
         </nav>

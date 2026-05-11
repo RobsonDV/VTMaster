@@ -53,6 +53,11 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [testResult, setTestResult] = useState<string | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
   const [captureHint, setCaptureHint] = useState('')
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
+  }, [])
 
   const set = <K extends keyof AppSettings>(field: K, value: AppSettings[K]) =>
     setForm((f) => ({ ...f, [field]: value }))
@@ -338,7 +343,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         {/* Brand credit */}
         <div style={{ padding: '10px 20px 14px', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
           <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
-            VTMaster · Desenvolvido por{' '}
+            VTMaster{appVersion && <span style={{ margin: '0 4px', padding: '1px 5px', fontSize: '0.62rem', fontWeight: 700, background: 'color-mix(in srgb, var(--accent) 15%, transparent)', border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)', borderRadius: 4, color: 'var(--accent)' }}>v{appVersion}</span>} · Desenvolvido por{' '}
             <strong style={{ color: 'var(--accent)', fontWeight: 700 }}>RobsonCostaDV</strong>
           </span>
         </div>
