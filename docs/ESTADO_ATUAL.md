@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **12/05/2026** — Versão **3.3.0** — Fase 11: Robustez, Remoção de Legacy, UX Visual
+> Atualizado em **12/05/2026** — Versão **4.0.0** — Fase 11 concluída + melhorias de interface (Fases 1 a 3 de UX)
 
 ---
 
@@ -123,7 +123,7 @@ VTMaster/
 │   └── vmix.js          → Compilado do vmix.ts (ESM)
 │
 ├── src/
-│   ├── App.tsx          → Layout, navegação de painéis, modais globais
+│   ├── App.tsx          → Layout, navegação de painéis, sidebar com ícones, uso do activePanel persistido, modais globais
 │   ├── App.css          → Variáveis CSS, tema dark/light, layout
 │   ├── types/index.ts   → TODOS os tipos e interfaces
 │   ├── store/
@@ -133,13 +133,13 @@ VTMaster/
 │   │   └── en.ts        → Strings EN
 │   ├── utils/time.ts    → now(), today() (local TZ), formatDuration()
 │   └── components/
-│       ├── Toolbar/     → Toolbar da aplicação (visível em todas as abas)
+│       ├── Toolbar/     → Toolbar em duas camadas: controles globais no topo + ações contextuais por tela
 │       ├── StatusBar/   → Rodapé: badge ON AIR, countdown, barra de progresso, status vMix
 │       ├── Grade/
 │       │   ├── GradePanel.tsx       → Estrutura semanal + Export/Import de grade
 │       │   └── ProgramSlotModal.tsx → Criar/editar slot (Programa/Musical/Comercial)
 │       ├── DaySchedule/
-│       │   ├── DaySchedulePanel.tsx → Programação do Dia (card-view, drag-drop, ponto de pausa)
+│       │   ├── DaySchedulePanel.tsx → Programação do Dia com cockpit operacional, card-view, drag-drop e ponto de pausa
 │       │   └── DaySchedulePanel.css
 │       ├── AdBreaks/
 │       │   ├── AdBreaksPanel.tsx    → UI dos Blocos Comerciais (accordion inline)
@@ -800,6 +800,8 @@ Todos os dados em `%APPDATA%\SpotMaster\` (Windows):
 
 **Migração automática:** blocos no formato antigo (`slots[]`) são convertidos para `items[]` no `LOAD_ALL`.
 
+> **Nota de branding:** o nome técnico `SpotMaster` ainda permanece em storage, bridge e alguns identificadores internos por compatibilidade. A interface visível do produto deve usar `VTMaster`.
+
 ---
 
 ## 15. Integração vMix
@@ -950,6 +952,44 @@ O script de conversão:
 - [x] **DaySchedule — headers**: 18→30% (muito mais visíveis)
 - [x] **DaySchedule — item playing**: fundo 8→15% + border-left
 - [x] **DaySchedule — barra inline**: 2→3px + glow accent
+
+### ✅ Melhorias de interface — 12/05/2026
+
+- [x] **Aba ativa persistida no layout**: `App.tsx` passou a respeitar `activePanel` salvo no estado global
+- [x] **Sidebar com ícones**: navegação lateral mais clara e com melhor leitura
+- [x] **Toolbar em dois níveis**: topo global + ações contextuais por aba
+- [x] **Favicon VTMaster**: substituição do ícone de template
+- [x] **Textos visíveis alinhados com a marca VTMaster**
+- [x] **Cockpit da Programação**: resumo operacional com agora, próximo e ações principais
+- [x] **Destaque visual de bloco atual e próximo bloco** na aba Programação
+- [x] **Núcleo do design system**: novos componentes `Button`, `Modal`, `Field`, `SegmentedControl` e `Badge`
+- [x] **Migração dos modais principais**: `ItemModal`, `SettingsModal`, `ProgramSlotModal` e edição rápida de horário passaram a usar a base compartilhada
+- [x] **Base compartilhada aplicada em telas operacionais**: `Toolbar`, `GradePanel` e `AdBreaksPanel` agora usam o design system inicial
+- [x] **Fluxo de adicionar item na Programação refinado**: `AddItemModal`, `BlockPickerModal` e modais auxiliares ganharam hierarquia visual e melhor leitura operacional
+
+### Pós-Fase 11 — Melhorias de Interface (12/05/2026)
+
+#### Interface 1 — Polimento rápido e coesão
+
+- **Aba ativa corrigida**: `App.tsx` passou a usar diretamente `state.activePanel`, eliminando divergência entre a navegação persistida e o conteúdo renderizado.
+- **Sidebar com ícones**: a navegação lateral ficou mais larga e legível, com ícones por seção para leitura mais rápida pelo operador.
+- **Toolbar reorganizada**: o topo foi dividido em uma faixa global (marca, status vMix, tema, idioma, configurações) e uma faixa contextual com ações da aba ativa.
+- **Marca visível alinhada**: favicon antigo de template foi trocado por um ícone VTMaster, e textos visíveis ao usuário foram atualizados de SpotMaster para VTMaster onde fazia sentido de produto.
+- **Compatibilidade preservada**: nomes técnicos como `%APPDATA%/SpotMaster/` e `window.spotmaster` continuam existindo internamente para não quebrar storage, preload e integrações já estáveis.
+
+#### Interface 2 — Cockpit operacional da Programação
+
+- **Novo topo operacional na aba Programação**: `DaySchedulePanel` ganhou um cockpit com bloco atual, próximo bloco/item e resumo do dia.
+- **Ações principais concentradas**: centralizar, atualizar, adicionar item, abrir Inputs vMix e iniciar/parar programação ficaram reunidos em destaque visual.
+- **Leitura operacional melhorada**: blocos atual e próximo passaram a ter marcação visual dedicada para reduzir ambiguidade durante operação ao vivo.
+- **Refino de implementação**: o cabeçalho antigo foi mantido temporariamente no DOM e ocultado por CSS para reduzir risco funcional nesta etapa.
+
+#### Interface 3 — Design system e fluxo de inserção
+
+- **Design system inicial em produção**: `Button`, `Modal`, `Field`, `SegmentedControl`, `Badge` e `PageHeader` passaram a sustentar os principais fluxos novos.
+- **Modais principais migrados**: Playlist, Configurações, Estrutura e edição rápida deixaram de depender de estilos isolados.
+- **Telas operacionais alinhadas**: Toolbar, Estrutura e Blocos Comerciais receberam a mesma base visual compartilhada.
+- **Adicionar item na Programação corrigido**: o fluxo voltou a usar modal centralizado e legível, com escolha clara entre arquivo de mídia, ação vMix e input vMix, além de seletor de bloco mais limpo.
 
 ---
 

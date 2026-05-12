@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Square, ListVideo, SkipForward, CheckCircle,
   Trash2, RefreshCw, CalendarDays,
@@ -9,9 +9,12 @@ import { useApp } from '../../store/AppContext'
 import type { PlaylistItem, ProgramSlot, VmixActionItem, VmixInput } from '../../types'
 import { formatDuration, today } from '../../utils/time'
 import VmixInputPanel, { spotTypeForVmix } from '../Playlist/VmixInputPanel'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import { Field, FieldRow } from '../ui/Field'
+import Modal from '../ui/Modal'
 import './DaySchedulePanel.css'
 import '../Playlist/ContextMenu.css'
-import '../Playlist/ItemModal.css'
 
 const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'])
 const AUDIO_EXTS = new Set(['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'])
@@ -119,7 +122,7 @@ function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction
     document.addEventListener('mousedown', click)
     document.addEventListener('keydown', key)
     return () => { document.removeEventListener('mousedown', click); document.removeEventListener('keydown', key) }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const style: React.CSSProperties = {
     position: 'fixed',
@@ -206,39 +209,45 @@ function VmixActionModal({ onInsert, onClose }: {
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 360, maxWidth: 440 }}>
-        <div className="modal-header">
-          <h2>Inserir Ação vMix</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-        <div className="modal-form">
-          <div className="form-group">
-            <label>Função vMix</label>
-            <select value={fn} onChange={e => setFn(e.target.value)}>
-              {VMIX_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </div>
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>Input <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(opcional)</span></label>
-              <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="ex: Camera1" />
-            </div>
-            <div className="form-group" style={{ width: 90 }}>
-              <label>Valor</label>
-              <input value={value} onChange={e => setValue(e.target.value)} placeholder="ex: 100" />
-            </div>
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn-cancel" onClick={onClose}>Cancelar</button>
-          <button className="btn-save" onClick={() => {
-            onInsert({ function: fn, input: input || undefined, value: value || undefined })
-            onClose()
-          }}>Adicionar</button>
-        </div>
+    <Modal
+      title="Inserir Ação vMix"
+      onClose={onClose}
+      maxWidth={460}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button
+            variant="purple"
+            onClick={() => {
+              onInsert({ function: fn, input: input || undefined, value: value || undefined })
+              onClose()
+            }}
+          >
+            Adicionar
+          </Button>
+        </>
+      }
+    >
+      <div className="ui-field-hint">Use isso para inserir comandos rápidos do vMix sem sair da programação.</div>
+      <Field label="Função vMix">
+        <select className="ui-select" value={fn} onChange={e => setFn(e.target.value)}>
+          {VMIX_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+      </Field>
+      <FieldRow>
+        <Field label="Input (opcional)" className="settings-grow-2">
+          <input ref={inputRef} className="ui-input" value={input} onChange={e => setInput(e.target.value)} placeholder="ex: Camera1" />
+        </Field>
+        <Field label="Valor">
+          <input className="ui-input" value={value} onChange={e => setValue(e.target.value)} placeholder="ex: 100" />
+        </Field>
+      </FieldRow>
+      <div className="ui-card-note day-insert-preview">
+        <strong>Prévia:</strong> {fn}
+        {input ? ` · Input "${input}"` : ''}
+        {value ? ` · Value "${value}"` : ''}
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -253,33 +262,35 @@ function VmixInputModal({ onInsert, onClose }: {
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 340, maxWidth: 420 }}>
-        <div className="modal-header">
-          <h2>Inserir Input vMix</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-        <div className="modal-form">
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>Nome ou nº do input</label>
-              <input ref={inputRef} value={inputName} onChange={e => setInputName(e.target.value)} placeholder="ex: Camera1" />
-            </div>
-            <div className="form-group" style={{ width: 90 }}>
-              <label>Duração (s)</label>
-              <input type="number" value={duration} min={1}
-                onChange={e => setDuration(Math.max(1, parseInt(e.target.value) || 10))} />
-            </div>
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn-cancel" onClick={onClose}>Cancelar</button>
-          <button className="btn-save" disabled={!inputName.trim()} onClick={() => {
-            onInsert(inputName, duration); onClose()
-          }}>Adicionar</button>
-        </div>
-      </div>
-    </div>
+    <Modal
+      title="Inserir Input vMix"
+      onClose={onClose}
+      maxWidth={440}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" disabled={!inputName.trim()} onClick={() => { onInsert(inputName, duration); onClose() }}>
+            Adicionar
+          </Button>
+        </>
+      }
+    >
+      <div className="ui-field-hint">Ideal para câmera, NDI, grafismo ou qualquer input já existente no vMix.</div>
+      <FieldRow>
+        <Field label="Nome ou nº do input" className="settings-grow-2">
+          <input ref={inputRef} className="ui-input" value={inputName} onChange={e => setInputName(e.target.value)} placeholder="ex: Camera1" />
+        </Field>
+        <Field label="Duração (s)">
+          <input
+            className="ui-input"
+            type="number"
+            value={duration}
+            min={1}
+            onChange={e => setDuration(Math.max(1, parseInt(e.target.value) || 10))}
+          />
+        </Field>
+      </FieldRow>
+    </Modal>
   )
 }
 
@@ -299,26 +310,22 @@ function ScheduleTimeEditModal({ item, date, onClose }: {
     onClose()
   }
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 300, maxWidth: 360 }}>
-        <div className="modal-header">
-          <h2>Horário Agendado</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-        <div className="modal-form">
-          <div className="form-group">
-            <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 6, display: 'block' }}>
-              {item.title}
-            </label>
-            <input ref={inputRef} type="time" step="1" value={time} onChange={e => setTime(e.target.value)} />
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn-cancel" onClick={onClose}>Cancelar</button>
-          <button className="btn-save" onClick={save}>Salvar</button>
-        </div>
-      </div>
-    </div>
+    <Modal
+      title="Horário Agendado"
+      onClose={onClose}
+      maxWidth={380}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" onClick={save}>Salvar</Button>
+        </>
+      }
+    >
+      <div className="ui-field-hint">{item.title}</div>
+      <Field label="Horário">
+        <input ref={inputRef} className="ui-input" type="time" step="1" value={time} onChange={e => setTime(e.target.value)} />
+      </Field>
+    </Modal>
   )
 }
 
@@ -334,25 +341,41 @@ function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }:
   const ref = useRef<HTMLButtonElement>(null)
   useEffect(() => { ref.current?.focus() }, [])
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 300, maxWidth: 360 }}>
-        <div className="modal-header">
-          <h2>Adicionar ao bloco {groupTime}</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px 16px' }}>
-          <button ref={ref} className="btn-add-choice" onClick={() => { onClose(); onFile() }}>
-            <FolderOpen size={16} /> Arquivo de mídia
-          </button>
-          <button className="btn-add-choice btn-add-choice--purple" onClick={() => { onClose(); onVmixAction() }}>
-            <Zap size={16} /> Ação vMix
-          </button>
-          <button className="btn-add-choice" onClick={() => { onClose(); onVmixInput() }}>
-            <MonitorPlay size={16} /> Input vMix
-          </button>
-        </div>
+    <Modal title={`Adicionar ao bloco ${groupTime}`} onClose={onClose} maxWidth={430}>
+      <div className="ui-field-hint">
+        Escolha o tipo de item que você quer inserir. O novo item entra no bloco selecionado sem quebrar a ordem da programação.
       </div>
-    </div>
+      <div className="day-add-choice-list">
+        <button ref={ref} className="day-add-choice-card" onClick={() => { onClose(); onFile() }}>
+          <div className="day-add-choice-icon">
+            <FolderOpen size={18} />
+          </div>
+          <div className="day-add-choice-copy">
+            <strong>Arquivo de mídia</strong>
+            <span>Vídeo, áudio ou imagem do disco</span>
+          </div>
+          <Badge>Mais comum</Badge>
+        </button>
+        <button className="day-add-choice-card day-add-choice-card--purple" onClick={() => { onClose(); onVmixAction() }}>
+          <div className="day-add-choice-icon">
+            <Zap size={18} />
+          </div>
+          <div className="day-add-choice-copy">
+            <strong>Ação vMix</strong>
+            <span>Corte, fade, volume, overlay e comandos rápidos</span>
+          </div>
+        </button>
+        <button className="day-add-choice-card" onClick={() => { onClose(); onVmixInput() }}>
+          <div className="day-add-choice-icon">
+            <MonitorPlay size={18} />
+          </div>
+          <div className="day-add-choice-copy">
+            <strong>Input vMix</strong>
+            <span>Câmera, NDI, grafismo ou input já existente</span>
+          </div>
+        </button>
+      </div>
+    </Modal>
   )
 }
 
@@ -369,24 +392,23 @@ function BlockPickerModal({ groups, onClose, onPick }: {
     return () => document.removeEventListener('keydown', key)
   }, [onClose])
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 300, maxWidth: 380 }}>
-        <div className="modal-header">
-          <h2>Escolher bloco</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 16px 14px', maxHeight: 400, overflowY: 'auto' }}>
-          {groups.map(g => (
-            <button key={g.time} className="btn-add-choice" onClick={() => { onClose(); onPick(g) }}>
-              <Clock size={15} />
-              <span style={{ fontWeight: 600 }}>{g.time}</span>
-              {g.slot?.title && <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginLeft: 4 }}>— {g.slot.title}</span>}
-              <span style={{ marginLeft: 'auto', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{g.items.length} {g.items.length === 1 ? 'item' : 'itens'}</span>
-            </button>
-          ))}
-        </div>
+    <Modal title="Escolher bloco" onClose={onClose} maxWidth={440} bodyStyle={{ maxHeight: 420, overflowY: 'auto' }}>
+      <div className="ui-field-hint">Selecione em qual bloco você quer inserir o novo item.</div>
+      <div className="day-block-picker-list">
+        {groups.map(g => (
+          <button key={g.time} className="day-block-picker-card" onClick={() => { onClose(); onPick(g) }}>
+            <div className="day-block-picker-main">
+              <div className="day-block-picker-time">
+                <Clock size={15} />
+                <span>{g.time}</span>
+              </div>
+              <strong>{g.slot?.title ?? `Bloco ${g.time}`}</strong>
+            </div>
+            <Badge>{g.items.length} {g.items.length === 1 ? 'item' : 'itens'}</Badge>
+          </button>
+        ))}
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -404,15 +426,27 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const todayStr  = today()   // local date, not UTC
   const isToday   = selectedDate === todayStr
 
-  const schedule   = dateSchedules[selectedDate] ?? []
-  const sorted     = [...schedule].sort((a, b) => a.order - b.order)
+  const schedule = useMemo(
+    () => dateSchedules[selectedDate] ?? [],
+    [dateSchedules, selectedDate]
+  )
+  const sorted = useMemo(
+    () => [...schedule].sort((a, b) => a.order - b.order),
+    [schedule]
+  )
   const hasPending = schedule.some(i => i.status === 'pending')
 
   const selDow   = new Date(selectedDate + 'T12:00:00').getDay()
-  const weekSlots = (state.weeklyGrid[selDow] ?? []).slice().sort((a, b) =>
-    a.scheduledTime.localeCompare(b.scheduledTime)
+  const weekSlots = useMemo(
+    () => (state.weeklyGrid[selDow] ?? []).slice().sort((a, b) =>
+      a.scheduledTime.localeCompare(b.scheduledTime)
+    ),
+    [state.weeklyGrid, selDow]
   )
-  const groups = buildGroups(sorted, weekSlots)
+  const groups = useMemo(
+    () => buildGroups(sorted, weekSlots),
+    [sorted, weekSlots]
+  )
 
   // ── Context menu state ────────────────────────────────────────────────────
   const [ctxMenu, setCtxMenu]             = useState<CtxState | null>(null)
@@ -514,7 +548,9 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
 
   // Keep a ref to the latest groups so the auto-center effect can read them after DOM renders
   const groupsRef = useRef(groups)
-  groupsRef.current = groups
+  useEffect(() => {
+    groupsRef.current = groups
+  }, [groups])
 
   const handleCenterBlock = useCallback(() => {
     const nowHHMM = secsToHHMM(nowSeconds())
@@ -656,9 +692,149 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     ? pendingItems.find(i => i.order > (playingItem.order ?? 0))
     : pendingItems[0]
   const totalDuration = schedule.reduce((a, i) => a + (i.duration ?? 0), 0)
+  const completedCount = schedule.filter(i => i.status === 'done' || i.status === 'skipped').length
+  const errorCount = schedule.filter(i => i.status === 'error').length
+  const selectedItem = selectedItemId ? schedule.find(i => i.id === selectedItemId) : null
+  const scheduleDateLabel = new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR')
+  const nowHHMM = secsToHHMM(nowSeconds())
+  const currentBlock = playingItem
+    ? groups.find(g => g.items.some(i => i.id === playingItem.id)) ?? null
+    : isToday
+      ? groups.filter(g => g.time <= nowHHMM).pop() ?? groups[0] ?? null
+      : groups[0] ?? null
+  const nextBlock = nextItem
+    ? groups.find(g => g.items.some(i => i.id === nextItem.id)) ?? null
+    : currentBlock
+      ? groups.find(g => g.time > currentBlock.time) ?? null
+      : null
+  const progressPct = activeItemProgress && activeItemProgress.duration > 0
+    ? Math.min(100, (activeItemProgress.position / activeItemProgress.duration) * 100)
+    : null
+  const remainingLabel = activeItemProgress && activeItemProgress.duration > 0
+    ? formatDuration(Math.max(0, Math.round((activeItemProgress.duration - activeItemProgress.position) / 1000)))
+    : null
 
   return (
     <div className="day-schedule-panel">
+      <div className="schedule-cockpit">
+        <div className="schedule-cockpit-top">
+          <div>
+            <div className="schedule-kicker">
+              {DAY_NAMES[selDow]} · {scheduleDateLabel}
+              {isToday && <span className="today-pill">Hoje</span>}
+            </div>
+            <h2>{t.schedule.title}</h2>
+          </div>
+
+          <div className="schedule-date-picker">
+            <CalendarDays size={13} />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => onDateChange(e.target.value || todayStr)}
+            />
+          </div>
+        </div>
+
+        <div className="schedule-cockpit-grid">
+          <section className={`cockpit-card cockpit-now${playingItem ? ' is-live' : ''}`}>
+            <div className="cockpit-label">
+              {playingItem ? 'Agora no ar' : isToday ? 'Bloco atual' : 'Primeiro bloco'}
+            </div>
+            <div className="cockpit-title">
+              {playingItem?.title ?? currentBlock?.slot?.title ?? currentBlock?.time ?? 'Sem bloco'}
+            </div>
+            <div className="cockpit-meta">
+              {currentBlock
+                ? `${currentBlock.time} · ${currentBlock.items.length} ${currentBlock.items.length === 1 ? 'item' : 'itens'}`
+                : 'Nenhuma programação carregada'}
+              {remainingLabel && <span className="cockpit-countdown">-{remainingLabel}</span>}
+            </div>
+            {playingItem && progressPct !== null && (
+              <div className="cockpit-progress-track">
+                <div className="cockpit-progress-fill" style={{ width: `${progressPct}%` }} />
+              </div>
+            )}
+          </section>
+
+          <section className="cockpit-card">
+            <div className="cockpit-label">Próximo</div>
+            <div className="cockpit-title">{nextItem?.title ?? nextBlock?.slot?.title ?? 'Nada pendente'}</div>
+            <div className="cockpit-meta">
+              {nextBlock
+                ? `${nextBlock.time}${nextBlock.slot?.title ? ` · ${nextBlock.slot.title}` : ''}`
+                : hasPending ? 'Aguardando ordem' : 'Grade concluída'}
+            </div>
+          </section>
+
+          <section className="cockpit-card cockpit-summary">
+            <div className="summary-stat">
+              <span>{schedule.length}</span>
+              <small>itens</small>
+            </div>
+            <div className="summary-stat">
+              <span>{completedCount}</span>
+              <small>concluídos</small>
+            </div>
+            <div className="summary-stat">
+              <span>{formatDuration(totalDuration)}</span>
+              <small>total</small>
+            </div>
+            {errorCount > 0 && <div className="summary-alert">{errorCount} erro{errorCount > 1 ? 's' : ''}</div>}
+          </section>
+        </div>
+
+        <div className="schedule-action-row">
+          <div className="schedule-selection-hint">
+            {selectedItem
+              ? <>Selecionado: <strong>{selectedItem.title}</strong></>
+              : 'Selecione um item para inserir abaixo dele ou use Adicionar item para escolher o bloco.'}
+          </div>
+
+          <div className="day-schedule-controls">
+            {schedule.length > 0 && (
+              <button className="day-schedule-btn" onClick={handleCenterBlock} title="Rolar para o bloco da hora atual">
+                <Crosshair size={13} /> Centralizar Bloco
+              </button>
+            )}
+            <button className="day-schedule-btn" onClick={handleReload} title="Recarregar programação desta data">
+              <RefreshCw size={13} /> Atualizar
+            </button>
+            <button
+              className="day-schedule-btn accent"
+              onClick={handleAddItemFromToolbar}
+              title={selectedItemId ? 'Adicionar item ao bloco selecionado' : 'Escolher bloco para adicionar item'}
+            >
+              <Plus size={13} /> Adicionar item
+            </button>
+            <button
+              className={`day-schedule-btn${showVmixPanel ? ' accent' : ''}`}
+              onClick={() => setShowVmixPanel(v => !v)}
+              title={showVmixPanel ? 'Fechar painel de inputs' : 'Abrir painel de inputs do vMix'}
+            >
+              <MonitorPlay size={13} /> Inputs vMix
+            </button>
+            {isToday ? (
+              !state.isSequencePlaying ? (
+                <button
+                  className="day-schedule-btn play"
+                  onClick={startScheduleFromNow}
+                  disabled={!hasPending}
+                  title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
+                >
+                  <ListVideo size={15} /> {t.schedule.playSchedule}
+                </button>
+              ) : (
+                <button className="day-schedule-btn stop" onClick={stopPlayback}>
+                  <Square size={13} /> {t.playlist.stopPlayback}
+                </button>
+              )
+            ) : (
+              <span className="schedule-preview-note">Pré-visualização · play só para hoje</span>
+            )}
+          </div>
+        </div>
+      </div>
       {/* ── Header ── */}
       <div className="day-schedule-header">
         <div>
@@ -780,7 +956,11 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
               const CardIcon = isMusical ? Music : isCommercial ? DollarSign : Tv
 
               return (
-                <div key={group.time} className={`block-card ${cls}`} data-block-time={group.time}>
+                <div
+                  key={group.time}
+                  className={`block-card ${cls}${currentBlock?.time === group.time ? ' current-block' : ''}${nextBlock?.time === group.time ? ' next-block' : ''}`}
+                  data-block-time={group.time}
+                >
                   {/* ── Card header ── */}
                   <div className="block-card-header">
                     <CardIcon size={14} />
@@ -945,7 +1125,21 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           onCopy={() => { setCopiedItem(ctxMenu.item); setCtxMenu(null) }}
           onPaste={() => {
             if (copiedItem) {
-              const { id: _id, order: _order, ...fields } = copiedItem
+              const fields: Omit<PlaylistItem, 'id' | 'order'> = {
+                title: copiedItem.title,
+                clientId: copiedItem.clientId,
+                clientName: copiedItem.clientName,
+                duration: copiedItem.duration,
+                scheduledTime: copiedItem.scheduledTime,
+                inputName: copiedItem.inputName,
+                type: copiedItem.type,
+                status: copiedItem.status,
+                filePath: copiedItem.filePath,
+                mediaType: copiedItem.mediaType,
+                notes: copiedItem.notes,
+                adBreakId: copiedItem.adBreakId,
+                vmixAction: copiedItem.vmixAction,
+              }
               insertAfterItem(ctxMenu.item, { ...fields, status: 'pending', scheduledTime: ctxMenu.item.scheduledTime })
             }
             setCtxMenu(null)

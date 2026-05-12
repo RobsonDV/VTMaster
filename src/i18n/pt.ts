@@ -1,6 +1,6 @@
 const pt = {
   // App
-  appName: 'SpotMaster',
+  appName: 'VTMaster',
   appSubtitle: 'Veiculação Comercial',
 
   // Navigation

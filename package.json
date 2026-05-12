@@ -1,7 +1,7 @@
 {
   "name": "vtmaster",
   "private": true,
-  "version": "3.3.0",
+  "version": "4.0.0",
   "description": "VTMaster - Software de Playout para TV/Rádio com integração vMix",
   "author": "RobsonCostaDV",
   "main": "dist-electron/main.js",
@@ -37,8 +37,18 @@
     "compression": "maximum",
     "win": {
       "target": [
-        { "target": "nsis",     "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "public/icon.ico",
       "requestedExecutionLevel": "asInvoker"

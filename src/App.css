@@ -18,6 +18,9 @@
   --success:       #22c55e;
   --warning:       #f59e0b;
   --error:         #ef4444;
+  --radius-md:     6px;
+  --radius-lg:     10px;
+  --shadow-lg:     0 20px 60px rgba(0, 0, 0, 0.4);
 }
 
 /* Light theme */
@@ -34,6 +37,9 @@
   --success:       #16a34a;
   --warning:       #d97706;
   --error:         #dc2626;
+  --radius-md:     6px;
+  --radius-lg:     10px;
+  --shadow-lg:     0 20px 50px rgba(34, 41, 67, 0.16);
 }
 
 html, body, #root {
@@ -61,7 +67,7 @@ html, body, #root {
 
 /* ── Sidebar ── */
 .sidebar {
-  width: 150px;
+  width: 176px;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
@@ -89,6 +95,16 @@ html, body, #root {
   overflow: hidden;
 }
 
+.nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.nav-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .nav-item:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
@@ -99,6 +115,10 @@ html, body, #root {
   color: var(--accent);
   font-weight: 600;
   border-right: 2px solid var(--accent);
+}
+
+.nav-item.active svg {
+  opacity: 1;
 }
 
 /* ── Content area ── */

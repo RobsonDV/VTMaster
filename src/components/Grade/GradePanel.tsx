@@ -3,10 +3,13 @@ import { Plus, Edit2, Trash2, ChevronUp, ChevronDown, Tv, Music, DollarSign, Ale
 import { useApp } from '../../store/AppContext'
 import type { ProgramSlot, ScheduleSlotType, WeeklyProgramGrid } from '../../types'
 import { formatDuration } from '../../utils/time'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import Modal from '../ui/Modal'
+import PageHeader from '../ui/PageHeader'
 import ProgramSlotModal from './ProgramSlotModal'
 import './GradePanel.css'
 
-// ─── Formato do arquivo de exportação ────────────────────────────────────────
 interface GridExportFile {
   version: '1'
   type: 'vtmaster-grade'
@@ -22,17 +25,83 @@ function isValidGridExport(data: unknown): data is GridExportFile {
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
-// ─── Modal de cópia de dia ────────────────────────────────────────────────────
-function CopyDayModal({ sourceDay, slots, onClose }: {
-  sourceDay: number
-  slots: ProgramSlot[]
+function DaySelectionModal({
+  title,
+  subtitle,
+  selectedDays,
+  onToggle,
+  onQuickPick,
+  onClose,
+  onConfirm,
+  confirmLabel,
+  counts,
+  warning,
+}: {
+  title: string
+  subtitle: string
+  selectedDays: number[]
+  onToggle: (dow: number) => void
+  onQuickPick: (days: number[]) => void
   onClose: () => void
+  onConfirm: () => void
+  confirmLabel: string
+  counts: Record<number, number>
+  warning?: string
 }) {
+  const allDays = [0, 1, 2, 3, 4, 5, 6]
+  const setDays = (days: number[]) => {
+    const allSelected = days.every(d => selectedDays.includes(d))
+    onQuickPick(allSelected ? selectedDays.filter(d => !days.includes(d)) : [...new Set([...selectedDays, ...days])].sort((a, b) => a - b))
+  }
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      minWidth={340}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" onClick={onConfirm} disabled={selectedDays.length === 0}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="ui-field-hint">{subtitle}</div>
+
+      <div className="grade-quick-actions">
+        <Button size="sm" variant="ghost" onClick={() => setDays([1, 2, 3, 4, 5])}>Seg-Sex</Button>
+        <Button size="sm" variant="ghost" onClick={() => setDays([0, 6])}>Fim de semana</Button>
+        <Button size="sm" variant="ghost" onClick={() => setDays(allDays)}>Todos</Button>
+      </div>
+
+      <div className="grade-day-chip-grid">
+        {allDays.map((dow) => (
+          <Button
+            key={dow}
+            size="sm"
+            variant={selectedDays.includes(dow) ? 'primary' : 'ghost'}
+            onClick={() => onToggle(dow)}
+            className="grade-day-chip"
+          >
+            {DAY_LABELS[dow]}
+            <span className="grade-day-chip-count">({counts[dow] ?? 0})</span>
+          </Button>
+        ))}
+      </div>
+
+      {warning && selectedDays.length > 0 ? (
+        <div className="ui-card-note ui-card-note--warning">{warning}</div>
+      ) : null}
+    </Modal>
+  )
+}
+
+function CopyDayModal({ sourceDay, slots, onClose }: { sourceDay: number; slots: ProgramSlot[]; onClose: () => void }) {
   const { state, dispatch } = useApp()
   const [targets, setTargets] = useState<number[]>([])
-
-  const toggle = (dow: number) =>
-    setTargets(prev => prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow])
+  const allOtherDays = [0, 1, 2, 3, 4, 5, 6].filter(d => d !== sourceDay)
 
   const handleCopy = () => {
     if (targets.length === 0) return
@@ -48,120 +117,27 @@ function CopyDayModal({ sourceDay, slots, onClose }: {
     onClose()
   }
 
-  const allOtherDays = [0,1,2,3,4,5,6].filter(d => d !== sourceDay)
+  const counts = Object.fromEntries(allOtherDays.map((dow) => [dow, state.weeklyGrid[dow]?.length ?? 0])) as Record<number, number>
 
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, minWidth: 300, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 4, color: 'var(--text-primary)' }}>
-          Copiar estrutura de {DAY_LABELS[sourceDay]}
-        </div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 14 }}>
-          Selecione os dias que receberão a mesma estrutura ({slots.length} slots):
-        </div>
-
-        {/* Select all Seg–Sex shortcut */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-          <button
-            type="button"
-            onClick={() => setTargets(prev => {
-              const weekdays = [1,2,3,4,5].filter(d => d !== sourceDay)
-              const allSelected = weekdays.every(d => prev.includes(d))
-              return allSelected ? prev.filter(d => !weekdays.includes(d)) : [...new Set([...prev, ...weekdays])]
-            })}
-            style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.73rem', cursor: 'pointer' }}
-          >
-            Seg–Sex
-          </button>
-          <button
-            type="button"
-            onClick={() => setTargets(prev => {
-              const weekend = [0,6].filter(d => d !== sourceDay)
-              const allSelected = weekend.every(d => prev.includes(d))
-              return allSelected ? prev.filter(d => !weekend.includes(d)) : [...new Set([...prev, ...weekend])]
-            })}
-            style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.73rem', cursor: 'pointer' }}
-          >
-            Fim de semana
-          </button>
-          <button
-            type="button"
-            onClick={() => setTargets(allOtherDays.length === targets.length ? [] : allOtherDays)}
-            style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.73rem', cursor: 'pointer' }}
-          >
-            Todos
-          </button>
-        </div>
-
-        {/* Day checkboxes */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-          {allOtherDays.map(dow => (
-            <button
-              key={dow}
-              type="button"
-              onClick={() => toggle(dow)}
-              style={{
-                padding: '5px 12px', borderRadius: 6, border: '1px solid',
-                borderColor: targets.includes(dow) ? 'var(--accent)' : 'var(--border)',
-                background: targets.includes(dow) ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-                color: targets.includes(dow) ? 'var(--accent)' : 'var(--text-secondary)',
-                fontSize: '0.8rem', fontWeight: targets.includes(dow) ? 700 : 400, cursor: 'pointer',
-              }}
-            >
-              {DAY_LABELS[dow]}
-              {state.weeklyGrid[dow]?.length > 0 && (
-                <span style={{ fontSize: '0.65rem', opacity: 0.65, marginLeft: 4 }}>
-                  ({state.weeklyGrid[dow].length})
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {targets.length > 0 && (
-          <div style={{ fontSize: '0.73rem', color: 'var(--warning)', marginBottom: 10 }}>
-            ⚠ A estrutura atual dos dias selecionados será substituída.
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button
-            onClick={onClose}
-            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleCopy}
-            disabled={targets.length === 0}
-            style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: targets.length === 0 ? 'not-allowed' : 'pointer', fontSize: '0.82rem', fontWeight: 600, opacity: targets.length === 0 ? 0.5 : 1 }}
-          >
-            Copiar para {targets.length > 0 ? `${targets.length} dia${targets.length > 1 ? 's' : ''}` : '...'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <DaySelectionModal
+      title={`Copiar estrutura de ${DAY_LABELS[sourceDay]}`}
+      subtitle={`Selecione os dias que receberão a mesma estrutura (${slots.length} slots).`}
+      selectedDays={targets}
+      onToggle={(dow) => setTargets(prev => prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow].sort((a, b) => a - b))}
+      onQuickPick={setTargets}
+      onClose={onClose}
+      onConfirm={handleCopy}
+      confirmLabel={`Copiar para ${targets.length > 0 ? `${targets.length} dia${targets.length > 1 ? 's' : ''}` : '...'}`}
+      counts={counts}
+      warning="A estrutura atual dos dias selecionados será substituída."
+    />
   )
 }
 
-// ─── Modal de importação de grade ────────────────────────────────────────────
-function ImportGridModal({ importedGrid, onClose }: {
-  importedGrid: WeeklyProgramGrid
-  onClose: () => void
-}) {
+function ImportGridModal({ importedGrid, onClose }: { importedGrid: WeeklyProgramGrid; onClose: () => void }) {
   const { state, dispatch } = useApp()
-  const [targets, setTargets] = useState<number[]>([0,1,2,3,4,5,6])
-
-  const toggle = (dow: number) =>
-    setTargets(prev => prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow])
-
-  const slotCount = (dow: number) => importedGrid[dow]?.length ?? 0
+  const [targets, setTargets] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
 
   const handleImport = () => {
     if (targets.length === 0) return
@@ -177,92 +153,21 @@ function ImportGridModal({ importedGrid, onClose }: {
     onClose()
   }
 
-  const allDays = [0,1,2,3,4,5,6]
+  const counts = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((dow) => [dow, importedGrid[dow]?.length ?? 0])) as Record<number, number>
 
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, minWidth: 320, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 4, color: 'var(--text-primary)' }}>
-          Importar Estrutura
-        </div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 14 }}>
-          Selecione os dias que serão substituídos pela estrutura importada:
-        </div>
-
-        {/* Atalhos de seleção */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-          {[
-            { label: 'Seg–Sex', days: [1,2,3,4,5] },
-            { label: 'Fim de semana', days: [0,6] },
-            { label: 'Todos', days: allDays },
-          ].map(({ label, days }) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => {
-                const allSel = days.every(d => targets.includes(d))
-                setTargets(prev => allSel ? prev.filter(d => !days.includes(d)) : [...new Set([...prev, ...days])])
-              }}
-              style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.73rem', cursor: 'pointer' }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Checkboxes de dias */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-          {allDays.map(dow => {
-            const count = slotCount(dow)
-            return (
-              <button
-                key={dow}
-                type="button"
-                onClick={() => toggle(dow)}
-                style={{
-                  padding: '5px 12px', borderRadius: 6, border: '1px solid',
-                  borderColor: targets.includes(dow) ? 'var(--accent)' : 'var(--border)',
-                  background: targets.includes(dow) ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-                  color: targets.includes(dow) ? 'var(--accent)' : 'var(--text-secondary)',
-                  fontSize: '0.8rem', fontWeight: targets.includes(dow) ? 700 : 400, cursor: 'pointer',
-                }}
-              >
-                {DAY_LABELS[dow]}
-                <span style={{ fontSize: '0.65rem', opacity: 0.65, marginLeft: 4 }}>({count})</span>
-              </button>
-            )
-          })}
-        </div>
-
-        {targets.length > 0 && (
-          <div style={{ fontSize: '0.73rem', color: 'var(--warning)', marginBottom: 10 }}>
-            ⚠ A estrutura atual dos dias selecionados será substituída.
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button
-            onClick={onClose}
-            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={targets.length === 0}
-            style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: targets.length === 0 ? 'not-allowed' : 'pointer', fontSize: '0.82rem', fontWeight: 600, opacity: targets.length === 0 ? 0.5 : 1 }}
-          >
-            Importar {targets.length > 0 ? `${targets.length} dia${targets.length > 1 ? 's' : ''}` : '...'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <DaySelectionModal
+      title="Importar Estrutura"
+      subtitle="Selecione os dias que serão substituídos pela estrutura importada."
+      selectedDays={targets}
+      onToggle={(dow) => setTargets(prev => prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow].sort((a, b) => a - b))}
+      onQuickPick={setTargets}
+      onClose={onClose}
+      onConfirm={handleImport}
+      confirmLabel={`Importar ${targets.length > 0 ? `${targets.length} dia${targets.length > 1 ? 's' : ''}` : '...'}`}
+      counts={counts}
+      warning="A estrutura atual dos dias selecionados será substituída."
+    />
   )
 }
 
@@ -270,28 +175,27 @@ interface Props {
   onNavigate?: (panel: 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports') => void
 }
 
-// Cor e ícone por tipo de slot
 function SlotIcon({ type }: { type: ScheduleSlotType }) {
-  if (type === 'bloco_musical')   return <Music size={13} style={{ color: '#22c55e' }} />
+  if (type === 'bloco_musical') return <Music size={13} style={{ color: '#22c55e' }} />
   if (type === 'bloco_comercial') return <DollarSign size={13} style={{ color: '#f59e0b' }} />
-  if (type === 'programa')        return <Tv size={13} style={{ color: '#0ea5e9' }} />
-  if (type === 'vinheta')         return <Tv size={13} style={{ color: '#8b5cf6' }} />
+  if (type === 'programa') return <Tv size={13} style={{ color: '#0ea5e9' }} />
+  if (type === 'vinheta') return <Tv size={13} style={{ color: '#8b5cf6' }} />
   return <Tv size={13} style={{ color: 'var(--text-secondary)' }} />
 }
 
 function slotBorderColor(type: ScheduleSlotType): string {
-  if (type === 'bloco_musical')   return '#22c55e'
+  if (type === 'bloco_musical') return '#22c55e'
   if (type === 'bloco_comercial') return '#f59e0b'
-  if (type === 'programa')        return '#0ea5e9'
-  if (type === 'vinheta')         return '#8b5cf6'
+  if (type === 'programa') return '#0ea5e9'
+  if (type === 'vinheta') return '#8b5cf6'
   return 'var(--text-secondary)'
 }
 
 function slotBg(type: ScheduleSlotType): string {
-  if (type === 'bloco_musical')   return 'color-mix(in srgb, #22c55e 5%, var(--bg-secondary))'
+  if (type === 'bloco_musical') return 'color-mix(in srgb, #22c55e 5%, var(--bg-secondary))'
   if (type === 'bloco_comercial') return 'color-mix(in srgb, #f59e0b 5%, var(--bg-secondary))'
-  if (type === 'programa')        return 'color-mix(in srgb, #0ea5e9 5%, var(--bg-secondary))'
-  if (type === 'vinheta')         return 'color-mix(in srgb, #8b5cf6 5%, var(--bg-secondary))'
+  if (type === 'programa') return 'color-mix(in srgb, #0ea5e9 5%, var(--bg-secondary))'
+  if (type === 'vinheta') return 'color-mix(in srgb, #8b5cf6 5%, var(--bg-secondary))'
   return 'var(--bg-secondary)'
 }
 
@@ -299,7 +203,6 @@ export default function GradePanel({ onNavigate }: Props) {
   const { state, dispatch, t, generatePlaylistFromGrid } = useApp()
   const todayDow = new Date().getDay()
   const [selectedDay, setSelectedDay] = useState(todayDow)
-  // editingSlot: undefined=closed, null=new, ProgramSlot=editing
   const [editingSlot, setEditingSlot] = useState<ProgramSlot | null | undefined>(undefined)
   const [newSlotType, setNewSlotType] = useState<ScheduleSlotType>('programa')
   const [showCopyModal, setShowCopyModal] = useState(false)
@@ -367,7 +270,7 @@ export default function GradePanel({ onNavigate }: Props) {
     if (idx <= 0) return
     const next = ordered.map((s, i) => {
       if (i === idx - 1) return { ...s, order: slot.order }
-      if (i === idx)     return { ...slot, order: ordered[idx - 1].order }
+      if (i === idx) return { ...slot, order: ordered[idx - 1].order }
       return s
     })
     dispatch({ type: 'REORDER_PROGRAM_SLOTS', payload: { day: selectedDay, slots: next } })
@@ -378,7 +281,7 @@ export default function GradePanel({ onNavigate }: Props) {
     const idx = ordered.findIndex(s => s.id === slot.id)
     if (idx >= ordered.length - 1) return
     const next = ordered.map((s, i) => {
-      if (i === idx)     return { ...slot, order: ordered[idx + 1].order }
+      if (i === idx) return { ...slot, order: ordered[idx + 1].order }
       if (i === idx + 1) return { ...s, order: slot.order }
       return s
     })
@@ -390,15 +293,10 @@ export default function GradePanel({ onNavigate }: Props) {
     dispatch({ type: 'DELETE_PROGRAM_SLOT', payload: { day: selectedDay, slotId } })
   }
 
-  const getSlotLabel = (slot: ProgramSlot): string => {
-    return t.grade.slotTypes[slot.type as keyof typeof t.grade.slotTypes] ?? slot.type
-  }
+  const getSlotLabel = (slot: ProgramSlot): string => t.grade.slotTypes[slot.type as keyof typeof t.grade.slotTypes] ?? slot.type
 
   const getSlotContent = (slot: ProgramSlot): { text: string; isEmpty: boolean } => {
-    if (slot.type === 'bloco_musical') {
-      // Musical blocks are always empty in the Estrutura — content added in Programação
-      return { text: 'Adicionar músicas na aba Programação', isEmpty: false }
-    }
+    if (slot.type === 'bloco_musical') return { text: 'Adicionar músicas na aba Programação', isEmpty: false }
     if (slot.type === 'bloco_comercial') {
       if (!slot.commercialBlockId) return { text: 'Sem bloco', isEmpty: true }
       const block = state.commercialBlocks.find(b => b.id === slot.commercialBlockId)
@@ -406,7 +304,7 @@ export default function GradePanel({ onNavigate }: Props) {
       const count = block.items?.length ?? 0
       return count > 0
         ? { text: `${count} item${count > 1 ? 's' : ''} configurados`, isEmpty: false }
-        : { text: 'Vazio — adicionar em Blocos Comerciais', isEmpty: false }
+        : { text: 'Vazio - adicionar em Blocos Comerciais', isEmpty: false }
     }
     if (slot.filePath) return { text: slot.filePath.split(/[\\/]/).pop() ?? slot.title, isEmpty: false }
     if (slot.inputName) return { text: `Input: ${slot.inputName}`, isEmpty: false }
@@ -415,61 +313,24 @@ export default function GradePanel({ onNavigate }: Props) {
 
   return (
     <div className="grade-panel">
-      {/* Header */}
-      <div className="grade-panel-header">
-        <div>
-          <h2 style={{ fontSize: '0.95rem', fontWeight: 700 }}>{t.grade.title}</h2>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-            Monte a estrutura semanal — defina o esqueleto e preencha depois
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Feedback de exportação */}
-          {exportMsg && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600 }}>
-              ✓ {exportMsg}
-            </span>
-          )}
+      <PageHeader
+        title={t.grade.title}
+        subtitle="Monte a estrutura semanal e preencha o conteúdo operacional depois."
+        actions={
+          <>
+            {exportMsg ? <Badge tone="accent">{exportMsg}</Badge> : null}
+            <Button size="sm" variant="secondary" onClick={handleImport} title="Importar estrutura de grade de um arquivo .vtgrid" icon={<Upload size={13} />}>Importar</Button>
+            <Button size="sm" variant="secondary" onClick={handleExport} title="Exportar estrutura de grade para arquivo .vtgrid" icon={<Download size={13} />}>Exportar</Button>
+            {slots.length > 0 ? (
+              <Button size="sm" variant="secondary" onClick={() => setShowCopyModal(true)} title="Copiar esta estrutura para outros dias da semana" icon={<Copy size={13} />}>Copiar para...</Button>
+            ) : null}
+            <Button size="sm" variant="primary" onClick={handleLoadToday} title="Regenerar a Programação do Dia com base neste template" icon={<RefreshCw size={13} />}>
+              {t.grade.loadToday}
+            </Button>
+          </>
+        }
+      />
 
-          {/* Importar estrutura */}
-          <button
-            onClick={handleImport}
-            title="Importar estrutura de grade de um arquivo .vtgrid"
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.78rem' }}
-          >
-            <Upload size={13} /> Importar
-          </button>
-
-          {/* Exportar estrutura */}
-          <button
-            onClick={handleExport}
-            title="Exportar estrutura de grade para arquivo .vtgrid"
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.78rem' }}
-          >
-            <Download size={13} /> Exportar
-          </button>
-
-          {slots.length > 0 && (
-            <button
-              onClick={() => setShowCopyModal(true)}
-              title="Copiar esta estrutura para outros dias da semana"
-              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.78rem' }}
-            >
-              <Copy size={13} /> Copiar para...
-            </button>
-          )}
-          <button
-            className="grade-load-btn"
-            onClick={handleLoadToday}
-            title="Regenerar a Programação do Dia com base neste template"
-          >
-            <RefreshCw size={13} />
-            {t.grade.loadToday}
-          </button>
-        </div>
-      </div>
-
-      {/* Day tabs */}
       <div className="grade-day-tabs">
         {t.grade.days.map((dayLabel, dow) => (
           <button
@@ -478,40 +339,26 @@ export default function GradePanel({ onNavigate }: Props) {
             onClick={() => setSelectedDay(dow)}
           >
             {dayLabel}
-            {dow === todayDow && <span style={{ fontSize: '0.6rem', marginLeft: 3, opacity: 0.65 }}>({t.grade.today})</span>}
+            {dow === todayDow && <span className="grade-day-tab-note">({t.grade.today})</span>}
           </button>
         ))}
       </div>
 
-      {/* Add buttons */}
-      <div style={{ display: 'flex', gap: 8, padding: '10px 20px 0', flexWrap: 'wrap' }}>
-        <button
-          className="grade-add-btn"
-          onClick={() => handleAddSlot('programa')}
-          style={{ borderColor: '#0ea5e960', color: '#0ea5e9' }}
-        >
-          <Plus size={13} /><Tv size={12} /> {t.grade.addPrograma}
-        </button>
-        <button
-          className="grade-add-btn"
-          onClick={() => handleAddSlot('bloco_musical')}
-          style={{ borderColor: '#22c55e60', color: '#22c55e' }}
-        >
-          <Plus size={13} /><Music size={12} /> {t.grade.addBlocoMusical}
-        </button>
-        <button
-          className="grade-add-btn"
-          onClick={() => handleAddSlot('bloco_comercial')}
-          style={{ borderColor: '#f59e0b60', color: '#f59e0b' }}
-        >
-          <Plus size={13} /><DollarSign size={12} /> {t.grade.addBlocoComercial}
-        </button>
+      <div className="grade-add-actions">
+        <Button className="grade-add-btn grade-add-btn--programa" variant="ghost" onClick={() => handleAddSlot('programa')} icon={<><Plus size={13} /><Tv size={12} /></>}>
+          {t.grade.addPrograma}
+        </Button>
+        <Button className="grade-add-btn grade-add-btn--musical" variant="ghost" onClick={() => handleAddSlot('bloco_musical')} icon={<><Plus size={13} /><Music size={12} /></>}>
+          {t.grade.addBlocoMusical}
+        </Button>
+        <Button className="grade-add-btn grade-add-btn--comercial" variant="ghost" onClick={() => handleAddSlot('bloco_comercial')} icon={<><Plus size={13} /><DollarSign size={12} /></>}>
+          {t.grade.addBlocoComercial}
+        </Button>
       </div>
 
-      {/* Slot list */}
       <div className="grade-content">
         {slots.length === 0 ? (
-          <p className="grade-empty">{t.grade.emptyDay}</p>
+          <div className="ui-card-note">{t.grade.emptyDay}</div>
         ) : (
           <div className="grade-slot-list">
             {slots.map((slot, idx) => {
@@ -521,64 +368,36 @@ export default function GradePanel({ onNavigate }: Props) {
               return (
                 <div
                   key={slot.id}
+                  className="grade-slot-card"
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '9px 10px',
                     background: bg,
                     border: `1px solid ${isEmpty ? borderColor + '40' : borderColor + '60'}`,
                     borderLeft: `3px solid ${borderColor}`,
                     borderStyle: isEmpty ? 'dashed' : 'solid',
                     borderLeftStyle: 'solid',
-                    borderRadius: 6,
-                    marginBottom: 4,
                     opacity: isEmpty ? 0.85 : 1,
                   }}
                 >
-                  {/* Time */}
-                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: borderColor, minWidth: 46, fontVariantNumeric: 'tabular-nums' }}>
+                  <span className="grade-slot-time" style={{ color: borderColor }}>
                     {slot.scheduledTime.slice(0, 5)}
                   </span>
-
-                  {/* Icon + type label */}
                   <SlotIcon type={slot.type} />
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: borderColor, minWidth: 90, whiteSpace: 'nowrap' }}>
+                  <span className="grade-slot-label" style={{ color: borderColor }}>
                     {getSlotLabel(slot)}
                   </span>
-
-                  {/* Title */}
-                  <span style={{ fontSize: '0.83rem', fontWeight: 500, color: 'var(--text-primary)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {slot.title}
-                  </span>
-
-                  {/* Content (file/block) */}
-                  <span style={{ fontSize: '0.73rem', color: isEmpty ? 'var(--text-secondary)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {isEmpty && <AlertCircle size={11} style={{ color: 'var(--warning)', flexShrink: 0 }} />}
+                  <span className="grade-slot-title">{slot.title}</span>
+                  <span className="grade-slot-content">
+                    {isEmpty && <AlertCircle size={11} className="grade-slot-alert" />}
                     {text}
                   </span>
-
-                  {/* Duration */}
                   {slot.duration > 0 && (
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', minWidth: 40, textAlign: 'right', flexShrink: 0 }}>
-                      {formatDuration(slot.duration)}
-                    </span>
+                    <span className="grade-slot-dur">{formatDuration(slot.duration)}</span>
                   )}
-
-                  {/* Actions */}
                   <div className="grade-slot-actions">
-                    <button className="grade-slot-btn" onClick={() => handleMoveUp(slot)} disabled={idx === 0} title="Mover para cima">
-                      <ChevronUp size={12} />
-                    </button>
-                    <button className="grade-slot-btn" onClick={() => handleMoveDown(slot)} disabled={idx === slots.length - 1} title="Mover para baixo">
-                      <ChevronDown size={12} />
-                    </button>
-                    <button className="grade-slot-btn" onClick={() => setEditingSlot(slot)} title={t.grade.editSlot}>
-                      <Edit2 size={12} />
-                    </button>
-                    <button className="grade-slot-btn danger" onClick={() => handleDelete(slot.id)} title={t.common.delete}>
-                      <Trash2 size={12} />
-                    </button>
+                    <Button className="grade-slot-btn" variant="ghost" size="sm" iconOnly onClick={() => handleMoveUp(slot)} disabled={idx === 0} title="Mover para cima" icon={<ChevronUp size={12} />} />
+                    <Button className="grade-slot-btn" variant="ghost" size="sm" iconOnly onClick={() => handleMoveDown(slot)} disabled={idx === slots.length - 1} title="Mover para baixo" icon={<ChevronDown size={12} />} />
+                    <Button className="grade-slot-btn" variant="ghost" size="sm" iconOnly onClick={() => setEditingSlot(slot)} title={t.grade.editSlot} icon={<Edit2 size={12} />} />
+                    <Button className="grade-slot-btn grade-slot-btn-danger" variant="ghost" size="sm" iconOnly onClick={() => handleDelete(slot.id)} title={t.common.delete} icon={<Trash2 size={12} />} />
                   </div>
                 </div>
               )
@@ -587,7 +406,6 @@ export default function GradePanel({ onNavigate }: Props) {
         )}
       </div>
 
-      {/* Modais */}
       {editingSlot !== undefined && (
         <ProgramSlotModal
           slot={editingSlot}
@@ -596,19 +414,8 @@ export default function GradePanel({ onNavigate }: Props) {
           onClose={() => setEditingSlot(undefined)}
         />
       )}
-      {showCopyModal && (
-        <CopyDayModal
-          sourceDay={selectedDay}
-          slots={slots}
-          onClose={() => setShowCopyModal(false)}
-        />
-      )}
-      {importedGrid && (
-        <ImportGridModal
-          importedGrid={importedGrid}
-          onClose={() => setImportedGrid(null)}
-        />
-      )}
+      {showCopyModal && <CopyDayModal sourceDay={selectedDay} slots={slots} onClose={() => setShowCopyModal(false)} />}
+      {importedGrid && <ImportGridModal importedGrid={importedGrid} onClose={() => setImportedGrid(null)} />}
     </div>
   )
 }

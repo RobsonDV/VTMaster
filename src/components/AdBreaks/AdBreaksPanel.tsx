@@ -6,6 +6,9 @@ import {
 import { useApp } from '../../store/AppContext'
 import type { CommercialBlock, CommercialBlockItem, Client } from '../../types'
 import { formatDuration } from '../../utils/time'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import PageHeader from '../ui/PageHeader'
 import './AdBreaksPanel.css'
 
 const ALL_DAYS   = [0, 1, 2, 3, 4, 5, 6]
@@ -258,19 +261,16 @@ function InlineBlockEditor({ draft, setDraft, onSave, onCancel, clients, isNew }
       {/* Items header + add buttons */}
       <div className="adbreak-items-header">
         <span>Itens do Bloco</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className="btn-add-sm" onClick={() => addItem('spot_client')}
-            style={{ background: 'color-mix(in srgb, #f59e0b 12%, transparent)', borderColor: '#f59e0b60', color: '#f59e0b' }}>
-            <User size={11} /> Spot de Cliente
-          </button>
-          <button className="btn-add-sm" onClick={() => addItem('vmix_action')}
-            style={{ background: 'color-mix(in srgb, #7c3aed 12%, transparent)', borderColor: '#7c3aed60', color: '#a78bfa' }}>
-            <Zap size={11} /> Ação vMix
-          </button>
-          <button className="btn-add-sm" onClick={() => addItem('vmix_input')}
-            style={{ background: 'color-mix(in srgb, #0ea5e9 12%, transparent)', borderColor: '#0ea5e960', color: '#38bdf8' }}>
-            <Monitor size={11} /> Input vMix
-          </button>
+        <div className="ab-item-actions">
+          <Button className="ab-add-btn ab-add-btn--spot" size="sm" variant="ghost" onClick={() => addItem('spot_client')} icon={<User size={11} />}>
+            Spot de Cliente
+          </Button>
+          <Button className="ab-add-btn ab-add-btn--action" size="sm" variant="ghost" onClick={() => addItem('vmix_action')} icon={<Zap size={11} />}>
+            Ação vMix
+          </Button>
+          <Button className="ab-add-btn ab-add-btn--input" size="sm" variant="ghost" onClick={() => addItem('vmix_input')} icon={<Monitor size={11} />}>
+            Input vMix
+          </Button>
         </div>
       </div>
 
@@ -293,10 +293,10 @@ function InlineBlockEditor({ draft, setDraft, onSave, onCancel, clients, isNew }
 
       {/* Save / Cancel */}
       <div className="form-actions">
-        <button className="btn-cancel" onClick={onCancel}>Cancelar</button>
-        <button className="btn-save" onClick={onSave} disabled={!draft.name.trim()}>
+        <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
+        <Button variant="primary" onClick={onSave} disabled={!draft.name.trim()}>
           {isNew ? 'Criar Bloco' : 'Salvar Alterações'}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -387,22 +387,25 @@ export default function AdBreaksPanel() {
 
   return (
     <div className="adbreaks-panel">
-      <div className="panel-header">
-        <h2>Blocos Comerciais</h2>
-        <button className="btn-primary-sm" onClick={openNew} disabled={expandedId === 'new'}>
-          <Plus size={13} /> Novo Bloco
-        </button>
-      </div>
+      <PageHeader
+        title="Blocos Comerciais"
+        subtitle="Gerencie os blocos, o rodízio por anunciante e os atalhos vMix sem sair da operação."
+        actions={
+          <Button variant="primary" size="sm" onClick={openNew} disabled={expandedId === 'new'} icon={<Plus size={13} />}>
+            Novo Bloco
+          </Button>
+        }
+      />
 
       <div className="adbreaks-list">
         {/* Preload config */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+        <div className="ab-preload-row">
           <Clock size={13} />
           <span>Pré-carregar blocos (workflow manual)</span>
           <input
             type="number" min={1} max={60} value={settings.preloadMinutes ?? 5}
             onChange={e => handlePreloadMinutesChange(parseInt(e.target.value) || 5)}
-            style={{ width: 52, padding: '2px 6px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', fontSize: '0.8rem', textAlign: 'center' }}
+            className="ab-preload-input"
           />
           <span>min antes do horário</span>
         </div>
@@ -450,29 +453,34 @@ export default function AdBreaksPanel() {
                       <Clock size={14} color="var(--accent)" />
                       <strong>{block.scheduledTime.slice(0, 5)}</strong>
                       <span>{block.name}</span>
-                      {dur > 0 && <span className="ab-dur-badge">≈ {formatDuration(Math.round(dur))}</span>}
-                      {isLoadedToday && <span className="ab-loaded-badge">Carregado hoje</span>}
-                      {missedToday  && <span className="ab-missed-badge">⚠ Não disparou</span>}
+                      {dur > 0 && <Badge>{`≈ ${formatDuration(Math.round(dur))}`}</Badge>}
+                      {isLoadedToday && <Badge tone="accent">Carregado hoje</Badge>}
+                      {missedToday  && <Badge>Não disparou</Badge>}
                     </div>
                     <div className="adbreak-card-actions">
-                      <button title="Carregar na playlist agora" onClick={() => handleForceReload(block)} className="ab-action-reload">
-                        <RefreshCw size={13} />
-                      </button>
-                      <button title={block.enabled ? 'Desativar' : 'Ativar'} onClick={() => handleToggleBlock(block)}>
-                        {block.enabled
+                      <Button className="adbreak-card-actions-btn ab-action-reload" variant="ghost" size="sm" iconOnly title="Carregar na playlist agora" onClick={() => handleForceReload(block)} icon={<RefreshCw size={13} />} />
+                      <Button
+                        className="adbreak-card-actions-btn"
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        title={block.enabled ? 'Desativar' : 'Ativar'}
+                        onClick={() => handleToggleBlock(block)}
+                        icon={block.enabled
                           ? <ToggleRight size={15} color="var(--accent-green, #4ade80)" />
                           : <ToggleLeft  size={15} />}
-                      </button>
-                      <button
+                      />
+                      <Button
+                        className="adbreak-card-actions-btn"
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
                         title={isExpanded ? 'Fechar editor' : 'Editar bloco'}
                         onClick={() => openExpand(block)}
+                        icon={<ExpandIcon size={14} />}
                         style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-                      >
-                        <ExpandIcon size={14} />
-                      </button>
-                      <button title="Excluir" onClick={() => handleDeleteBlock(block.id)} className="btn-danger-icon">
-                        <Trash2 size={13} />
-                      </button>
+                      />
+                      <Button className="adbreak-card-actions-btn btn-danger-icon" variant="ghost" size="sm" iconOnly title="Excluir" onClick={() => handleDeleteBlock(block.id)} icon={<Trash2 size={13} />} />
                     </div>
                   </div>
 

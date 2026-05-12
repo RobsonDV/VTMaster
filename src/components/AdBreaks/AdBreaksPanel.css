@@ -143,6 +143,29 @@
   gap: 12px;
 }
 
+.ab-preload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.ab-preload-input {
+  width: 52px;
+  padding: 2px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
 .adbreak-form {
   padding: 20px;
   flex: 1;
@@ -185,6 +208,34 @@ input[type='time']::-webkit-calendar-picker-indicator {
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
+}
+
+.ab-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ab-add-btn {
+  font-size: 0.75rem;
+}
+
+.ab-add-btn--spot {
+  border-color: #f59e0b60;
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+}
+
+.ab-add-btn--action {
+  border-color: #7c3aed60;
+  color: #a78bfa;
+  background: color-mix(in srgb, #7c3aed 12%, transparent);
+}
+
+.ab-add-btn--input {
+  border-color: #0ea5e960;
+  color: #38bdf8;
+  background: color-mix(in srgb, #0ea5e9 12%, transparent);
 }
 
 .adbreak-items-list {
@@ -271,26 +322,6 @@ input[type='time']::-webkit-calendar-picker-indicator {
   gap: 4px;
 }
 
-.adbreak-card-actions button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.12s;
-}
-
-.adbreak-card-actions button:hover {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-
 .adbreak-items-preview {
   padding: 10px 14px;
   display: flex;
@@ -344,23 +375,6 @@ input[type='time']::-webkit-calendar-picker-indicator {
 .ab-dur-badge {
   font-size: 0.72rem;
   color: var(--text-secondary);
-}
-.ab-loaded-badge {
-  font-size: 0.7rem;
-  background: var(--accent-green, #4ade80);
-  color: #000;
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-weight: 600;
-}
-.ab-missed-badge {
-  font-size: 0.7rem;
-  background: color-mix(in srgb, var(--warning, #f59e0b) 20%, transparent);
-  color: var(--warning, #f59e0b);
-  border: 1px solid var(--warning, #f59e0b);
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-weight: 600;
 }
 
 /* Slots summary row below card header */
@@ -490,17 +504,9 @@ input[type='time']::-webkit-calendar-picker-indicator {
 
 /* Small icon action buttons inside card */
 .adbreak-card-actions-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.12s;
+  min-height: 26px;
   flex-shrink: 0;
 }
 .adbreak-card-actions-btn:hover {

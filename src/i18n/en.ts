@@ -1,7 +1,7 @@
 import type { Translations } from './pt'
 
 const en: Translations = {
-  appName: 'SpotMaster',
+  appName: 'VTMaster',
   appSubtitle: 'Commercial Playout',
 
   nav: {

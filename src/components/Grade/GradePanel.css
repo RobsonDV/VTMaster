@@ -1,5 +1,3 @@
-/* ── Grade de Programação ── */
-
 .grade-panel {
   display: flex;
   flex-direction: column;
@@ -7,31 +5,6 @@
   overflow: hidden;
 }
 
-.grade-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.grade-panel-header h2 {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  flex: 1;
-}
-
-.grade-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* ── Day tabs ── */
 .grade-day-tabs {
   display: flex;
   gap: 2px;
@@ -81,7 +54,38 @@
   border-radius: 50%;
 }
 
-/* ── Content ── */
+.grade-day-tab-note {
+  font-size: 0.6rem;
+  margin-left: 3px;
+  opacity: 0.65;
+}
+
+.grade-add-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 20px 0;
+  flex-wrap: wrap;
+}
+
+.grade-add-btn {
+  border-style: dashed;
+}
+
+.grade-add-btn--programa {
+  border-color: #0ea5e960;
+  color: #0ea5e9;
+}
+
+.grade-add-btn--musical {
+  border-color: #22c55e60;
+  color: #22c55e;
+}
+
+.grade-add-btn--comercial {
+  border-color: #f59e0b60;
+  color: #f59e0b;
+}
+
 .grade-content {
   flex: 1;
   overflow-y: auto;
@@ -91,82 +95,60 @@
   gap: 16px;
 }
 
-/* ── Section ── */
-.grade-section-title {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-/* ── Program slot row ── */
 .grade-slot-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.grade-slot-row {
+.grade-slot-card {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  padding: 9px 10px;
   border-radius: 6px;
-  transition: background 0.1s;
-}
-
-.grade-slot-row:hover {
-  background: var(--bg-hover);
-}
-
-.grade-slot-row.type-programa {
-  border-left: 3px solid #0ea5e9;
-}
-
-.grade-slot-row.type-vinheta {
-  border-left: 3px solid #8b5cf6;
-}
-
-.grade-slot-row.type-bumper {
-  border-left: 3px solid #f59e0b;
-}
-
-.grade-slot-row.type-outros {
-  border-left: 3px solid var(--text-secondary);
 }
 
 .grade-slot-time {
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 700;
-  color: var(--accent);
-  min-width: 50px;
+  min-width: 46px;
   font-variant-numeric: tabular-nums;
 }
 
+.grade-slot-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  min-width: 90px;
+  white-space: nowrap;
+}
+
 .grade-slot-title {
-  flex: 1;
   font-size: 0.83rem;
-  color: var(--text-primary);
   font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.grade-slot-type {
-  font-size: 0.7rem;
+.grade-slot-content {
+  font-size: 0.73rem;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border-radius: 4px;
-  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.grade-slot-alert {
+  color: var(--warning);
+  flex-shrink: 0;
 }
 
 .grade-slot-dur {
@@ -174,6 +156,7 @@
   color: var(--text-secondary);
   min-width: 40px;
   text-align: right;
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 
@@ -186,107 +169,34 @@
 .grade-slot-btn {
   width: 26px;
   height: 26px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.1s;
+  min-height: 26px;
 }
 
-.grade-slot-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+.grade-slot-btn-danger {
+  color: var(--error);
 }
 
-.grade-slot-btn.danger:hover {
+.grade-slot-btn-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error);
 }
 
-/* ── Commercial block row (read-only) ── */
-.grade-commercial-row {
+.grade-quick-actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: color-mix(in srgb, #f59e0b 6%, var(--bg-secondary));
-  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
-  border-left: 3px solid #f59e0b;
-  border-radius: 6px;
-}
-
-.grade-commercial-time {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: #f59e0b;
-  min-width: 50px;
-  font-variant-numeric: tabular-nums;
-}
-
-.grade-commercial-name {
-  flex: 1;
-  font-size: 0.83rem;
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.grade-commercial-badge {
-  font-size: 0.7rem;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, #f59e0b 15%, transparent);
-  color: #f59e0b;
-  white-space: nowrap;
-}
-
-.grade-empty {
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-style: italic;
-  padding: 8px 0;
-}
-
-/* ── Add button ── */
-.grade-add-btn {
-  display: flex;
-  align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition: all 0.12s;
-  margin-top: 4px;
 }
 
-.grade-add-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-}
-
-/* ── Load Today button ── */
-.grade-load-btn {
+.grade-day-chip-grid {
   display: flex;
-  align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  border: none;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.12s;
-  white-space: nowrap;
+  flex-wrap: wrap;
 }
 
-.grade-load-btn:hover { opacity: 0.88; }
+.grade-day-chip {
+  min-width: 72px;
+}
+
+.grade-day-chip-count {
+  opacity: 0.7;
+  font-size: 0.68rem;
+}

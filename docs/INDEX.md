@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **3.3.0** — Atualizado em **12/05/2026**
+> Versão **4.0.0** — Atualizado em **12/05/2026** com melhorias recentes de interface
 
 ---
 
@@ -14,6 +14,7 @@
 1. [README.md](../README.md) — Início rápido
 2. [docs/DEVELOPMENT.md](DEVELOPMENT.md) — Documentação técnica completa
 3. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md) — Estado do produto, fases, backlog
+4. [docs/Melhoriadeinterface.md](Melhoriadeinterface.md) — Plano de UX/UI, fases visuais e pendências de interface
 
 ### Release e distribuição
 1. [README.md](../README.md) — Scripts de build
@@ -38,11 +39,12 @@
 - API `window.spotmaster` completa (preload.ts)
 - Protocolo local-media://
 - API do vMix (funções, sequência de corte, polling)
-- Componentes: StatusBar, GradePanel, DaySchedulePanel, VmixInputPanel, ItemModal, ContextMenu
+- Componentes: StatusBar, Toolbar, GradePanel, DaySchedulePanel, VmixInputPanel, ItemModal, ContextMenu
 - Tipos de dados, i18n, persistência
 
 ### [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md)
 - Histórico de fases (Fase 1 a 11)
+- Melhorias de interface pós-Fase 11 (polimento geral + cockpit da Programação)
 - Bugs corrigidos e decisões técnicas por fase
 - Fluxos de negócio (playlist, blocos comerciais, disparo)
 - Tipos de dados completos com comentários
@@ -50,6 +52,12 @@
 - Persistência de dados e migração de versões
 - Checklist de funcionalidades implementadas por fase
 - Backlog — o que ainda não está implementado
+
+### [docs/Melhoriadeinterface.md](Melhoriadeinterface.md)
+- Diagnóstico visual atual do produto
+- Fases de evolução de UX/UI
+- O que já foi implementado nas Fases 1 a 3
+- Pendências e backlog visual para continuidade
 
 ### [release/LEIA-ME.md](../release/LEIA-ME.md)
 - Manual para o operador de emissora
@@ -88,3 +96,4 @@
 | Fase 9 — v3.1.0 | 11/05/2026 | Ponto de Pausa, Export/Import de grade (.vtgrid), auto-sync comerciais, foco em modais, context menus estáveis, pipeline preload.cjs |
 | Fase 10 — v3.2.0 | 11/05/2026 | Arrastar entre blocos, copiar/colar, BlockPickerModal, seleção visual, VmixInputPanel dual-mode |
 | Fase 11 — v3.3.0 | 12/05/2026 | 8 bugs + 5 robustez, remoção do legacy adBreaks, StatusBar redesenhada (ON AIR badge, countdown, progress bar), PlaylistTable e DaySchedulePanel mais vivos |
+| Interface — Fases 1 a 3 | 12/05/2026 | Sidebar com ícones, toolbar reorganizada, favicon VTMaster, cockpit operacional da Programação, design system inicial nas telas principais e fluxo de adicionar item refinado |

@@ -1,5 +1,14 @@
 ﻿import { useState, useEffect } from 'react'
-import { Settings } from 'lucide-react'
+import {
+  CalendarDays,
+  ClipboardList,
+  FileBarChart,
+  LayoutGrid,
+  ListVideo,
+  Settings,
+  Tv,
+  Users,
+} from 'lucide-react'
 import { useApp } from './store/AppContext'
 import Toolbar from './components/Toolbar/Toolbar'
 import StatusBar from './components/StatusBar/StatusBar'
@@ -14,11 +23,19 @@ import ReportsPanel from './components/Reports/ReportsPanel'
 import SettingsModal from './components/Settings/SettingsModal'
 import GradePanel from './components/Grade/GradePanel'
 import DaySchedulePanel from './components/DaySchedule/DaySchedulePanel'
+import Button from './components/ui/Button'
+import Modal from './components/ui/Modal'
+import { Field } from './components/ui/Field'
 import type { PlaylistItem } from './types'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
 type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports'
+const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'log', 'reports']
+
+function isPanel(value: string): value is Panel {
+  return PANELS.includes(value as Panel)
+}
 
 // Mini-modal para editar apenas o horário agendado de um item
 function ScheduleEditModal({ item, onClose }: { item: PlaylistItem; onClose: () => void }) {
@@ -31,41 +48,36 @@ function ScheduleEditModal({ item, onClose }: { item: PlaylistItem; onClose: () 
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
-      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, minWidth: 280, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 12, color: 'var(--text-primary)' }}>
-          🕐 Editar Horário
-        </div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 8 }}>{item.title}</div>
+    <Modal
+      title="Editar Horário"
+      onClose={onClose}
+      minWidth={320}
+      actions={
+        <>
+          {time && <Button variant="ghost" onClick={() => { setTime('') }}>Limpar</Button>}
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" onClick={handleSave}>Salvar</Button>
+        </>
+      }
+    >
+      <div className="ui-field-hint">{item.title}</div>
+      <Field label="Horário">
         <input
           type="time"
           step="1"
           value={time}
           onChange={e => setTime(e.target.value)}
           autoFocus
-          style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-primary)', border: '1px solid var(--accent)', borderRadius: 6, color: 'var(--text-primary)', fontSize: '1rem' }}
+          className="ui-input"
         />
-        <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-          {time && (
-            <button onClick={() => { setTime('') }} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem' }}>
-              Limpar
-            </button>
-          )}
-          <button onClick={onClose} style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem' }}>
-            Cancelar
-          </button>
-          <button onClick={handleSave} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
-            Salvar
-          </button>
-        </div>
-      </div>
-    </div>
+      </Field>
+    </Modal>
   )
 }
 
 export default function App() {
   const { state, dispatch, t } = useApp()
-  const [activePanel, setActivePanel] = useState<Panel>('playlist')
+  const activePanel: Panel = isPanel(state.activePanel) ? state.activePanel : 'playlist'
   const [showItemModal, setShowItemModal] = useState(false)
   const [editingItem, setEditingItem] = useState<PlaylistItem | null>(null)
   const [showAdBreakSelect, setShowAdBreakSelect] = useState(false)
@@ -88,17 +100,16 @@ export default function App() {
   }, [])
 
   const navItems = [
-    { id: 'playlist' as Panel,    label: t.nav.playlist },
-    { id: 'programacao' as Panel, label: t.nav.programacao },
-    { id: 'grade' as Panel,       label: t.nav.grade },
-    { id: 'adbreaks' as Panel,    label: t.nav.adBreaks },
-    { id: 'clients' as Panel,     label: t.nav.clients },
-    { id: 'log' as Panel,         label: t.nav.log },
-    { id: 'reports' as Panel,     label: t.nav.reports },
+    { id: 'programacao' as Panel, label: t.nav.programacao, icon: Tv },
+    { id: 'playlist' as Panel,    label: t.nav.playlist, icon: ListVideo },
+    { id: 'grade' as Panel,       label: t.nav.grade, icon: LayoutGrid },
+    { id: 'adbreaks' as Panel,    label: t.nav.adBreaks, icon: CalendarDays },
+    { id: 'clients' as Panel,     label: t.nav.clients, icon: Users },
+    { id: 'log' as Panel,         label: t.nav.log, icon: ClipboardList },
+    { id: 'reports' as Panel,     label: t.nav.reports, icon: FileBarChart },
   ]
 
   const handleSetPanel = (panel: Panel) => {
-    setActivePanel(panel)
     dispatch({ type: 'SET_ACTIVE_PANEL', payload: panel })
   }
 
@@ -121,8 +132,9 @@ export default function App() {
       />
       <div className="app-body">
         <nav className="sidebar">
-          {navItems.map(({ id, label }) => (
+          {navItems.map(({ id, label, icon: Icon }) => (
             <button key={id} className={`nav-item ${activePanel === id ? 'active' : ''}`} onClick={() => handleSetPanel(id)}>
+              <Icon size={17} />
               <span>{label}</span>
             </button>
           ))}

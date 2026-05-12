@@ -1,21 +1,23 @@
 import {
+  Download,
   FilePlus,
   FolderOpen,
-  Download,
-  Save,
-  Plus,
-  Trash2,
-  Sun,
-  Moon,
   Globe,
+  MonitorPlay,
+  Moon,
+  Plus,
+  Radio,
+  Save,
+  Settings,
+  Sun,
+  Trash2,
   Wifi,
   WifiOff,
-  MonitorPlay,
   Zap,
-  Radio,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { AppSettings } from '../../types'
+import Button from '../ui/Button'
 import vtmasterLogo from '../../assets/Logo_VTMasterHorizontal.png'
 import './Toolbar.css'
 
@@ -30,24 +32,21 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
   const { state, dispatch, t, saveToStorage } = useApp()
   const { settings, vmixStatus, activePanel } = state
 
-  const isPlaylistActive  = activePanel === 'playlist'
-  const isScheduleActive  = activePanel === 'programacao'
+  const isPlaylistActive = activePanel === 'playlist'
+  const isScheduleActive = activePanel === 'programacao'
 
-  // ── Disparo toggle ──
   const toggleDisparo = () => {
     const next: AppSettings = { ...settings, triggerEnabled: !settings.triggerEnabled }
     dispatch({ type: 'SET_SETTINGS', payload: next })
     saveToStorage('settings', next)
   }
 
-  // ── Autoplay Comerciais toggle ──
   const toggleAutoplayComerciais = () => {
     const next: AppSettings = { ...settings, autoplayComerciais: !settings.autoplayComerciais }
     dispatch({ type: 'SET_SETTINGS', payload: next })
     saveToStorage('settings', next)
   }
 
-  // ── Theme toggle ──
   const toggleTheme = () => {
     const next: AppSettings = {
       ...settings,
@@ -57,7 +56,6 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
     saveToStorage('settings', next)
   }
 
-  // ── Language toggle ──
   const toggleLanguage = () => {
     const next: AppSettings = {
       ...settings,
@@ -67,7 +65,6 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
     saveToStorage('settings', next)
   }
 
-  // ── vMix connect/disconnect ──
   const handleVmixToggle = () => {
     if (!window.spotmaster) return
     if (vmixStatus.connected) {
@@ -78,13 +75,11 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
     }
   }
 
-  // ── Export playlist ──
   const handleExport = async () => {
     if (!window.spotmaster) return
     await window.spotmaster.exportPlaylist(state.playlist)
   }
 
-  // ── Import playlist ──
   const handleImport = async () => {
     if (!window.spotmaster) return
     const data = await window.spotmaster.importPlaylist()
@@ -93,7 +88,6 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
     }
   }
 
-  // ── New playlist ──
   const handleNew = () => {
     if (state.playlist.length === 0) return
     const msg = t.common.confirmDelete + ' (playlist)'
@@ -104,129 +98,108 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
 
   return (
     <header className="toolbar">
-
-      {/* ── Fileira superior: logo + ações de playlist + vMix ── */}
       <div className="toolbar-row-top">
         <div className="toolbar-brand">
           <img src={vtmasterLogo} alt="VTMaster" className="brand-logo" />
         </div>
 
-        <div className="toolbar-actions">
+        <div className="toolbar-spacer" />
+
+        <Button
+          className="toolbar-btn"
+          variant={vmixStatus.connected ? 'success' : 'warning'}
+          onClick={handleVmixToggle}
+          title={vmixStatus.connected ? t.toolbar.disconnect : t.toolbar.connect}
+          icon={vmixStatus.connected ? <Wifi size={15} /> : <WifiOff size={15} />}
+        >
+          {vmixStatus.connected ? t.toolbar.disconnect : t.toolbar.connect}
+        </Button>
+
+        <div className="toolbar-separator" />
+
+        <Button className="toolbar-icon-btn" variant="ghost" iconOnly onClick={toggleTheme} title={t.toolbar.theme} icon={settings.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />} />
+
+        <Button className="toolbar-icon-btn toolbar-lang-btn" variant="ghost" onClick={toggleLanguage} title={t.toolbar.language} icon={<Globe size={16} />}>
+          <span className="lang-label">{settings.language.toUpperCase()}</span>
+        </Button>
+
+        <Button className="toolbar-icon-btn" variant="ghost" iconOnly onClick={onSettings} title={t.settings.title} icon={<Settings size={16} />} />
+      </div>
+
+      {(isPlaylistActive || isScheduleActive) && (
+        <div className="toolbar-row-bottom">
           {isPlaylistActive && (
-            <>
-              <button className="btn-toolbar" onClick={handleNew} title={t.toolbar.newPlaylist}>
-                <FilePlus size={15} />
-                <span>{t.toolbar.newPlaylist}</span>
-              </button>
+            <div className="toolbar-actions">
+              <Button className="toolbar-btn" onClick={handleNew} title={t.toolbar.newPlaylist} icon={<FilePlus size={15} />}>
+                {t.toolbar.newPlaylist}
+              </Button>
 
-              <button className="btn-toolbar" onClick={handleImport} title={t.toolbar.importPlaylist}>
-                <FolderOpen size={15} />
-                <span>{t.toolbar.importPlaylist}</span>
-              </button>
+              <Button className="toolbar-btn" onClick={handleImport} title={t.toolbar.importPlaylist} icon={<FolderOpen size={15} />}>
+                {t.toolbar.importPlaylist}
+              </Button>
 
-              <button className="btn-toolbar" onClick={handleExport} title={t.toolbar.exportPlaylist}>
-                <Download size={15} />
-                <span>{t.toolbar.exportPlaylist}</span>
-              </button>
+              <Button className="toolbar-btn" onClick={handleExport} title={t.toolbar.exportPlaylist} icon={<Download size={15} />}>
+                {t.toolbar.exportPlaylist}
+              </Button>
 
               <div className="toolbar-separator" />
 
-              <button className="btn-toolbar btn-primary" onClick={onAddItem} title={t.toolbar.addItem}>
-                <Plus size={15} />
-                <span>{t.toolbar.addItem}</span>
-              </button>
+              <Button className="toolbar-btn" variant="primary" onClick={onAddItem} title={t.toolbar.addItem} icon={<Plus size={15} />}>
+                {t.toolbar.addItem}
+              </Button>
 
-              <button
-                className="btn-toolbar"
+              <Button
+                className="toolbar-btn"
                 onClick={onBrowseVmixInputs}
                 title={t.toolbar.browseVmixInputs}
                 disabled={!vmixStatus.connected}
+                icon={<MonitorPlay size={15} />}
               >
-                <MonitorPlay size={15} />
-                <span>{t.toolbar.browseVmixInputs}</span>
-              </button>
+                {t.toolbar.browseVmixInputs}
+              </Button>
 
-              <button className="btn-toolbar" onClick={onAddAdBreak} title={t.toolbar.addAdBreak}>
-                <Save size={15} />
-                <span>{t.toolbar.addAdBreak}</span>
-              </button>
+              <Button className="toolbar-btn" onClick={onAddAdBreak} title={t.toolbar.addAdBreak} icon={<Save size={15} />}>
+                {t.toolbar.addAdBreak}
+              </Button>
 
-              <button
-                className="btn-toolbar btn-danger"
+              <Button
+                className="toolbar-btn"
+                variant="danger"
                 onClick={() => dispatch({ type: 'CLEAR_PLAYLIST' })}
                 title={t.toolbar.clearAll}
                 disabled={state.playlist.length === 0}
-              >
-                <Trash2 size={15} />
-              </button>
+                icon={<Trash2 size={15} />}
+                iconOnly
+              />
+            </div>
+          )}
 
-              <div className="toolbar-separator" />
-            </>
+          {isScheduleActive && (
+            <div className="toolbar-actions">
+              <Button
+                className="toolbar-btn"
+                variant={settings.triggerEnabled ? 'success' : 'secondary'}
+                onClick={toggleDisparo}
+                title={settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}
+                disabled={!settings.triggerKey}
+                icon={<Zap size={14} />}
+              >
+                {settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}
+              </Button>
+
+              <Button
+                className="toolbar-btn"
+                variant={settings.autoplayComerciais ? 'success' : 'secondary'}
+                onClick={toggleAutoplayComerciais}
+                title={settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}
+                icon={<Radio size={14} />}
+              >
+                {settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}
+              </Button>
+            </div>
           )}
         </div>
-
-        {/* vMix Connection — sempre visível na fileira superior */}
-        <button
-          className={`btn-toolbar ${vmixStatus.connected ? 'btn-success' : 'btn-warning'}`}
-          onClick={handleVmixToggle}
-          title={vmixStatus.connected ? t.toolbar.disconnect : t.toolbar.connect}
-        >
-          {vmixStatus.connected ? <Wifi size={15} /> : <WifiOff size={15} />}
-          <span>{vmixStatus.connected ? t.toolbar.disconnect : t.toolbar.connect}</span>
-        </button>
-      </div>
-
-      {/* ── Fileira inferior: Disparo + Autoplay Comerciais (só na aba Programação) + utilitários ── */}
-      <div className="toolbar-row-bottom">
-
-        {/* Disparo + Autoplay Comerciais — visíveis apenas quando a aba Programação está ativa */}
-        {isScheduleActive && (
-          <>
-            <button
-              className={`btn-toolbar ${settings.triggerEnabled ? 'btn-success' : ''}`}
-              onClick={toggleDisparo}
-              title={settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}
-              disabled={!settings.triggerKey}
-              style={{ fontSize: '0.74rem' }}
-            >
-              <Zap size={14} />
-              <span>{settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}</span>
-            </button>
-
-            <button
-              className={`btn-toolbar ${settings.autoplayComerciais ? 'btn-success' : ''}`}
-              onClick={toggleAutoplayComerciais}
-              title={settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}
-              style={{ fontSize: '0.74rem' }}
-            >
-              <Radio size={14} />
-              <span>{settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}</span>
-            </button>
-          </>
-        )}
-
-        {/* Utilitários — alinhados à direita */}
-        <div className="toolbar-actions-right">
-          <div className="toolbar-separator" />
-
-          <button className="btn-icon" onClick={toggleTheme} title={t.toolbar.theme}>
-            {settings.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-
-          <button className="btn-icon" onClick={toggleLanguage} title={t.toolbar.language}>
-            <Globe size={16} />
-            <span className="lang-label">{settings.language.toUpperCase()}</span>
-          </button>
-
-          <button className="btn-icon" onClick={onSettings} title={t.settings.title}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-
+      )}
     </header>
   )
 }

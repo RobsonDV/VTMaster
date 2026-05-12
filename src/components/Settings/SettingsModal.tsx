@@ -1,48 +1,48 @@
 import { useState, useEffect } from 'react'
-import { X } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { AppSettings } from '../../types'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import { Field, FieldRow, Section } from '../ui/Field'
+import Modal from '../ui/Modal'
 import '../Playlist/ItemModal.css'
-import '../AdBreaks/AdBreaksPanel.css'
 
 interface SettingsModalProps {
   onClose: () => void
 }
 
-// ── Keyboard ─────────────────────────────────────────────────────────────────
 function keyEventToAccelerator(e: KeyboardEvent): string {
   const parts: string[] = []
   if (e.ctrlKey) parts.push('CommandOrControl')
   if (e.altKey) parts.push('Alt')
   if (e.shiftKey) parts.push('Shift')
   const keyMap: Record<string, string> = {
-    ' ': 'Space', 'ArrowUp': 'Up', 'ArrowDown': 'Down',
-    'ArrowLeft': 'Left', 'ArrowRight': 'Right',
-    'Enter': 'Return', 'Escape': 'Escape', 'Backspace': 'Backspace',
-    'Delete': 'Delete', 'Tab': 'Tab', 'Home': 'Home', 'End': 'End',
-    'PageUp': 'PageUp', 'PageDown': 'PageDown', 'Insert': 'Insert',
-    'F1': 'F1', 'F2': 'F2', 'F3': 'F3', 'F4': 'F4', 'F5': 'F5',
-    'F6': 'F6', 'F7': 'F7', 'F8': 'F8', 'F9': 'F9', 'F10': 'F10',
-    'F11': 'F11', 'F12': 'F12', 'MediaPlayPause': 'MediaPlayPause',
-    'MediaStop': 'MediaStop', 'MediaNextTrack': 'MediaNextTrack',
-    'MediaPreviousTrack': 'MediaPreviousTrack',
+    ' ': 'Space', ArrowUp: 'Up', ArrowDown: 'Down',
+    ArrowLeft: 'Left', ArrowRight: 'Right',
+    Enter: 'Return', Escape: 'Escape', Backspace: 'Backspace',
+    Delete: 'Delete', Tab: 'Tab', Home: 'Home', End: 'End',
+    PageUp: 'PageUp', PageDown: 'PageDown', Insert: 'Insert',
+    F1: 'F1', F2: 'F2', F3: 'F3', F4: 'F4', F5: 'F5',
+    F6: 'F6', F7: 'F7', F8: 'F8', F9: 'F9', F10: 'F10',
+    F11: 'F11', F12: 'F12', MediaPlayPause: 'MediaPlayPause',
+    MediaStop: 'MediaStop', MediaNextTrack: 'MediaNextTrack',
+    MediaPreviousTrack: 'MediaPreviousTrack',
   }
   const mapped = keyMap[e.key] ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key)
   parts.push(mapped)
   return parts.join('+')
 }
 
-// ── Display ───────────────────────────────────────────────────────────────────
 function triggerToDisplay(key: string): string {
   if (key.startsWith('GAMEPAD:')) {
     const parts = key.split(':')
-    const gpNum  = (parseInt(parts[1] ?? '0') + 1).toString()
+    const gpNum = (parseInt(parts[1] ?? '0') + 1).toString()
     const btnNum = (parseInt(parts[3] ?? '0') + 1).toString()
-    return `🎮 Gamepad ${gpNum} · Botão ${btnNum}`
+    return `Gamepad ${gpNum} - Botao ${btnNum}`
   }
   if (key.startsWith('MIDI:')) {
     const note = key.split(':')[1] ?? '?'
-    return `🎹 MIDI · Nota ${note}`
+    return `MIDI - Nota ${note}`
   }
   return key.replace('CommandOrControl', 'Ctrl').replace(/\+/g, ' + ')
 }
@@ -68,7 +68,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     setCaptureHint('')
   }
 
-  // ── Captura: Teclado ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isCapturing) return
     const handler = (e: KeyboardEvent) => {
@@ -81,11 +80,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     return () => window.removeEventListener('keydown', handler, true)
   }, [isCapturing]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Captura: Gamepad (polling 80ms) ────────────────────────────────────────
   useEffect(() => {
     if (!isCapturing) return
-    // Snapshot de quais botões JÁ estavam pressionados ao entrar no modo captura
-    // (evita capturar um botão que estava pressionado antes de clicar "Capturar")
     const initialPressed: Record<string, boolean> = {}
     const gpads = navigator.getGamepads()
     for (let g = 0; g < gpads.length; g++) {
@@ -112,20 +108,11 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       }
     }, 80)
 
-    // Avisa que gamepad está sendo monitorado (se houver gamepads conectados)
-    if ([...navigator.getGamepads()].some(Boolean)) {
-      setCaptureHint('⚡ Pressione tecla, botão do gamepad ou nota MIDI...')
-    } else {
-      setCaptureHint('⚡ Pressione qualquer tecla...')
-    }
-
     return () => clearInterval(interval)
   }, [isCapturing]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Captura: MIDI ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!isCapturing) return
-    if (!navigator.requestMIDIAccess) return
+    if (!isCapturing || !navigator.requestMIDIAccess) return
     let midiAccess: MIDIAccess | null = null
 
     navigator.requestMIDIAccess().then((access) => {
@@ -134,30 +121,17 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         input.onmidimessage = (event) => {
           const data = event.data
           if (!data || data.length < 2) return
-          const status = data[0] & 0xf0   // tipo da mensagem (0x90 = note on)
-          const note   = data[1]
-          const vel    = data[2] ?? 127
-          // Note On com velocity > 0
-          if (status === 0x90 && vel > 0) {
-            saveKey(`MIDI:${note}`)
-          }
-          // Control Change
-          if (status === 0xb0 && vel > 63) {
-            saveKey(`MIDI:CC${note}`)
-          }
+          const status = data[0] & 0xf0
+          const note = data[1]
+          const vel = data[2] ?? 127
+          if (status === 0x90 && vel > 0) saveKey(`MIDI:${note}`)
+          if (status === 0xb0 && vel > 63) saveKey(`MIDI:CC${note}`)
         }
       })
-      if (access.inputs.size > 0) {
-        setCaptureHint('⚡ Pressione tecla, botão do gamepad ou nota MIDI...')
-      }
-    }).catch(() => {
-      // MIDI não disponível, captura só por teclado/gamepad
-    })
+    }).catch(() => {})
 
     return () => {
-      if (midiAccess) {
-        midiAccess.inputs.forEach(input => { input.onmidimessage = null })
-      }
+      if (midiAccess) midiAccess.inputs.forEach(input => { input.onmidimessage = null })
     }
   }, [isCapturing]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -168,186 +142,148 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   }
 
   const testConnection = async () => {
-    if (!window.spotmaster) { setTestResult('API not available in browser mode'); return }
-    setTestResult('...')
-    const result = await window.spotmaster.vmixRequest({ })
-    if (result.success) {
-      setTestResult('✅ Connected to vMix!')
-    } else {
-      setTestResult(`❌ ${result.error}`)
+    if (!window.spotmaster) {
+      setTestResult('API not available in browser mode')
+      return
     }
+    setTestResult('...')
+    const result = await window.spotmaster.vmixRequest({})
+    setTestResult(result.success ? 'Conectado ao vMix.' : `Erro: ${result.error}`)
   }
 
+  const defaultCaptureHint = [...navigator.getGamepads()].some(Boolean)
+    ? 'Pressione tecla, botao do gamepad ou nota MIDI...'
+    : 'Pressione qualquer tecla...'
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="modal-header">
-          <h2>{t.settings.title}</h2>
-          <button className="modal-close" onClick={onClose}><X size={18} /></button>
+    <Modal
+      title={t.settings.title}
+      onClose={onClose}
+      maxWidth={560}
+      bodyStyle={{ maxHeight: '70vh', overflowY: 'auto', gap: 20 }}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+          <Button variant="primary" onClick={handleSave}>{t.common.save}</Button>
+        </>
+      }
+    >
+      <Section title={t.settings.station}>
+        <Field label={t.settings.stationName}>
+          <input className="ui-input" value={form.stationName} onChange={(e) => set('stationName', e.target.value)} />
+        </Field>
+      </Section>
+
+      <Section title={t.settings.vmix}>
+        <FieldRow>
+          <Field label={t.settings.vmixHost} className="settings-grow-2">
+            <input className="ui-input" value={form.vmixHost} onChange={(e) => set('vmixHost', e.target.value)} placeholder="localhost" />
+          </Field>
+          <Field label={t.settings.vmixPort}>
+            <input className="ui-input" type="number" value={form.vmixPort} onChange={(e) => set('vmixPort', parseInt(e.target.value) || 8088)} />
+          </Field>
+        </FieldRow>
+
+        <Field label={t.settings.spotmasterInput}>
+          <input
+            className="ui-input"
+            value={form.spotmasterInputName ?? 'VTMaster'}
+            onChange={(e) => set('spotmasterInputName', e.target.value)}
+            placeholder="VTMaster"
+          />
+        </Field>
+
+        <div className="settings-inline-actions">
+          <label className="settings-check">
+            <input type="checkbox" checked={form.autoConnect} onChange={(e) => set('autoConnect', e.target.checked)} />
+            {t.settings.autoConnect}
+          </label>
+          <label className="settings-check">
+            <input type="checkbox" checked={form.autoPlay} onChange={(e) => set('autoPlay', e.target.checked)} />
+            {t.settings.autoPlay}
+          </label>
+          <Button variant="secondary" size="sm" onClick={testConnection} className="settings-inline-push">
+            {t.settings.testConnection}
+          </Button>
         </div>
 
-        <div style={{ padding: '20px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Station info */}
-          <section>
-            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>{t.settings.station}</div>
-            <div className="form-group-sm">
-              <label>{t.settings.stationName}</label>
-              <input value={form.stationName} onChange={(e) => set('stationName', e.target.value)} />
-            </div>
-          </section>
+        {testResult && <div className="ui-card-note">{testResult}</div>}
+      </Section>
 
-          {/* vMix */}
-          <section>
-            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>{t.settings.vmix}</div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <div className="form-group-sm" style={{ flex: 2 }}>
-                <label>{t.settings.vmixHost}</label>
-                <input value={form.vmixHost} onChange={(e) => set('vmixHost', e.target.value)} placeholder="localhost" />
-              </div>
-              <div className="form-group-sm" style={{ flex: 1 }}>
-                <label>{t.settings.vmixPort}</label>
-                <input type="number" value={form.vmixPort} onChange={(e) => set('vmixPort', parseInt(e.target.value) || 8088)} />
-              </div>
+      <Section title={t.settings.disparo}>
+        <div className="settings-capture-row">
+          <Field label={t.settings.disparoKey}>
+            <div className={`settings-capture-box ${isCapturing ? 'is-capturing' : ''}`}>
+              {isCapturing
+                ? (captureHint || t.settings.disparoCapturing)
+                : form.triggerKey
+                  ? triggerToDisplay(form.triggerKey)
+                  : t.settings.disparoNone}
             </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-              <div className="form-group-sm" style={{ flex: 1 }}>
-                <label>{t.settings.spotmasterInput}</label>
-                <input
-                  value={form.spotmasterInputName ?? 'SpotMaster'}
-                  onChange={(e) => set('spotmasterInputName', e.target.value)}
-                  placeholder="SpotMaster"
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.83rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={form.autoConnect}
-                  onChange={(e) => set('autoConnect', e.target.checked)}
-                  style={{ accentColor: 'var(--accent)' }}
-                />
-                {t.settings.autoConnect}
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.83rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={form.autoPlay}
-                  onChange={(e) => set('autoPlay', e.target.checked)}
-                  style={{ accentColor: 'var(--accent)' }}
-                />
-                {t.settings.autoPlay}
-              </label>
-              <button
-                className="btn-cancel-sm"
-                onClick={testConnection}
-                style={{ marginLeft: 'auto' }}
-              >
-                {t.settings.testConnection}
-              </button>
-            </div>
-            {testResult && (
-              <div style={{ marginTop: 8, padding: '6px 10px', background: 'var(--bg-primary)', borderRadius: 5, fontSize: '0.8rem', color: 'var(--text-primary)' }}>
-                {testResult}
-              </div>
-            )}
-          </section>
+          </Field>
 
-          {/* Disparo */}
-          <section>
-            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>{t.settings.disparo}</div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>{t.settings.disparoKey}</label>
-                <div style={{
-                  padding: '8px 12px',
-                  background: 'var(--bg-primary)',
-                  border: `1px solid ${isCapturing ? 'var(--accent)' : 'var(--border)'}`,
-                  borderRadius: 6,
-                  fontSize: '0.85rem',
-                  color: form.triggerKey ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  minHeight: 35,
-                  display: 'flex',
-                  alignItems: 'center',
-                  transition: 'border-color 0.2s',
-                  fontWeight: form.triggerKey ? 600 : 400,
-                  letterSpacing: form.triggerKey ? '0.5px' : 'normal',
-                }}>
-                  {isCapturing
-                    ? (captureHint || t.settings.disparoCapturing)
-                    : form.triggerKey
-                      ? triggerToDisplay(form.triggerKey)
-                      : t.settings.disparoNone}
-                </div>
-              </div>
-              <button
-                className={isCapturing ? 'btn-danger' : 'btn-cancel-sm'}
-                onClick={() => setIsCapturing(c => !c)}
-              >
-                {isCapturing ? t.settings.disparoCancelBtn : t.settings.disparoCaptureBtn}
-              </button>
-              {form.triggerKey && !isCapturing && (
-                <button className="btn-cancel-sm" onClick={() => set('triggerKey', null)}>
-                  {t.settings.disparoClearBtn}
-                </button>
-              )}
-            </div>
-            <p style={{ margin: '8px 0 0', fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              {t.settings.disparoHint}
-            </p>
-            <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {(['⌨️ Teclado', '🎮 Gamepad / Joystick', '🎹 MIDI'] as const).map(d => (
-                <span key={d} style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                  {d}
-                </span>
-              ))}
-            </div>
-          </section>
+          <Button
+            variant={isCapturing ? 'danger' : 'secondary'}
+            onClick={() => {
+              setIsCapturing(c => {
+                const next = !c
+                setCaptureHint(next ? defaultCaptureHint : '')
+                return next
+              })
+            }}
+          >
+            {isCapturing ? t.settings.disparoCancelBtn : t.settings.disparoCaptureBtn}
+          </Button>
 
-          {/* Appearance */}
-          <section>
-            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>{t.settings.appearance}</div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <div className="form-group-sm" style={{ flex: 1 }}>
-                <label>{t.settings.theme}</label>
-                <select
-                  value={form.theme}
-                  onChange={(e) => set('theme', e.target.value as 'dark' | 'light')}
-                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none' }}
-                >
-                  <option value="dark">{t.settings.themeDark}</option>
-                  <option value="light">{t.settings.themeLight}</option>
-                </select>
-              </div>
-              <div className="form-group-sm" style={{ flex: 1 }}>
-                <label>{t.settings.language}</label>
-                <select
-                  value={form.language}
-                  onChange={(e) => set('language', e.target.value as 'pt' | 'en')}
-                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none' }}
-                >
-                  <option value="pt">Português (BR)</option>
-                  <option value="en">English</option>
-                </select>
-              </div>
-            </div>
-          </section>
+          {form.triggerKey && !isCapturing && (
+            <Button variant="ghost" onClick={() => set('triggerKey', null)}>
+              {t.settings.disparoClearBtn}
+            </Button>
+          )}
         </div>
 
-        <div className="modal-actions" style={{ borderTop: '1px solid var(--border)', padding: '14px 20px' }}>
-          <button className="btn-cancel" onClick={onClose}>{t.common.cancel}</button>
-          <button className="btn-save" onClick={handleSave}>{t.common.save}</button>
-        </div>
+        <div className="ui-field-hint">{t.settings.disparoHint}</div>
 
-        {/* Brand credit */}
-        <div style={{ padding: '10px 20px 14px', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
-          <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
-            VTMaster{appVersion && <span style={{ margin: '0 4px', padding: '1px 5px', fontSize: '0.62rem', fontWeight: 700, background: 'color-mix(in srgb, var(--accent) 15%, transparent)', border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)', borderRadius: 4, color: 'var(--accent)' }}>v{appVersion}</span>} · Desenvolvido por{' '}
-            <strong style={{ color: 'var(--accent)', fontWeight: 700 }}>RobsonCostaDV</strong>
-          </span>
+        <div className="settings-badge-row">
+          <Badge>Teclado</Badge>
+          <Badge>Gamepad / Joystick</Badge>
+          <Badge>MIDI</Badge>
         </div>
+      </Section>
+
+      <Section title={t.settings.appearance}>
+        <FieldRow>
+          <Field label={t.settings.theme}>
+            <select
+              className="ui-select"
+              value={form.theme}
+              onChange={(e) => set('theme', e.target.value as 'dark' | 'light')}
+            >
+              <option value="dark">{t.settings.themeDark}</option>
+              <option value="light">{t.settings.themeLight}</option>
+            </select>
+          </Field>
+          <Field label={t.settings.language}>
+            <select
+              className="ui-select"
+              value={form.language}
+              onChange={(e) => set('language', e.target.value as 'pt' | 'en')}
+            >
+              <option value="pt">Português (BR)</option>
+              <option value="en">English</option>
+            </select>
+          </Field>
+        </FieldRow>
+      </Section>
+
+      <div className="settings-brand-footer">
+        <span>
+          VTMaster
+          {appVersion && <span className="settings-version-pill">v{appVersion}</span>}
+          {' · Desenvolvido por '}
+          <strong>RobsonCostaDV</strong>
+        </span>
       </div>
-    </div>
+    </Modal>
   )
 }

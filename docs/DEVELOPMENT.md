@@ -2,7 +2,7 @@
 
 > Software de playout e grade de programação para emissoras de TV/Rádio
 > Stack: **Electron 41 + React 19 + TypeScript 6 + Vite 8**
-> Desenvolvido por **RobsonCostaDV** — Versão **3.3.0** — Atualizado: 12/05/2026
+> Desenvolvido por **RobsonCostaDV** — Versão **4.0.0** — Atualizado: 12/05/2026 (inclui melhorias recentes de interface)
 
 ---
 
@@ -84,16 +84,16 @@ VTMaster/
 │   │   └── time.ts          → now(), today() (local TZ!), formatDuration(), parseDuration()
 │   │
 │   └── components/
-│       ├── Toolbar/         → Toolbar: playlist, vMix, Disparo ON/OFF, Autoplay Comerc.
+│       ├── Toolbar/         → Toolbar em duas camadas: topo global + ações contextuais da aba ativa, já usando Button compartilhado
 │       ├── StatusBar/       → Rodapé: badge ON AIR, countdown −44:32, barra de progresso, status vMix
 │       ├── Grade/
-│       │   ├── GradePanel.tsx       → Estrutura semanal + Export/Import (.vtgrid)
+│       │   ├── GradePanel.tsx       → Estrutura semanal + Export/Import (.vtgrid), cabeçalho e ações na base compartilhada
 │       │   └── ProgramSlotModal.tsx → Criar/editar slot (Programa/Musical/Comercial)
 │       ├── DaySchedule/
-│       │   ├── DaySchedulePanel.tsx → Programação do Dia (card-view, drag-drop, seleção, BlockPickerModal, copiar/colar)
+│       │   ├── DaySchedulePanel.tsx → Programação do Dia (cockpit operacional, card-view, drag-drop, seleção, AddItemModal/BlockPickerModal, copiar/colar)
 │       │   └── DaySchedulePanel.css
 │       ├── AdBreaks/
-│       │   ├── AdBreaksPanel.tsx    → UI dos Blocos Comerciais (accordion inline)
+│       │   ├── AdBreaksPanel.tsx    → UI dos Blocos Comerciais (accordion inline + ações na base compartilhada)
 │       │   └── AdBreaksPanel.css
 │       ├── Clients/         → Cadastro de anunciantes + spots com detecção de duração
 │       ├── Playlist/
@@ -943,6 +943,7 @@ Funcionalidades v3.1:
 ### DaySchedulePanel (Aba Programação)
 
 Cards por bloco (musical/comercial/programa). Operações:
+- **Cockpit operacional no topo**: resumo do dia, bloco atual, próximo bloco/item e ações principais em destaque
 - Date picker com persistência entre abas
 - "Centralizar Bloco" → scroll para o bloco do horário atual
 - "Atualizar" → merge mode (preserva existentes)
@@ -952,7 +953,11 @@ Cards por bloco (musical/comercial/programa). Operações:
 - **Drag entre blocos (v3.2)**: `handleDrop` compara `dragItem.scheduledTime?.slice(0,5)` com `targetItem.scheduledTime?.slice(0,5)`. Se diferente, cria `movedItem = { ...dragItem, scheduledTime: targetItem.scheduledTime }` antes de reordenar.
 - **Seleção visual (v3.2)**: `selectedItemId: string | null` — clicar numa linha seta o ID; CSS `.block-item-row.selected` aplica borda accent e fundo translúcido.
 - **Sub-toolbar (v3.2)**: botões "+Adicionar item" (accent, sempre ativo) e "Inputs vMix" (sempre ativo, sem verificação de conexão).
+- **Destaque de contexto operacional (interface 12/05/2026)**: bloco atual e próximo bloco recebem classes dedicadas para leitura rápida durante operação ao vivo.
+- **Fluxo de inserção refinado (interface 12/05/2026)**: `AddItemModal`, `BlockPickerModal`, `VmixActionModal`, `VmixInputModal` e `ScheduleTimeEditModal` foram alinhados à base `Modal`/`Field`/`Button`, reduzindo estilos soltos e melhorando a leitura.
 - Menu de contexto: Iniciar daqui, Pausar, **Ponto de Pausa**, Ação vMix, Input vMix, Horário, Duplicar, Pular, Marcar veiculado, **Copiar item**, **Colar abaixo**
+
+> Implementação transitória: o cabeçalho antigo da Programação foi mantido temporariamente no DOM e ocultado por CSS para reduzir risco enquanto o novo cockpit estabiliza.
 
 #### BlockPickerModal (v3.2)
 
@@ -1104,6 +1109,8 @@ Chaves adicionadas em v3.1:
 | `activePanel` | Último painel ativo |
 
 > **Nota (v3.3):** A chave `adBreaks` foi removida do estado e do storage. Instalações antigas que possuam esse arquivo em `%APPDATA%\SpotMaster\adBreaks.json` podem ignorá-lo com segurança.
+
+> **Nota de compatibilidade:** apesar do produto visível usar a marca `VTMaster`, os caminhos de persistência e a bridge `window.spotmaster` permanecem com o nome legado para evitar quebra de compatibilidade.
 
 **Startup:** `Promise.all` carrega 10 arquivos simultaneamente → `LOAD_ALL` único dispatch. (`adBreaks` removido em v3.3)
 
