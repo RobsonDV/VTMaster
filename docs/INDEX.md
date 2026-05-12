@@ -1,6 +1,6 @@
-# VTMaster — Índice de Documentação
+# VTMaster — Índice da Documentação
 
-> Última atualização: 10/05/2026
+> Versão **3.1.0** — Atualizado em **11/05/2026**
 
 ---
 

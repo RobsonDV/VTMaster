@@ -90,13 +90,14 @@ const DAY_NAMES = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 
 
 interface CtxState { x: number; y: number; item: PlaylistItem }
 
-function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction, onVmixInput, onDuplicate, onSkip, onMarkDone, onEditTime, isPlaying, isToday }: {
+function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction, onVmixInput, onInsertPause, onDuplicate, onSkip, onMarkDone, onEditTime, isPlaying, isToday }: {
   menu: CtxState
   onClose: () => void
   onStartFromHere: () => void
   onPause: () => void
   onVmixAction: () => void
   onVmixInput: () => void
+  onInsertPause: () => void
   onDuplicate: () => void
   onSkip: () => void
   onMarkDone: () => void
@@ -105,13 +106,16 @@ function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction
   isToday: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose })
+  // Register once on mount — onCloseRef always points to the latest version
   useEffect(() => {
-    const click = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
-    const key   = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const click = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current() }
+    const key   = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
     document.addEventListener('mousedown', click)
     document.addEventListener('keydown', key)
     return () => { document.removeEventListener('mousedown', click); document.removeEventListener('keydown', key) }
-  }, [onClose])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const style: React.CSSProperties = {
     position: 'fixed',
@@ -150,6 +154,9 @@ function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction
       <button className="ctx-item" onClick={() => run(onVmixInput)}>
         <MonitorPlay size={13} /><span>Input do vMix</span><span className="ctx-hint">câmera, NDI...</span>
       </button>
+      <button className="ctx-item ctx-item--pause" onClick={() => run(onInsertPause)}>
+        <Pause size={13} /><span>Ponto de Pausa</span><span className="ctx-hint">pausa automática aqui</span>
+      </button>
 
       <div className="ctx-separator" />
       <div className="ctx-section-label">Editar</div>
@@ -184,6 +191,8 @@ function VmixActionModal({ onInsert, onClose }: {
   const [fn, setFn]       = useState('AudioOff')
   const [input, setInput] = useState('')
   const [value, setValue] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { inputRef.current?.focus() }, [])
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 360, maxWidth: 440 }}>
@@ -201,7 +210,7 @@ function VmixActionModal({ onInsert, onClose }: {
           <div className="form-row">
             <div className="form-group" style={{ flex: 1 }}>
               <label>Input <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(opcional)</span></label>
-              <input value={input} onChange={e => setInput(e.target.value)} placeholder="ex: Camera1" autoFocus />
+              <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="ex: Camera1" />
             </div>
             <div className="form-group" style={{ width: 90 }}>
               <label>Valor</label>
@@ -229,6 +238,8 @@ function VmixInputModal({ onInsert, onClose }: {
 }) {
   const [inputName, setInputName] = useState('')
   const [duration, setDuration]   = useState(10)
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { inputRef.current?.focus() }, [])
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 340, maxWidth: 420 }}>
@@ -240,7 +251,7 @@ function VmixInputModal({ onInsert, onClose }: {
           <div className="form-row">
             <div className="form-group" style={{ flex: 1 }}>
               <label>Nome ou nº do input</label>
-              <input value={inputName} onChange={e => setInputName(e.target.value)} placeholder="ex: Camera1" autoFocus />
+              <input ref={inputRef} value={inputName} onChange={e => setInputName(e.target.value)} placeholder="ex: Camera1" />
             </div>
             <div className="form-group" style={{ width: 90 }}>
               <label>Duração (s)</label>
@@ -269,6 +280,8 @@ function ScheduleTimeEditModal({ item, date, onClose }: {
 }) {
   const { dispatch } = useApp()
   const [time, setTime] = useState(item.scheduledTime?.slice(0, 5) ?? '')
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { inputRef.current?.focus() }, [])
   const save = () => {
     dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date, item: { ...item, scheduledTime: time ? time + ':00' : undefined } } })
     onClose()
@@ -285,7 +298,7 @@ function ScheduleTimeEditModal({ item, date, onClose }: {
             <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 6, display: 'block' }}>
               {item.title}
             </label>
-            <input type="time" step="1" value={time} onChange={e => setTime(e.target.value)} autoFocus />
+            <input ref={inputRef} type="time" step="1" value={time} onChange={e => setTime(e.target.value)} />
           </div>
         </div>
         <div className="modal-actions">
@@ -456,6 +469,16 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
       .sort((a, b) => a.order - b.order)
       .map((i, n) => ({ ...i, order: n + 1 }))
     dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+  }
+
+  const handleInsertPause = (afterItem: PlaylistItem) => {
+    insertAfterItem(afterItem, {
+      title: 'Pausa',
+      type: 'pause',
+      status: 'pending',
+      scheduledTime: afterItem.scheduledTime,
+      duration: 0,
+    })
   }
 
   const handleAddToGroup = (group: BlockGroup) => {
@@ -631,8 +654,10 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
 
                           <span className="block-item-num">{idx + 1}</span>
 
-                          <span className={`block-item-title${!hasFile && item.type !== 'vmix_action' ? ' empty' : ''}`}>
-                            {item.type === 'vmix_action'
+                          <span className={`block-item-title${item.type === 'pause' ? ' pause-marker' : !hasFile && item.type !== 'vmix_action' ? ' empty' : ''}`}>
+                            {item.type === 'pause'
+                              ? '⏸ Pausa automática'
+                              : item.type === 'vmix_action'
                               ? `⚡ ${item.vmixAction?.function ?? item.title}`
                               : hasFile ? item.title
                               : '— sem arquivo —'}
@@ -652,7 +677,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                           </span>
 
                           <div className="block-item-actions">
-                            {!hasFile && item.type !== 'vmix_action' && (
+                            {!hasFile && item.type !== 'vmix_action' && item.type !== 'pause' && (
                               <button className="block-item-btn green" onClick={() => handleBrowseFile(item)} title="Adicionar arquivo">
                                 <FolderOpen size={12} />
                               </button>
@@ -707,6 +732,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           onPause={() => { pauseSchedule(); setCtxMenu(null) }}
           onVmixAction={() => { setVmixActionFor(ctxMenu.item); setCtxMenu(null) }}
           onVmixInput={() => { setVmixInputFor(ctxMenu.item); setCtxMenu(null) }}
+          onInsertPause={() => { handleInsertPause(ctxMenu.item); setCtxMenu(null) }}
           onDuplicate={() => { insertAfterItem(ctxMenu.item, { ...ctxMenu.item, status: 'pending' }); setCtxMenu(null) }}
           onSkip={() => { handleSkip(ctxMenu.item); setCtxMenu(null) }}
           onMarkDone={() => { handleMarkDone(ctxMenu.item); setCtxMenu(null) }}

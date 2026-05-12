@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.invoke('export-playlist', data),
   importPlaylist: () =>
     ipcRenderer.invoke('import-playlist'),
+  exportGrid: (data: unknown) =>
+    ipcRenderer.invoke('export-grid', data),
+  importGrid: () =>
+    ipcRenderer.invoke('import-grid'),
 
   // PDF export
   exportPDF: (filePath: string, buffer: number[]) =>

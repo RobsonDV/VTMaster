@@ -1,14 +1,14 @@
 {
   "name": "vtmaster",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "VTMaster - Software de Playout para TV/Rádio com integração vMix",
   "author": "RobsonCostaDV",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
     "dev": "npm run electron:compile && concurrently \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
-    "electron:compile": "tsc -p tsconfig.electron.json",
+    "electron:compile": "tsc -p tsconfig.electron.json && node scripts/build-preload-cjs.cjs",
     "build": "tsc -b && vite build && npm run electron:compile",
     "build:dist": "npm run build && electron-builder",
     "lint": "eslint .",

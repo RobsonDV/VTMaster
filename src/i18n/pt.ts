@@ -254,6 +254,7 @@ const pt = {
     bumper: 'Bumper',
     outros: 'Outros',
     vmix_action: 'Ação vMix',
+    pause: 'Pausa',
   },
 
   // Spot statuses

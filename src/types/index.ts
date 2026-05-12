@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SpotStatus = 'pending' | 'playing' | 'done' | 'skipped' | 'error'
-export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros' | 'vmix_action'
+export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros' | 'vmix_action' | 'pause'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // vMix Action Item — comando enviado diretamente ao vMix (sem mídia)
@@ -237,6 +237,8 @@ export interface SpotMasterAPI {
   getVersion: () => Promise<string>
   exportPlaylist: (data: unknown) => Promise<string | null>
   importPlaylist: () => Promise<unknown>
+  exportGrid: (data: unknown) => Promise<string | null>
+  importGrid: () => Promise<unknown>
   exportPDF: (filePath: string, buffer: number[]) => Promise<boolean>
   browseVideoFile: () => Promise<string | null>
   vmixRequest: (params: Record<string, string>) => Promise<{ success: boolean; data?: string; error?: string }>

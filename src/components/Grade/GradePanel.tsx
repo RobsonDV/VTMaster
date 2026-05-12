@@ -1,10 +1,24 @@
 import { useState } from 'react'
-import { Plus, Edit2, Trash2, ChevronUp, ChevronDown, Tv, Music, DollarSign, AlertCircle, RefreshCw, Copy } from 'lucide-react'
+import { Plus, Edit2, Trash2, ChevronUp, ChevronDown, Tv, Music, DollarSign, AlertCircle, RefreshCw, Copy, Download, Upload } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
-import type { ProgramSlot, ScheduleSlotType } from '../../types'
+import type { ProgramSlot, ScheduleSlotType, WeeklyProgramGrid } from '../../types'
 import { formatDuration } from '../../utils/time'
 import ProgramSlotModal from './ProgramSlotModal'
 import './GradePanel.css'
+
+// ─── Formato do arquivo de exportação ────────────────────────────────────────
+interface GridExportFile {
+  version: '1'
+  type: 'vtmaster-grade'
+  exportedAt: string
+  grid: WeeklyProgramGrid
+}
+
+function isValidGridExport(data: unknown): data is GridExportFile {
+  if (!data || typeof data !== 'object') return false
+  const d = data as Record<string, unknown>
+  return d.type === 'vtmaster-grade' && d.version === '1' && !!d.grid && typeof d.grid === 'object'
+}
 
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
@@ -136,6 +150,122 @@ function CopyDayModal({ sourceDay, slots, onClose }: {
   )
 }
 
+// ─── Modal de importação de grade ────────────────────────────────────────────
+function ImportGridModal({ importedGrid, onClose }: {
+  importedGrid: WeeklyProgramGrid
+  onClose: () => void
+}) {
+  const { state, dispatch } = useApp()
+  const [targets, setTargets] = useState<number[]>([0,1,2,3,4,5,6])
+
+  const toggle = (dow: number) =>
+    setTargets(prev => prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow])
+
+  const slotCount = (dow: number) => importedGrid[dow]?.length ?? 0
+
+  const handleImport = () => {
+    if (targets.length === 0) return
+    const newGrid = { ...state.weeklyGrid }
+    for (const dow of targets) {
+      newGrid[dow] = (importedGrid[dow] ?? []).map((s, i) => ({
+        ...s,
+        id: crypto.randomUUID(),
+        order: i + 1,
+      }))
+    }
+    dispatch({ type: 'SET_WEEKLY_GRID', payload: newGrid })
+    onClose()
+  }
+
+  const allDays = [0,1,2,3,4,5,6]
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, minWidth: 320, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 4, color: 'var(--text-primary)' }}>
+          Importar Estrutura
+        </div>
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 14 }}>
+          Selecione os dias que serão substituídos pela estrutura importada:
+        </div>
+
+        {/* Atalhos de seleção */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {[
+            { label: 'Seg–Sex', days: [1,2,3,4,5] },
+            { label: 'Fim de semana', days: [0,6] },
+            { label: 'Todos', days: allDays },
+          ].map(({ label, days }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                const allSel = days.every(d => targets.includes(d))
+                setTargets(prev => allSel ? prev.filter(d => !days.includes(d)) : [...new Set([...prev, ...days])])
+              }}
+              style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.73rem', cursor: 'pointer' }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Checkboxes de dias */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+          {allDays.map(dow => {
+            const count = slotCount(dow)
+            return (
+              <button
+                key={dow}
+                type="button"
+                onClick={() => toggle(dow)}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid',
+                  borderColor: targets.includes(dow) ? 'var(--accent)' : 'var(--border)',
+                  background: targets.includes(dow) ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+                  color: targets.includes(dow) ? 'var(--accent)' : 'var(--text-secondary)',
+                  fontSize: '0.8rem', fontWeight: targets.includes(dow) ? 700 : 400, cursor: 'pointer',
+                }}
+              >
+                {DAY_LABELS[dow]}
+                <span style={{ fontSize: '0.65rem', opacity: 0.65, marginLeft: 4 }}>({count})</span>
+              </button>
+            )
+          })}
+        </div>
+
+        {targets.length > 0 && (
+          <div style={{ fontSize: '0.73rem', color: 'var(--warning)', marginBottom: 10 }}>
+            ⚠ A estrutura atual dos dias selecionados será substituída.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={targets.length === 0}
+            style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: targets.length === 0 ? 'not-allowed' : 'pointer', fontSize: '0.82rem', fontWeight: 600, opacity: targets.length === 0 ? 0.5 : 1 }}
+          >
+            Importar {targets.length > 0 ? `${targets.length} dia${targets.length > 1 ? 's' : ''}` : '...'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface Props {
   onNavigate?: (panel: 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports') => void
 }
@@ -173,6 +303,8 @@ export default function GradePanel({ onNavigate }: Props) {
   const [editingSlot, setEditingSlot] = useState<ProgramSlot | null | undefined>(undefined)
   const [newSlotType, setNewSlotType] = useState<ScheduleSlotType>('programa')
   const [showCopyModal, setShowCopyModal] = useState(false)
+  const [importedGrid, setImportedGrid] = useState<WeeklyProgramGrid | null>(null)
+  const [exportMsg, setExportMsg] = useState<string | null>(null)
 
   const slots = (state.weeklyGrid[selectedDay] ?? []).slice().sort((a, b) =>
     a.scheduledTime.localeCompare(b.scheduledTime) || a.order - b.order
@@ -187,6 +319,46 @@ export default function GradePanel({ onNavigate }: Props) {
   const handleAddSlot = (type: ScheduleSlotType) => {
     setNewSlotType(type)
     setEditingSlot(null)
+  }
+
+  const handleExport = async () => {
+    if (!window.spotmaster?.exportGrid) {
+      alert('Erro: API de exportação não disponível. Reinicie o aplicativo.')
+      return
+    }
+    try {
+      const exportData: GridExportFile = {
+        version: '1',
+        type: 'vtmaster-grade',
+        exportedAt: new Date().toISOString().slice(0, 10),
+        grid: state.weeklyGrid,
+      }
+      const saved = await window.spotmaster.exportGrid(exportData)
+      if (saved) {
+        setExportMsg('Estrutura exportada com sucesso!')
+        setTimeout(() => setExportMsg(null), 3000)
+      }
+    } catch (err) {
+      alert(`Erro ao exportar: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  const handleImport = async () => {
+    if (!window.spotmaster?.importGrid) {
+      alert('Erro: API de importação não disponível. Reinicie o aplicativo.')
+      return
+    }
+    try {
+      const raw = await window.spotmaster.importGrid()
+      if (!raw) return
+      if (!isValidGridExport(raw)) {
+        alert('Arquivo inválido. Selecione um arquivo de grade VTMaster (.vtgrid).')
+        return
+      }
+      setImportedGrid(raw.grid)
+    } catch (err) {
+      alert(`Erro ao importar: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const handleMoveUp = (slot: ProgramSlot) => {
@@ -251,7 +423,32 @@ export default function GradePanel({ onNavigate }: Props) {
             Monte a estrutura semanal — defina o esqueleto e preencha depois
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Feedback de exportação */}
+          {exportMsg && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600 }}>
+              ✓ {exportMsg}
+            </span>
+          )}
+
+          {/* Importar estrutura */}
+          <button
+            onClick={handleImport}
+            title="Importar estrutura de grade de um arquivo .vtgrid"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.78rem' }}
+          >
+            <Upload size={13} /> Importar
+          </button>
+
+          {/* Exportar estrutura */}
+          <button
+            onClick={handleExport}
+            title="Exportar estrutura de grade para arquivo .vtgrid"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.78rem' }}
+          >
+            <Download size={13} /> Exportar
+          </button>
+
           {slots.length > 0 && (
             <button
               onClick={() => setShowCopyModal(true)}
@@ -404,6 +601,12 @@ export default function GradePanel({ onNavigate }: Props) {
           sourceDay={selectedDay}
           slots={slots}
           onClose={() => setShowCopyModal(false)}
+        />
+      )}
+      {importedGrid && (
+        <ImportGridModal
+          importedGrid={importedGrid}
+          onClose={() => setImportedGrid(null)}
         />
       )}
     </div>

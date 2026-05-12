@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { X, Film, Image as ImageIcon, Music, Loader2, Zap } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { PlaylistItem, SpotType, VmixActionItem } from '../../types'
@@ -101,6 +101,10 @@ export default function ItemModal({ item, onClose, insertAfterOrder, defaultMode
 
   const selectedFnDef = VMIX_FUNCTIONS.find(f => f.value === actionFn) ?? VMIX_FUNCTIONS[0]
 
+  // Focus the first relevant field on mount (more reliable than autoFocus in Electron)
+  const firstFieldRef = useRef<HTMLSelectElement | HTMLInputElement | null>(null)
+  useEffect(() => { firstFieldRef.current?.focus() }, [])
+
   // Auto-title para ações vMix quando o título estiver vazio
   useEffect(() => {
     if (mode !== 'vmix_action' || actionTitle) return
@@ -181,7 +185,7 @@ export default function ItemModal({ item, onClose, insertAfterOrder, defaultMode
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header">
           <h2>{isEdit ? t.playlist.editItem : t.playlist.addItem}</h2>
@@ -230,10 +234,10 @@ export default function ItemModal({ item, onClose, insertAfterOrder, defaultMode
               <div className="form-group">
                 <label>Função vMix *</label>
                 <select
+                  ref={el => { if (mode === 'vmix_action') firstFieldRef.current = el }}
                   value={actionFn}
                   onChange={e => { setActionFn(e.target.value); setActionTitle('') }}
                   style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', width: '100%' }}
-                  autoFocus
                 >
                   {VMIX_FUNCTIONS.map(f => (
                     <option key={f.value} value={f.value}>{f.label}</option>
@@ -301,12 +305,12 @@ export default function ItemModal({ item, onClose, insertAfterOrder, defaultMode
           <div className="form-group">
             <label>{t.common.title} *</label>
             <input
+              ref={el => { if (mode === 'media') firstFieldRef.current = el }}
               type="text"
               value={form.title}
               onChange={(e) => set('title', e.target.value)}
               placeholder="Ex: Spot Coca-Cola 30s"
               required
-              autoFocus
             />
           </div>
 

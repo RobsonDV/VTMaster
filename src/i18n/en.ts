@@ -243,6 +243,7 @@ const en: Translations = {
     bumper: 'Bumper',
     outros: 'Other',
     vmix_action: 'vMix Action',
+    pause: 'Pause',
   },
 
   statuses: {

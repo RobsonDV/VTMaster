@@ -234,6 +234,16 @@
   font-style: italic;
 }
 
+.block-item-title.pause-marker {
+  color: #f59e0b;
+  font-style: italic;
+  font-weight: 600;
+}
+
+/* Context menu — pause insert button */
+.ctx-item--pause { color: #f59e0b; }
+.ctx-item--pause:hover { background: color-mix(in srgb, #f59e0b 12%, transparent); }
+
 .block-item-dur {
   font-size: 0.72rem;
   color: var(--text-secondary);

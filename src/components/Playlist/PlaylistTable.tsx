@@ -283,10 +283,10 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
               </thead>
               <tbody>
                 {playlist.map((item, index) => {
+                  // Playlist é manual: todo bloco comercial pendente aguarda disparo manual
                   const isAwaitingTrigger =
                     !!item.adBreakId &&
-                    item.status === 'pending' &&
-                    !settings.autoplayComerciais
+                    item.status === 'pending'
                   return (
                   <Fragment key={item.id}>
                   <tr

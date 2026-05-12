@@ -28,20 +28,23 @@ export default function ContextMenu({
   onEditSchedule, onDuplicate, onSkip, onMarkDone,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  // Keep a stable ref to onClose so the document listeners never need to re-register
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose })
 
-  // Fechar ao clicar fora ou pressionar Escape
+  // Fechar ao clicar fora ou pressionar Escape — registered once on mount only
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current()
     }
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
     document.addEventListener('mousedown', handleClick)
     document.addEventListener('keydown', handleKey)
     return () => {
       document.removeEventListener('mousedown', handleClick)
       document.removeEventListener('keydown', handleKey)
     }
-  }, [onClose])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ajustar posição para não sair da tela
   const style: React.CSSProperties = {

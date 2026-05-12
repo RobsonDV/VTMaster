@@ -160,6 +160,46 @@ ipcMain.handle('import-playlist', async () => {
   return null
 })
 
+// Export weekly grid structure
+ipcMain.handle('export-grid', async (_event, data: unknown) => {
+  if (!mainWindow) return null
+  const date = new Date().toISOString().slice(0, 10)
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Exportar Estrutura de Grade',
+    defaultPath: `grade-${date}.vtgrid`,
+    filters: [
+      { name: 'VTMaster Grade', extensions: ['vtgrid'] },
+      { name: 'JSON', extensions: ['json'] },
+    ],
+  })
+  if (!result.canceled && result.filePath) {
+    writeFileSync(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
+    return result.filePath
+  }
+  return null
+})
+
+// Import weekly grid structure
+ipcMain.handle('import-grid', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Importar Estrutura de Grade',
+    filters: [
+      { name: 'VTMaster Grade', extensions: ['vtgrid'] },
+      { name: 'JSON', extensions: ['json'] },
+    ],
+    properties: ['openFile'],
+  })
+  if (!result.canceled && result.filePaths.length > 0) {
+    try {
+      return JSON.parse(readFileSync(result.filePaths[0], 'utf-8'))
+    } catch {
+      return null
+    }
+  }
+  return null
+})
+
 // Export PDF report
 ipcMain.handle('export-pdf', async (_event, filePath: string, buffer: number[]) => {
   if (!mainWindow) return false

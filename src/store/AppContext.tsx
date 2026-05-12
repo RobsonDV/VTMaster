@@ -436,32 +436,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const slot = sortedSlots[si]
       if (slot.type === 'bloco_comercial' || slot.type === 'bloco_musical') {
         if (slot.type === 'bloco_musical') {
-          // Calculate block duration from gap to the next slot
-          const nextSlot = sortedSlots[si + 1]
-          let durationMins = 20  // fallback
-          if (nextSlot) {
-            const toMins = (t: string) => {
-              const [h = 0, m = 0] = t.split(':').map(Number)
-              return h * 60 + m
-            }
-            durationMins = Math.max(1, toMins(nextSlot.scheduledTime) - toMins(slot.scheduledTime))
-          }
-          // Slot count: ~1 slot per 2 min for ≥20 min blocks; ~1 slot per 2.5 min for shorter blocks
-          const avgSongMins = durationMins <= 15 ? 2.5 : 2.0
-          const slotCount = Math.max(1, Math.round(durationMins / avgSongMins))
-
-          for (let n = 0; n < slotCount; n++) {
-            programItems.push({
-              id: crypto.randomUUID(),
-              order: 0,
-              title: slot.title,
-              type: 'vinheta' as const,
-              status: 'pending' as const,
-              scheduledTime: slot.scheduledTime,
-              duration: 0,
-              // No filePath, no adBreakId — plays freely, not affected by commercial disparo
-            })
-          }
+          // One empty placeholder slot — operator fills content in the Programação panel
+          programItems.push({
+            id: crypto.randomUUID(),
+            order: 0,
+            title: slot.title,
+            type: 'vinheta' as const,
+            status: 'pending' as const,
+            scheduledTime: slot.scheduledTime,
+            duration: 0,
+          })
         } else {
           // Commercial block: expand linked CommercialBlock
           if (!slot.commercialBlockId) continue
@@ -536,24 +520,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let finalItems: PlaylistItem[]
 
     if (merge && existing.length > 0) {
-      // ── Merge mode: keep everything already in the schedule,
-      //    add only items for times that don't exist yet ──────────────────────
-      const existingTimes = new Set(
-        existing.map(i => i.scheduledTime?.slice(0, 5)).filter(Boolean)
-      )
-      // Only keep newly-generated items whose HH:MM is not already covered
-      const toAdd = generated.filter(item => {
+      // ── Merge mode ─────────────────────────────────────────────────────────
+      // • Non-commercial items: kept as-is; new times are added.
+      // • Commercial block items (adBreakId set): pending ones are REPLACED with
+      //   fresh data so edits to a block are immediately reflected. Items already
+      //   done/skipped/playing are kept (they already aired).
+
+      // Times that have fresh commercial block data in the new generation
+      const freshCommercialTimes = new Set<string>()
+      for (const item of generated) {
+        if (item.adBreakId) {
+          const hhmm = item.scheduledTime?.slice(0, 5)
+          if (hhmm) freshCommercialTimes.add(hhmm)
+        }
+      }
+
+      // Keep all non-commercial items + commercial items that have real content.
+      // Placeholders (no filePath, no inputName, not a vmix_action) are ALWAYS
+      // removed when fresh data is available — even if skipped or done — because
+      // they are stubs, not actual aired content.
+      const keptExisting = existing.filter(item => {
+        if (!item.adBreakId) return true
         const hhmm = item.scheduledTime?.slice(0, 5)
-        return hhmm && !existingTimes.has(hhmm)
+        if (!hhmm || !freshCommercialTimes.has(hhmm)) return true
+        // Pending items are always replaced by fresh generation
+        if (item.status === 'pending') return false
+        // Placeholder stubs (no real content) are replaced regardless of status
+        const hasContent = !!(item.filePath || item.inputName || item.type === 'vmix_action')
+        if (!hasContent) return false
+        // Keep done/skipped items that had actual content — they really aired
+        return true
       })
 
-      if (toAdd.length === 0) {
-        // Nothing new to add — schedule is already up-to-date
+      // Times still covered by the kept items (used to avoid duplicating non-commercial items)
+      const coveredTimes = new Set(keptExisting.map(i => i.scheduledTime?.slice(0, 5)).filter(Boolean))
+
+      // What to add: refreshed commercial items + non-commercial items for brand-new times
+      const toAdd = generated.filter(item => {
+        const hhmm = item.scheduledTime?.slice(0, 5)
+        if (!hhmm) return false
+        if (item.adBreakId) return freshCommercialTimes.has(hhmm)   // always re-add refreshed
+        return !coveredTimes.has(hhmm)                               // non-commercial: only new times
+      })
+
+      if (toAdd.length === 0 && keptExisting.length === existing.length) {
+        // Nothing changed — schedule is already up-to-date
         dispatch({ type: 'SET_SPOT_ROTATION', payload: currentRotation })
         return
       }
 
-      finalItems = [...existing, ...toAdd]
+      finalItems = [...keptExisting, ...toAdd]
         .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))
         .map((item, idx) => ({ ...item, order: idx + 1 }))
     } else {
@@ -575,7 +591,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── Commercial block scheduler ───────────────────────────────────────────────
   // Checks every 30 s. X minutes before each enabled block's scheduledTime
   // (configured via settings.preloadMinutes, default 5), loads it into the
-  // playlist (once per day). Auto-play only fires if autoplayComerciais is ON.
+  // playlist (once per day). Pre-loading only — auto-trigger fica no scheduler
+  // separado de Autoplay Comerciais (linha ~1410), que dispara EXCLUSIVAMENTE
+  // a Programação do Dia, nunca a Playlist.
   // Also detects day change and auto-generates the playlist from the weekly grid.
   useEffect(() => {
     if (state.isLoading) return
@@ -688,6 +706,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // loadNewInput is called here (not in background) to prevent slot collisions.
   const playItem = useCallback(async (item: PlaylistItem, nextFilePath?: string) => {
     if (!window.spotmaster) return
+
+    // Placeholder items (no file, no vMix input, not a vmix_action) have no
+    // playable content — skip instantly rather than producing silence.
+    if (!item.filePath && !item.inputName && item.type !== 'vmix_action' && item.type !== 'pause') {
+      updateQueueItem({ ...item, status: 'skipped' })
+      return
+    }
 
     updateQueueItem({ ...item, status: 'playing' })
     const actualTime = now()
@@ -916,12 +941,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const currentTime = now()
       const { autoPlay, autoplayComerciais } = stateRef.current.settings
-      // Itens com prioridade de horário: comerciais (autoplayComerciais) OU gerais (autoPlay)
+      const isSchedule = activeQueueRef.current === 'schedule'
+      // Itens com prioridade de horário (saltar à frente no horário programado):
+      //   - comerciais (adBreakId): SOMENTE quando rodando a Programação E autoplayComerciais ON
+      //   - itens gerais: depende do autoPlay (qualquer fila)
+      // A Playlist é manual: blocos comerciais nela NUNCA pulam à frente automaticamente.
       const scheduledDue = pending
         .filter(i => {
           if (!i.scheduledTime || i.scheduledTime > currentTime) return false
-          if (i.adBreakId) return autoplayComerciais  // bloco comercial: prioridade própria
-          return autoPlay                              // item geral: depende do autoPlay
+          if (i.adBreakId) return isSchedule && autoplayComerciais
+          return autoPlay
         })
         .sort((a, b) => {
           const timeCmp = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
@@ -940,7 +969,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // When the sequence was triggered/interrupted by the autoplay scheduler
+      // (scheduleInterruptTimeRef is non-empty), stop once all currently-due items
+      // have played — prevents greedily playing future-scheduled blocks ahead of time.
+      // Manual starts (scheduleInterruptTimeRef = '') run freely without this constraint.
+      if (
+        activeQueueRef.current === 'schedule' &&
+        (autoPlay || autoplayComerciais) &&
+        scheduledDue.length === 0 &&
+        scheduleInterruptTimeRef.current !== ''
+      ) break
+
       const next = scheduledDue[0] ?? [...pending].sort((a, b) => a.order - b.order)[0]
+
+      // Pause marker — stop the sequence exactly like a natural end.
+      // All vMix inputs are cleaned up and isSequencePlaying goes false.
+      // The operator restarts manually when ready.
+      if (next.type === 'pause') {
+        updateQueueItem({ ...next, status: 'done' })
+        break
+      }
 
       // Instantly skip items with no playable content (no file, no vMix input, not a vMix action).
       // These are empty musical slots that the operator hasn't filled yet.
@@ -1363,12 +1411,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.isLoading, startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Scheduler: Autoplay Comerciais (blocos com adBreakId) ──────────────────
+  // Dispara EXCLUSIVAMENTE blocos comerciais da Programação do Dia.
+  // A Playlist é manual — este scheduler não a inicia e não a interrompe.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
       if (!stateRef.current.settings.autoplayComerciais) return
+      // Se a Playlist está tocando manualmente, não interrompe nem dispara nada
+      if (stateRef.current.isSequencePlaying && activeQueueRef.current === 'playlist') return
       const currentTime = now()
-      const scheduledDue = getQueue().filter(
+      // Lê SEMPRE a Programação do dia, ignorando activeQueueRef (que poderia ser playlist em idle)
+      const schedule = stateRef.current.dateSchedules[today()] ?? []
+      const scheduledDue = schedule.filter(
         i => i.status === 'pending' && !!i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
       )
       if (scheduledDue.length === 0) return
@@ -1376,15 +1430,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (scheduleInterruptTimeRef.current === triggerTime) return
       if (!stateRef.current.isSequencePlaying) {
         scheduleInterruptTimeRef.current = triggerTime
-        activeQueueRef.current === 'schedule' ? startSchedule() : startSequence()
+        startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
       } else {
+        // Já está tocando a Programação — interrompe para saltar ao bloco devido
         scheduleInterruptTimeRef.current = triggerTime
         scheduleInterruptRef.current = true
         abortRef.current = true
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.isLoading, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load all data on startup ───────────────────────────────────────────────
   useEffect(() => {
@@ -1520,6 +1575,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       generatePlaylistFromGrid(today())
     }
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-sync schedule when commercial blocks are configured or modified ─────
+  // Replaces empty placeholder items with real block content as soon as the
+  // operator configures a block — no need to manually click "Atualizar".
+  // Only runs when: schedule already exists for today AND sequence is not playing.
+  useEffect(() => {
+    if (state.isLoading) return
+    const todayStr = today()
+    const schedule = stateRef.current.dateSchedules[todayStr]
+    if (!schedule || schedule.length === 0) return   // fresh-generation handles new days
+    if (stateRef.current.isSequencePlaying) return   // never touch an active playback queue
+    generatePlaylistFromGrid(todayStr, true)
+  }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid }}>
