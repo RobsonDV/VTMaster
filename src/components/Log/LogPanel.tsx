@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useApp } from '../../store/AppContext'
 import { formatDate, formatDuration } from '../../utils/time'
 import '../AdBreaks/AdBreaksPanel.css'
@@ -12,6 +12,12 @@ export default function LogPanel() {
   const [filterClientId, setFilterClientId] = useState('')
   const [filterStatus,   setFilterStatus]   = useState('')
   const [filterTitle,    setFilterTitle]    = useState('')
+
+  const [page, setPage] = useState(1)
+  // Reset to page 1 whenever any filter changes
+  useEffect(() => { setPage(1) }, [filterDateFrom, filterDateTo, filterClientId, filterStatus, filterTitle])
+
+  const PAGE_SIZE = 100
 
   const hasFilter = filterDateFrom || filterDateTo || filterClientId || filterStatus || filterTitle
 
@@ -29,6 +35,9 @@ export default function LogPanel() {
     if (dateCompare !== 0) return dateCompare
     return b.actualTime.localeCompare(a.actualTime)
   })
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
+  const paginated  = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const clearFilters = () => {
     setFilterDateFrom('')
@@ -152,7 +161,7 @@ export default function LogPanel() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((log) => (
+              {paginated.map((log) => (
                 <tr key={log.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '7px 10px', color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '0.78rem' }}>{formatDate(log.date, state.settings.language)}</td>
                   <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{log.scheduledTime ?? '—'}</td>
@@ -173,10 +182,26 @@ export default function LogPanel() {
         </div>
       )}
 
-      <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', gap: 12 }}>
+      <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <span>{t.common.total}: <strong style={{ color: 'var(--text-primary)' }}>{sorted.length}</strong></span>
         <span style={{ color: 'var(--success)' }}>aired: <strong>{sorted.filter((l) => l.status === 'aired').length}</strong></span>
         <span style={{ color: 'var(--warning)' }}>skipped: <strong>{sorted.filter((l) => l.status === 'skipped').length}</strong></span>
+        <span style={{ color: 'var(--error)' }}>error: <strong>{sorted.filter((l) => l.status === 'error').length}</strong></span>
+        {totalPages > 1 && (
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', color: 'var(--text-primary)', cursor: page === 1 ? 'default' : 'pointer', opacity: page === 1 ? 0.4 : 1 }}
+            >‹</button>
+            <span>{page} / {totalPages}</span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', color: 'var(--text-primary)', cursor: page === totalPages ? 'default' : 'pointer', opacity: page === totalPages ? 0.4 : 1 }}
+            >›</button>
+          </span>
+        )}
       </div>
     </div>
   )

@@ -89,9 +89,11 @@ function stateClass(state: string) {
 
 interface VmixInputPanelProps {
   onClose: () => void
+  /** When provided, the + button inserts into the schedule instead of the global Playlist */
+  onAddInput?: (inp: VmixInput) => void
 }
 
-export default function VmixInputPanel({ onClose }: VmixInputPanelProps) {
+export default function VmixInputPanel({ onClose, onAddInput }: VmixInputPanelProps) {
   const { state, dispatch } = useApp()
   const [inputs, setInputs] = useState<VmixInput[]>([])
   const [loading, setLoading] = useState(true)
@@ -168,8 +170,8 @@ export default function VmixInputPanel({ onClose }: VmixInputPanelProps) {
 
       {/* Hint */}
       <div className="vip-hint">
-        <GripVertical size={11} /> Arraste para a playlist &nbsp;·&nbsp;
-        <Plus size={10} /> Adiciona ao final
+        <GripVertical size={11} /> Arraste para {onAddInput ? 'a programação' : 'a playlist'} &nbsp;·&nbsp;
+        <Plus size={10} /> {onAddInput ? 'Adiciona abaixo do item selecionado' : 'Adiciona ao final'}
       </div>
 
       {/* List */}
@@ -217,8 +219,8 @@ export default function VmixInputPanel({ onClose }: VmixInputPanelProps) {
             </div>
             <button
               className="vip-add-btn"
-              onClick={() => addToEnd(inp)}
-              title="Adicionar ao final da playlist"
+              onClick={() => onAddInput ? onAddInput(inp) : addToEnd(inp)}
+              title={onAddInput ? 'Adicionar abaixo do item selecionado' : 'Adicionar ao final da playlist'}
             >
               <Plus size={12} />
             </button>

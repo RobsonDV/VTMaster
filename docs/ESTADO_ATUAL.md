@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **11/05/2026** — Versão **3.1.0** — Fase 9: Correções, Ponto de Pausa, Export/Import de Grade
+> Atualizado em **12/05/2026** — Versão **3.3.0** — Fase 11: Robustez, Remoção de Legacy, UX Visual
 
 ---
 
@@ -22,7 +22,7 @@
 14. [Persistência de dados](#14-persistência-de-dados)
 15. [Integração vMix](#15-integração-vmix)
 16. [Build e preload.cjs](#16-build-e-preloadcjs)
-17. [Funcionalidades — checklist v3.1](#17-funcionalidades--checklist-v31)
+17. [Funcionalidades — checklist v3.3](#17-funcionalidades--checklist-v33)
 18. [Backlog](#18-backlog)
 
 ---
@@ -133,8 +133,8 @@ VTMaster/
 │   │   └── en.ts        → Strings EN
 │   ├── utils/time.ts    → now(), today() (local TZ), formatDuration()
 │   └── components/
-│       ├── Toolbar/     → vMix, Disparo ON/OFF, Autoplay Comerc., tema, idioma
-│       ├── StatusBar/   → Status vMix, item atual, próximo
+│       ├── Toolbar/     → Toolbar da aplicação (visível em todas as abas)
+│       ├── StatusBar/   → Rodapé: badge ON AIR, countdown, barra de progresso, status vMix
 │       ├── Grade/
 │       │   ├── GradePanel.tsx       → Estrutura semanal + Export/Import de grade
 │       │   └── ProgramSlotModal.tsx → Criar/editar slot (Programa/Musical/Comercial)
@@ -142,7 +142,7 @@ VTMaster/
 │       │   ├── DaySchedulePanel.tsx → Programação do Dia (card-view, drag-drop, ponto de pausa)
 │       │   └── DaySchedulePanel.css
 │       ├── AdBreaks/
-│       │   ├── AdBreaksPanel.tsx    → Blocos com expansão inline (accordion)
+│       │   ├── AdBreaksPanel.tsx    → UI dos Blocos Comerciais (accordion inline)
 │       │   └── AdBreaksPanel.css
 │       ├── Clients/     → Cadastro de anunciantes + spots com detecção de duração
 │       ├── Playlist/
@@ -258,6 +258,109 @@ O Electron carrega `dist-electron/preload.cjs` (CommonJS), mas o `tsc` gerava ap
 
 ---
 
+### Fase 10 — Programação Avançada, Arrastar entre Blocos, Copiar/Colar (v3.2.0)
+
+#### 10a. Remoção do auto-carregamento de comerciais na Playlist
+O `setInterval` de 30s em `AppContext` tinha dois papéis: watcher de meia-noite (mantido) e pré-carregador automático de blocos comerciais na playlist via `loadBlockIntoPlaylist` (removido). Agora blocos comerciais só entram na Playlist pelo botão manual "Inserir Bloco Comercial". A função `loadBlockIntoPlaylist` foi preservada no Context para uso manual.
+
+#### 10b. Disparo e Autoplay Comerciais visíveis apenas na aba Programação
+Os botões **Disparo ON/OFF** e **Autoplay Comerc.** da `Toolbar` passaram a ser renderizados condicionalmente: `{activePanel === 'programacao' && <> ... </>}`. Em todas as outras abas (Playlist, Estrutura, etc.) ficam ocultos, evitando acionamento acidental.
+
+#### 10c. Sub-toolbar da Programação — botões sempre ativos
+- **"+Adicionar item"**: sempre habilitado com estilo preenchido accent. Se há item selecionado, abre `AddItemModal` para o bloco daquele item. Se não há seleção, abre `BlockPickerModal`.
+- **"Inputs vMix"**: sempre habilitado (removido `disabled={!vmixStatus.connected}`). Abre normalmente; se não conectado, exibe estado vazio.
+
+#### 10d. BlockPickerModal — escolha de bloco sem seleção prévia
+Componente local definido em `DaySchedulePanel.tsx`. Exibe lista de blocos com ícone `Clock`, horário, `slot.title` e contagem de itens. Clicar num bloco fecha o modal e abre o `AddItemModal` para aquele bloco. Ativado quando `showBlockPicker === true`.
+
+#### 10e. Seleção visual de item na Programação
+Clicar num card de item o seleciona: estado `selectedItemId: string | null`. O item selecionado recebe classe `selected` — borda lateral accent e fundo `color-mix(in srgb, var(--accent) 12%, transparent)`. Clicar no mesmo item deseleciona. Botão direito (contextMenu) também seleciona automaticamente.
+
+#### 10f. Arrastar itens entre blocos diferentes
+`handleDrop` detecta se o item arrastado veio de bloco diferente comparando `scheduledTime?.slice(0,5)`. Se diferente, cria `movedItem = { ...dragItem, scheduledTime: targetItem.scheduledTime }` antes de inserir. O item migra para o novo bloco com o `scheduledTime` correto.
+
+#### 10g. Copiar / Colar no menu de contexto
+Dois novos itens na seção "Editar" do `ScheduleCtxMenu`:
+- **"Copiar item"** (ícone `Copy`): guarda referência em `copiedItem` (estado do componente)
+- **"Colar abaixo"** (ícone `Clipboard`): visível apenas quando `copiedItem !== null`. Insere cópia com novo ID, `status: 'pending'`, logo abaixo do item clicado, herdando o `scheduledTime` do bloco de destino.
+
+Props adicionados ao `ScheduleCtxMenu`: `onCopy: () => void`, `onPaste: () => void`, `canPaste: boolean`.
+
+#### 10h. Correção do botão "+ Adicionar música"
+`handleAddToGroup` anteriormente chamava `handleInsertAfter(lastItem)`, copiando o `type` do último item — se o último era `type: 'pause'`, um ponto de pausa era inserido em vez de uma música. Corrigido: `handleAddToGroup` agora chama `setAddItemGroup(group)`, abrindo o `AddItemModal` com as opções corretas.
+
+#### 10i. VmixInputPanel — prop onAddInput para uso na Programação
+`VmixInputPanel` ganhou prop opcional `onAddInput?: (inp: VmixInput) => void`:
+- **Sem prop** (uso na Playlist): comportamento original — `addToEnd` → `dispatch ADD_PLAYLIST_ITEM`
+- **Com prop** (uso na Programação): o botão `+` chama `onAddInput(inp)` em vez de `addToEnd`
+- Hint text muda dinamicamente: `"Arraste para a programação · + Adiciona abaixo do item selecionado"`
+
+Em `DaySchedulePanel`, `onAddInput` insere abaixo do `selectedItemId` (mesmo bloco) via `insertAfterItem`, ou appenda ao `groups[0]` via `insertItemAtGroupEnd` se nada estiver selecionado.
+
+---
+
+### Fase 11 — Robustez, Remoção de Legacy e UX Visual (v3.3.0)
+
+#### 11a. Correções de bugs e robustez
+
+- **runSequence error handling**: `runSequence` agora envolve o loop em `try/catch`. Erros inesperados são logados e a sequência termina com cleanup normal em vez de travar silenciosamente.
+- **Log de arquivo não encontrado**: `playItem` detecta quando `filePath` está definido mas o arquivo não existe no disco. Em vez de deixar o vMix retornar erro, registra `ADD_LOG` com `status:'error'` e marca o item como `'error'` imediatamente, sem bloquear a sequência.
+- Oito bugs corrigidos e cinco melhorias de robustez aplicados ao `AppContext.tsx`. As correções aumentam a estabilidade em edições de longa duração (maratonas, programações de dia inteiro).
+
+#### 11b. Remoção completa do legacy `adBreaks`
+
+A estrutura `adBreaks: AdBreak[]` era um remanescente do sistema antigo de blocos comerciais (anterior à Fase 6). Mantida apenas por compatibilidade de migração. Removida completamente:
+
+| Local | O que foi removido |
+|-------|-------------------|
+| `src/types/index.ts` | Interface `AdBreak` inteira |
+| `AppState` | Campo `adBreaks: AdBreak[]` |
+| `AppContext.tsx` | Import do tipo, `initialState.adBreaks`, 3 action types (`ADD_AD_BREAK`, `UPDATE_AD_BREAK`, `DELETE_AD_BREAK`), 3 cases no reducer, carregamento no startup, payload no `LOAD_ALL`, `useEffect` de auto-save |
+
+> O componente `AdBreaksPanel.tsx` **não foi removido** — ele é a UI dos `CommercialBlocks` (nome antigo do mesmo painel, ainda válido). Apenas o modelo de dados legado foi eliminado.
+
+#### 11c. StatusBar redesenhada
+
+O rodapé agora possui **três elementos visuais ativos** quando há item tocando:
+
+| Elemento | Descrição |
+|----------|----------|
+| Badge `◉ ON AIR` | Substitui o ponto verde. Fundo vermelho translucido, borda, pulsa com `box-shadow` ciclando a cada 1,2s. |
+| Countdown `−44:32` | Aparece ao lado do título do item atual. Fonte `Courier New` verde. Atualiza em tempo real via `activeItemProgress`. |
+| Barra de progresso | 3px de altura, fixada na borda inferior do rodapé. Gradiente `var(--error) → var(--accent)`. Transição `width` 0,4s. |
+
+**Arquitetura do layout:**
+- `.status-bar` virou `flex-direction: column` com `transition: height 0.2s ease`
+- Sem item: `height: 34px` (comportamento anterior)
+- Com item: `height: 48px` (acomoda a barra + leve aumento de padding)
+- `.statusbar-main` é o wrapper flex horizontal de todo o conteúdo anterior (vmix, item atual, próximo)
+- `.statusbar-progress-track` é um filho separado abaixo do `statusbar-main`, `height: 3px`
+
+#### 11d. PlaylistTable — linha playing e progresso
+
+| Elemento | Antes | Depois |
+|----------|-------|--------|
+| Linha playing (fundo) | 8% verde | 16% verde + `border-left: 3px solid var(--success)` + `box-shadow` inset |
+| Progress track (altura) | 4px | 6px |
+| Progress track (fundo) | `var(--bg-tertiary)` | blend `bg-hover / border` — mais visível |
+| Progress fill | sem glow | `box-shadow: 0 0 8px` verde |
+| Badge pending | 15% | 22% |
+| Badge playing | 20% | 28% + `font-weight: 700` |
+| Badge error | 20% | 25% |
+
+#### 11e. DaySchedulePanel — vibrância de cor
+
+| Elemento | Antes | Depois |
+|----------|-------|--------|
+| Fundo do card (todos os tipos) | 6% cor | 12% cor |
+| Borda do card (todos os tipos) | 35% cor | 45% cor |
+| Header do card (todos os tipos) | 18% cor | 30% cor |
+| Status badge do card | 20% cor | 30% cor |
+| Linha item playing (fundo) | 8% accent | 15% accent + `border-left: 2px` |
+| Barra inline de progresso | 2px sem glow | 3px + `box-shadow` accent |
+
+---
+
 ## 5. Motor de playout
 
 ### Princípio: GUID-based, wall-clock
@@ -355,13 +458,20 @@ Cada bloco da Estrutura vira um card colorido:
 |------|------|
 | Adicionar arquivo a slot vazio | Botão [📁] no item |
 | Inserir nova música | Botão [+] no item ou "Adicionar música" no card |
-| Reordenar | Drag-and-drop pelo handle ⠿ |
+| Reordenar dentro do bloco | Drag-and-drop pelo handle ⠿ |
+| **Reordenar entre blocos** | Drag-and-drop para item de bloco diferente — `scheduledTime` atualiza automaticamente |
+| **Selecionar item** | Clicar na linha — destaque visual accent; clicar novamente deseleciona |
+| **Adicionar item (toolbar)** | Botão "+Adicionar item" sempre ativo — abre `AddItemModal` no bloco do item selecionado, ou `BlockPickerModal` se nenhum selecionado |
+| **Painel Inputs vMix (toolbar)** | Botão "Inputs vMix" sempre ativo — `+` insere abaixo do item selecionado; arrastar também funciona |
 | Iniciar a partir de agora | Botão "Iniciar Programação" — pula blocos passados |
 | Iniciar a partir de item específico | Menu de contexto → "Iniciar daqui" |
 | Pausar reprodução | Menu de contexto → "Pausar" (item atual volta para pending) |
 | **Inserir ponto de pausa** | Menu de contexto → "Ponto de Pausa" (para sequência automaticamente) |
 | Adicionar ação vMix | Menu de contexto → "Ação vMix" |
 | Adicionar input vMix | Menu de contexto → "Input do vMix" |
+| **Copiar item** | Menu de contexto → "Copiar item" |
+| **Colar abaixo** | Menu de contexto → "Colar abaixo" (disponível quando há algo copiado; herda `scheduledTime` do bloco) |
+| Duplicar item | Menu de contexto → "Duplicar Item" |
 | Pular item | Menu de contexto → "Pular" |
 | Atualizar da Estrutura | Botão "Atualizar" — merge mode |
 
@@ -623,7 +733,6 @@ interface AppState {
   playlist:           PlaylistItem[]
   dateSchedules:      Record<string, PlaylistItem[]>  // YYYY-MM-DD → programação do dia
   weeklyGrid:         WeeklyProgramGrid               // template semanal Dom-Sáb
-  adBreaks:           AdBreak[]                       // legacy — compatibilidade
   clients:            Client[]
   clientSpots:        ClientSpot[]
   commercialBlocks:   CommercialBlock[]
@@ -687,7 +796,6 @@ Todos os dados em `%APPDATA%\SpotMaster\` (Windows):
 | `spotRotation` | Índices de rodízio round-robin |
 | `clients` | Anunciantes cadastrados |
 | `playLog` | Histórico de veiculação |
-| `adBreaks` | Blocos legacy (compatibilidade) |
 | `activePanel` | Último painel ativo |
 
 **Migração automática:** blocos no formato antigo (`slots[]`) são convertidos para `items[]` no `LOAD_ALL`.
@@ -743,7 +851,7 @@ O script de conversão:
 
 ---
 
-## 17. Funcionalidades — checklist v3.1
+## 17. Funcionalidades — checklist v3.3
 
 ### ✅ Fase 1 — Motor de playout base
 - [x] Playlist manual: criar, editar, reordenar, excluir itens
@@ -815,6 +923,34 @@ O script de conversão:
 - [x] **Context menu estável**: useRef(onClose) evita re-registro de listeners a cada render
 - [x] **preload.cjs pipeline**: script automático mantém CJS sincronizado com TS source
 
+### ✅ Fase 10 — v3.2.0
+
+- [x] **Sem auto-carregamento de comerciais na Playlist**: removido `loadBlockIntoPlaylist` do interval de 30s
+- [x] **Disparo/AutoplayComerciais visíveis só na aba Programação**: `{activePanel === 'programacao' && ...}`
+- [x] **Sub-toolbar sempre ativa**: "+Adicionar item" e "Inputs vMix" sem `disabled`
+- [x] **BlockPickerModal**: lista de blocos para seleção quando nenhum item está selecionado
+- [x] **Seleção visual de item**: click seleciona/deseleciona, borda e fundo accent
+- [x] **Arrastar entre blocos**: `scheduledTime` do item atualiza para o bloco de destino
+- [x] **Copiar / Colar**: menu de contexto → "Copiar item" / "Colar abaixo" (herda `scheduledTime`)
+- [x] **Correção "+ Adicionar música"**: `handleAddToGroup` abre `AddItemModal` (não clona `type` do último item)
+- [x] **VmixInputPanel.onAddInput**: prop opcional — na Programação `+` insere no schedule; comportamento original da Playlist preservado
+
+### ✅ Fase 11 — v3.3.0
+
+- [x] **runSequence error handling**: try/catch no loop principal, erros não travam a sequência
+- [x] **Log de arquivo não encontrado**: `playItem` detecta arquivo ausente antes de chamar vMix, marca como `error` e continua
+- [x] **8 bugs corrigidos + 5 melhorias de robustez**: AppContext mais estável em programações longas
+- [x] **Remoção do legacy `adBreaks`**: tipo, estado, reducer, startup load, save effect — tudo eliminado
+- [x] **StatusBar redesenhada**: badge `◉ ON AIR` pulsante, countdown `−44:32`, barra de progresso 3px inferior
+- [x] **Layout StatusBar**: `flex-direction: column`, `.statusbar-main`, height 34→48px com transição CSS
+- [x] **Playlist — linha playing**: fundo 16% verde + border-left 3px + inset shadow
+- [x] **Playlist — progress track**: 4→6px, overflow:visible, glow no fill
+- [x] **Playlist — status badges**: mais saturados (pending 22%, playing 28%+bold, error 25%)
+- [x] **DaySchedule — cards**: fundo 6→12%, bordas 35→45%
+- [x] **DaySchedule — headers**: 18→30% (muito mais visíveis)
+- [x] **DaySchedule — item playing**: fundo 8→15% + border-left
+- [x] **DaySchedule — barra inline**: 2→3px + glow accent
+
 ---
 
 ## 18. Backlog
@@ -825,6 +961,7 @@ O script de conversão:
 |------|-----------|
 | **Cleanup ao excluir anunciante** | clientSpots ficam órfãos ao deletar o cliente |
 | **Prévia de mídia** | Pré-visualizar clipe antes de adicionar à programação |
+| **Edição inline de título/duração** | Editar diretamente na linha do card sem abrir modal |
 
 ### Média prioridade
 
@@ -833,6 +970,7 @@ O script de conversão:
 | **Importação CSV** | Carregar itens a partir de planilha |
 | **Múltiplos blocos no mesmo horário** | Potencial conflito de scheduledTime |
 | **Resetar programação do dia** | Botão para regerar do zero (descartando edições manuais) |
+| **Colar em bloco específico** | BlockPickerModal para o "Colar" (hoje sempre cola abaixo do item clicado) |
 
 ### Baixa prioridade
 

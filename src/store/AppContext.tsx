@@ -9,7 +9,6 @@
 } from 'react'
 import type {
   PlaylistItem,
-  AdBreak,
   Client,
   PlayLog,
   AppSettings,
@@ -42,7 +41,6 @@ const DEFAULT_SETTINGS: AppSettings = {
 interface AppState {
   playlist: PlaylistItem[]
   dateSchedules: Record<string, PlaylistItem[]>  // YYYY-MM-DD → programação daquela data
-  adBreaks: AdBreak[]
   clients: Client[]
   playLog: PlayLog[]
   settings: AppSettings
@@ -62,7 +60,6 @@ const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: 
 const initialState: AppState = {
   playlist: [],
   dateSchedules: {},
-  adBreaks: [],
   clients: [],
   playLog: [],
   settings: DEFAULT_SETTINGS,
@@ -89,9 +86,6 @@ type Action =
   | { type: 'DELETE_PLAYLIST_ITEM'; payload: string }
   | { type: 'CLEAR_PLAYLIST' }
   | { type: 'REORDER_PLAYLIST'; payload: PlaylistItem[] }
-  | { type: 'ADD_AD_BREAK'; payload: AdBreak }
-  | { type: 'UPDATE_AD_BREAK'; payload: AdBreak }
-  | { type: 'DELETE_AD_BREAK'; payload: string }
   | { type: 'ADD_CLIENT'; payload: Client }
   | { type: 'UPDATE_CLIENT'; payload: Client }
   | { type: 'DELETE_CLIENT'; payload: string }
@@ -152,17 +146,6 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, playlist: [] }
     case 'REORDER_PLAYLIST':
       return { ...state, playlist: action.payload }
-    case 'ADD_AD_BREAK':
-      return { ...state, adBreaks: [...state.adBreaks, action.payload] }
-    case 'UPDATE_AD_BREAK':
-      return {
-        ...state,
-        adBreaks: state.adBreaks.map((ab) =>
-          ab.id === action.payload.id ? action.payload : ab
-        ),
-      }
-    case 'DELETE_AD_BREAK':
-      return { ...state, adBreaks: state.adBreaks.filter((ab) => ab.id !== action.payload) }
     case 'ADD_CLIENT':
       return { ...state, clients: [...state.clients, action.payload] }
     case 'UPDATE_CLIENT':
@@ -173,7 +156,11 @@ function reducer(state: AppState, action: Action): AppState {
         ),
       }
     case 'DELETE_CLIENT':
-      return { ...state, clients: state.clients.filter((c) => c.id !== action.payload) }
+      return {
+        ...state,
+        clients: state.clients.filter((c) => c.id !== action.payload),
+        clientSpots: state.clientSpots.filter((s) => s.clientId !== action.payload),
+      }
     case 'ADD_LOG':
       return { ...state, playLog: [...state.playLog, action.payload] }
     case 'SET_LOG':
@@ -303,6 +290,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Set by disparo() during active playback — signals runSequence to skip
   // current item and continue to the next, without fully stopping.
   const disparoInterruptRef = useRef<boolean>(false)
+  // Registra o HH:MM:SS de quando a sessão iniciou. Os schedulers de autoplay
+  // ignoram blocos cujo scheduledTime < sessionStartRef, evitando que o app
+  // inicie automaticamente ao abrir com itens antigos ainda pendentes.
+  const sessionStartRef = useRef<string>(now())
+  // Mutex: prevents both autoplay schedulers from firing simultaneously in the
+  // same JS event-loop tick. The second scheduler returns immediately if the
+  // first hasn't finished yet, avoiding double writes to scheduleInterruptTimeRef.
+  const schedulerFiringRef = useRef(false)
 
   // Tracks which queue (playlist or daySchedule) runSequence is reading from.
   // Changed by startSequence() and startSchedule() before invoking runSequence().
@@ -555,11 +550,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Times still covered by the kept items (used to avoid duplicating non-commercial items)
       const coveredTimes = new Set(keptExisting.map(i => i.scheduledTime?.slice(0, 5)).filter(Boolean))
 
+      // Horários onde já existem itens comerciais não-pendentes com conteúdo real
+      // (tocaram ou estão tocando). Impede adicionar duplicatas ao clicar Atualizar.
+      const occupiedCommercialTimes = new Set<string>()
+      for (const item of keptExisting) {
+        if (!item.adBreakId || item.status === 'pending') continue
+        const hasContent = !!(item.filePath || item.inputName || item.type === 'vmix_action')
+        if (hasContent) {
+          const hhmm = item.scheduledTime?.slice(0, 5)
+          if (hhmm) occupiedCommercialTimes.add(hhmm)
+        }
+      }
+
       // What to add: refreshed commercial items + non-commercial items for brand-new times
       const toAdd = generated.filter(item => {
         const hhmm = item.scheduledTime?.slice(0, 5)
         if (!hhmm) return false
-        if (item.adBreakId) return freshCommercialTimes.has(hhmm)   // always re-add refreshed
+        if (item.adBreakId) {
+          if (occupiedCommercialTimes.has(hhmm)) return false  // bloco já foi ao ar, não duplicar
+          return freshCommercialTimes.has(hhmm)
+        }
         return !coveredTimes.has(hhmm)                               // non-commercial: only new times
       })
 
@@ -588,48 +598,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [dispatch, expandBlockItems])
 
-  // ── Commercial block scheduler ───────────────────────────────────────────────
-  // Checks every 30 s. X minutes before each enabled block's scheduledTime
-  // (configured via settings.preloadMinutes, default 5), loads it into the
-  // playlist (once per day). Pre-loading only — auto-trigger fica no scheduler
-  // separado de Autoplay Comerciais (linha ~1410), que dispara EXCLUSIVAMENTE
-  // a Programação do Dia, nunca a Playlist.
-  // Also detects day change and auto-generates the playlist from the weekly grid.
+  // ── Midnight watcher ────────────────────────────────────────────────────────
+  // Detects day change and auto-generates the schedule from the weekly grid.
+  // Commercial blocks are no longer auto-loaded into the playlist — use the
+  // "Inserir Bloco Comercial" button in the Playlist tab for manual loading.
   useEffect(() => {
     if (state.isLoading) return
     let lastDay = today()
     const interval = setInterval(() => {
-      // ── Midnight watcher ──────────────────────────────────────────────────
       const currentDay = today()
       if (currentDay !== lastDay) {
         lastDay = currentDay
         generatePlaylistFromGrid(currentDay)
-        return  // skip block scheduler on this tick
       }
-
-      const todayStr = today()
-      const dow = new Date().getDay()
-      const d = new Date()
-      const nowSecs = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
-      const preloadSecs = (stateRef.current.settings.preloadMinutes ?? 5) * 60
-      stateRef.current.commercialBlocks
-        .filter(b => {
-          if (!b.enabled || b.lastLoadedDate === todayStr) return false
-          // daysOfWeek filter: undefined/empty = all days
-          const days = b.daysOfWeek?.length ? b.daysOfWeek : [0, 1, 2, 3, 4, 5, 6]
-          return days.includes(dow)
-        })
-        .forEach(b => {
-          const [h = 0, m = 0, s = 0] = b.scheduledTime.split(':').map(Number)
-          const blockSecs   = h * 3600 + m * 60 + s
-          const triggerSecs = blockSecs - preloadSecs
-          if (nowSecs >= triggerSecs && nowSecs < blockSecs) {
-            loadBlockIntoPlaylist(b)
-          }
-        })
     }, 30_000)
     return () => clearInterval(interval)
-  }, [state.isLoading, loadBlockIntoPlaylist, generatePlaylistFromGrid])
+  }, [state.isLoading, generatePlaylistFromGrid])
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -747,6 +731,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { vmixStatus } = stateRef.current
     let onAirInput = ''
 
+    // ── vMix offline guard ───────────────────────────────────────────────────
+    // If vMix is unreachable and the item requires vMix (file or named input),
+    // log an error immediately instead of silently skipping without any record.
+    if (!vmixStatus.connected && (item.filePath || item.inputName)) {
+      dispatch({
+        type: 'ADD_LOG',
+        payload: {
+          id: crypto.randomUUID(),
+          date: new Date().toISOString().slice(0, 10),
+          itemId: item.id,
+          title: item.title,
+          clientId: item.clientId,
+          clientName: item.clientName,
+          scheduledTime: item.scheduledTime,
+          actualTime,
+          duration: 0,
+          status: 'error',
+          notes: 'vMix offline — item não enviado ao ar',
+        } as PlayLog,
+      })
+      updateQueueItem({ ...item, status: 'error' })
+      return
+    }
+
     if (vmixStatus.connected) {
       if (item.filePath) {
         // Use a preloaded GUID if available for this exact file (eliminates gap between items).
@@ -800,6 +808,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
           activeInputRef.current = guid
           onAirInput = guid
+        } else {
+          // File failed to load (not found or vMix rejected AddInput).
+          // Log immediately as error and return — no dead-air wait, no false 'aired' entry.
+          dispatch({
+            type: 'ADD_LOG',
+            payload: {
+              id: crypto.randomUUID(),
+              date: new Date().toISOString().slice(0, 10),
+              itemId: item.id,
+              title: item.title,
+              clientId: item.clientId,
+              clientName: item.clientName,
+              scheduledTime: item.scheduledTime,
+              actualTime,
+              duration: 0,
+              status: 'error',
+              notes: 'Arquivo não encontrado ou falha ao carregar no vMix',
+            } as PlayLog,
+          })
+          updateQueueItem({ ...item, status: 'error' })
+          return
         }
 
       } else if (item.inputName) {
@@ -1010,6 +1039,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (stale && stale.status !== 'done' && stale.status !== 'skipped') {
           updateQueueItem({ ...stale, status: 'error' })
         }
+        dispatch({
+          type: 'ADD_LOG',
+          payload: {
+            id: crypto.randomUUID(),
+            date: new Date().toISOString().slice(0, 10),
+            itemId: next.id,
+            title: next.title,
+            clientId: next.clientId,
+            clientName: next.clientName,
+            scheduledTime: next.scheduledTime,
+            actualTime: now(),
+            duration: 0,
+            status: 'error',
+            notes: String(err),
+          } as PlayLog,
+        })
       }
 
       await sleep(200)
@@ -1109,6 +1154,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
     activeQueueRef.current = 'schedule'
     abortRef.current = false
+    if (window.spotmaster) {
+      window.spotmaster.vmixStartFastPolling(
+        stateRef.current.settings.vmixHost,
+        stateRef.current.settings.vmixPort
+      )
+    }
     runSequence()
   }, [dispatch, runSequence])
 
@@ -1156,6 +1207,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
     activeQueueRef.current = 'schedule'
     abortRef.current = false
+    if (window.spotmaster) {
+      window.spotmaster.vmixStartFastPolling(
+        stateRef.current.settings.vmixHost,
+        stateRef.current.settings.vmixPort
+      )
+    }
     runSequence()
   }, [dispatch, runSequence])
 
@@ -1178,6 +1235,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     scheduleInterruptRef.current = false
     disparoInterruptRef.current  = false
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
+    if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
 
     // After playItem finishes cleanup (~300 ms), reset the paused item to pending
     // so the user can resume with "Iniciar daqui" or "Iniciar Programação"
@@ -1390,21 +1448,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
-      if (!stateRef.current.settings.autoPlay) return
-      const currentTime = now()
-      const scheduledDue = getQueue().filter(
-        i => i.status === 'pending' && !i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
-      )
-      if (scheduledDue.length === 0) return
-      const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
-      if (scheduleInterruptTimeRef.current === triggerTime) return
-      if (!stateRef.current.isSequencePlaying) {
-        scheduleInterruptTimeRef.current = triggerTime
-        activeQueueRef.current === 'schedule' ? startSchedule() : startSequence()
-      } else {
-        scheduleInterruptTimeRef.current = triggerTime
-        scheduleInterruptRef.current = true
-        abortRef.current = true
+      if (schedulerFiringRef.current) return
+      schedulerFiringRef.current = true
+      try {
+        if (!stateRef.current.settings.autoPlay) return
+        const currentTime = now()
+        const scheduledDue = getQueue().filter(
+          i => i.status === 'pending' && !i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
+        )
+        if (scheduledDue.length === 0) return
+        const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
+        if (scheduleInterruptTimeRef.current === triggerTime) return
+        if (triggerTime < sessionStartRef.current) return  // não dispara blocos vencidos antes do startup
+        if (!stateRef.current.isSequencePlaying) {
+          scheduleInterruptTimeRef.current = triggerTime
+          activeQueueRef.current === 'schedule' ? startSchedule() : startSequence()
+        } else {
+          scheduleInterruptTimeRef.current = triggerTime
+          scheduleInterruptRef.current = true
+          abortRef.current = true
+        }
+      } finally {
+        schedulerFiringRef.current = false
       }
     }, 1000)
     return () => clearInterval(interval)
@@ -1416,26 +1481,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
-      if (!stateRef.current.settings.autoplayComerciais) return
-      // Se a Playlist está tocando manualmente, não interrompe nem dispara nada
-      if (stateRef.current.isSequencePlaying && activeQueueRef.current === 'playlist') return
-      const currentTime = now()
-      // Lê SEMPRE a Programação do dia, ignorando activeQueueRef (que poderia ser playlist em idle)
-      const schedule = stateRef.current.dateSchedules[today()] ?? []
-      const scheduledDue = schedule.filter(
-        i => i.status === 'pending' && !!i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
-      )
-      if (scheduledDue.length === 0) return
-      const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
-      if (scheduleInterruptTimeRef.current === triggerTime) return
-      if (!stateRef.current.isSequencePlaying) {
-        scheduleInterruptTimeRef.current = triggerTime
-        startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
-      } else {
-        // Já está tocando a Programação — interrompe para saltar ao bloco devido
-        scheduleInterruptTimeRef.current = triggerTime
-        scheduleInterruptRef.current = true
-        abortRef.current = true
+      if (schedulerFiringRef.current) return
+      schedulerFiringRef.current = true
+      try {
+        if (!stateRef.current.settings.autoplayComerciais) return
+        // Se a Playlist está tocando manualmente, não interrompe nem dispara nada
+        if (stateRef.current.isSequencePlaying && activeQueueRef.current === 'playlist') return
+        const currentTime = now()
+        // Lê SEMPRE a Programação do dia, ignorando activeQueueRef (que poderia ser playlist em idle)
+        const schedule = stateRef.current.dateSchedules[today()] ?? []
+        const scheduledDue = schedule.filter(
+          i => i.status === 'pending' && !!i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
+        )
+        if (scheduledDue.length === 0) return
+        const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
+        if (scheduleInterruptTimeRef.current === triggerTime) return
+        if (triggerTime < sessionStartRef.current) return  // não dispara blocos vencidos antes do startup
+        if (!stateRef.current.isSequencePlaying) {
+          scheduleInterruptTimeRef.current = triggerTime
+          startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
+        } else {
+          // Já está tocando a Programação — interrompe para saltar ao bloco devido
+          scheduleInterruptTimeRef.current = triggerTime
+          scheduleInterruptRef.current = true
+          abortRef.current = true
+        }
+      } finally {
+        schedulerFiringRef.current = false
       }
     }, 1000)
     return () => clearInterval(interval)
@@ -1449,12 +1521,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
       try {
-        const [settingsRaw, playlistRaw, adBreaksRaw, clientsRaw, logRaw,
+        const [settingsRaw, playlistRaw, clientsRaw, logRaw,
                blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
-            window.spotmaster.loadData('adBreaks'),
             window.spotmaster.loadData('clients'),
             window.spotmaster.loadData('playLog'),
             window.spotmaster.loadData('commercialBlocks'),
@@ -1483,7 +1554,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           payload: {
             settings:         { ...DEFAULT_SETTINGS, ...(settingsRaw as AppSettings) },
             playlist:         (playlistRaw as PlaylistItem[])     ?? [],
-            adBreaks:         (adBreaksRaw as AdBreak[])          ?? [],
             clients:          (clientsRaw as Client[])            ?? [],
             playLog:          (logRaw as PlayLog[])               ?? [],
             commercialBlocks: rawBlocks,
@@ -1528,10 +1598,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.playlist, state.isLoading, saveToStorage])
 
   useEffect(() => {
-    if (!state.isLoading) saveToStorage('adBreaks', state.adBreaks)
-  }, [state.adBreaks, state.isLoading, saveToStorage])
-
-  useEffect(() => {
     if (!state.isLoading) saveToStorage('clients', state.clients)
   }, [state.clients, state.isLoading, saveToStorage])
 
@@ -1564,7 +1630,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.weeklyGrid, state.isLoading, saveToStorage])
 
   useEffect(() => {
-    if (!state.isLoading) saveToStorage('dateSchedules', state.dateSchedules)
+    if (state.isLoading) return
+    // Prune entries older than 30 days before persisting to avoid unbounded growth
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 30)
+    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    const pruned = Object.fromEntries(
+      Object.entries(state.dateSchedules).filter(([date]) => date >= cutoffStr),
+    )
+    saveToStorage('dateSchedules', pruned)
   }, [state.dateSchedules, state.isLoading, saveToStorage])
 
   // ── Auto-load today's schedule on startup ───────────────────────────────────

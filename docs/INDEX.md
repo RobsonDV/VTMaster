@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **3.1.0** — Atualizado em **11/05/2026**
+> Versão **3.3.0** — Atualizado em **12/05/2026**
 
 ---
 
@@ -38,12 +38,12 @@
 - API `window.spotmaster` completa (preload.ts)
 - Protocolo local-media://
 - API do vMix (funções, sequência de corte, polling)
-- Componentes: Toolbar, PlaylistTable, SettingsModal, AdBreaksPanel
+- Componentes: StatusBar, GradePanel, DaySchedulePanel, VmixInputPanel, ItemModal, ContextMenu
 - Tipos de dados, i18n, persistência
 
 ### [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md)
-- Histórico de fases (Fase 1, 2 e 3)
-- Bugs corrigidos e decisões técnicas
+- Histórico de fases (Fase 1 a 11)
+- Bugs corrigidos e decisões técnicas por fase
 - Fluxos de negócio (playlist, blocos comerciais, disparo)
 - Tipos de dados completos com comentários
 - Estado global (AppState, AppContextValue, Actions)
@@ -82,3 +82,9 @@
 | Rebranding | 07/05/2026 | SpotMaster → VTMaster, logo, cor azul |
 | Fase 3 | 10/05/2026 | Disparo global, Autoplay Comerciais, pré-carregamento configurável, indicador visual |
 | Fase 4 | 10/05/2026 | Ações vMix na playlist (AudioOff/On, SetVolume, Fade, Overlay), menu de contexto (botão direito) |
+| Fase 5–6 | 10/05/2026 | Grade Semanal Dom-Sáb, Programação do Dia, Blocos Comerciais reestruturados (CommercialBlockItem) |
+| Fase 7 | 10/05/2026 | Dois queues independentes: playlist manual vs grade do dia (dateSchedules) |
+| Fase 8 | 11/05/2026 | View em cards por bloco, drag-and-drop, menu de contexto completo na Programação |
+| Fase 9 — v3.1.0 | 11/05/2026 | Ponto de Pausa, Export/Import de grade (.vtgrid), auto-sync comerciais, foco em modais, context menus estáveis, pipeline preload.cjs |
+| Fase 10 — v3.2.0 | 11/05/2026 | Arrastar entre blocos, copiar/colar, BlockPickerModal, seleção visual, VmixInputPanel dual-mode |
+| Fase 11 — v3.3.0 | 12/05/2026 | 8 bugs + 5 robustez, remoção do legacy adBreaks, StatusBar redesenhada (ON AIR badge, countdown, progress bar), PlaylistTable e DaySchedulePanel mais vivos |

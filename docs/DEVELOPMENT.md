@@ -2,7 +2,7 @@
 
 > Software de playout e grade de programação para emissoras de TV/Rádio
 > Stack: **Electron 41 + React 19 + TypeScript 6 + Vite 8**
-> Desenvolvido por **RobsonCostaDV** — Versão **3.1.0** — Atualizado: 11/05/2026
+> Desenvolvido por **RobsonCostaDV** — Versão **3.3.0** — Atualizado: 12/05/2026
 
 ---
 
@@ -85,15 +85,15 @@ VTMaster/
 │   │
 │   └── components/
 │       ├── Toolbar/         → Toolbar: playlist, vMix, Disparo ON/OFF, Autoplay Comerc.
-│       ├── StatusBar/       → Rodapé: vMix status, item atual, próximo, Rec/Stream
+│       ├── StatusBar/       → Rodapé: badge ON AIR, countdown −44:32, barra de progresso, status vMix
 │       ├── Grade/
 │       │   ├── GradePanel.tsx       → Estrutura semanal + Export/Import (.vtgrid)
 │       │   └── ProgramSlotModal.tsx → Criar/editar slot (Programa/Musical/Comercial)
 │       ├── DaySchedule/
-│       │   ├── DaySchedulePanel.tsx → Programação do Dia (card-view, drag-drop)
+│       │   ├── DaySchedulePanel.tsx → Programação do Dia (card-view, drag-drop, seleção, BlockPickerModal, copiar/colar)
 │       │   └── DaySchedulePanel.css
 │       ├── AdBreaks/
-│       │   ├── AdBreaksPanel.tsx    → Blocos comerciais (accordion inline)
+│       │   ├── AdBreaksPanel.tsx    → UI dos Blocos Comerciais (accordion inline)
 │       │   └── AdBreaksPanel.css
 │       ├── Clients/         → Cadastro de anunciantes + spots com detecção de duração
 │       ├── Playlist/
@@ -101,7 +101,7 @@ VTMaster/
 │       │   ├── ContextMenu.tsx      → Menu de contexto (botão direito) — listeners estáveis
 │       │   ├── ItemModal.tsx        → Criar/editar item (mídia ou ação vMix)
 │       │   ├── ItemModal.css
-│       │   ├── VmixInputPanel.tsx   → Painel lateral de inputs do vMix (drag & drop)
+│       │   ├── VmixInputPanel.tsx   → Painel lateral de inputs do vMix (drag & drop, dual-mode via onAddInput)
 │       │   └── VmixInputPickerModal.tsx
 │       ├── Log/             → Histórico de veiculação com filtros e exportação CSV
 │       ├── Reports/         → Geração de PDF (diário e por anunciante)
@@ -903,6 +903,32 @@ useEffect(() => { inputRef.current?.focus() }, [])
 
 ## 18. Componentes
 
+### StatusBar (Rodapé) — v3.3
+
+O rodapé redesenhado em v3.3 tem dois estados visuais:
+
+**Estado parado** (`height: 34px`): exibe `status-label "Atual:"` sem badge, sem barra inferior.
+
+**Estado tocando** (`height: 48px`, transição 0,2s):
+- `.on-air-badge` — `◉ ON AIR` (vermelho, pulsa com `box-shadow` a cada 1,2s)
+- `.current-title` — título do item tocando
+- `.on-air-countdown` — `−MM:SS` em Courier New verde (calculado de `activeItemProgress`)
+- `.statusbar-progress-track` (3px) — barra gradiente `--error → --accent` pinned ao bottom
+
+```typescript
+// Cálculo do countdown
+const remaining = activeItemProgress && activeItemProgress.duration > 0
+  ? Math.max(0, Math.round((activeItemProgress.duration - activeItemProgress.position) / 1000))
+  : null
+
+// Porcentagem de progresso
+const progressPct = activeItemProgress && activeItemProgress.duration > 0
+  ? Math.min(100, (activeItemProgress.position / activeItemProgress.duration) * 100)
+  : null
+```
+
+Quando `progressPct === null` (nenhum `activeItemProgress` disponível), a barra usa animação `statusbar-progress-anim` como fallback.
+
 ### GradePanel (Aba Estrutura)
 
 Funcionalidades v3.1:
@@ -923,7 +949,56 @@ Cards por bloco (musical/comercial/programa). Operações:
 - "Iniciar Programação" → `startScheduleFromNow()`
 - "Parar" → `stopPlayback()`
 - Drag-and-drop com handle ⠿ e feedback visual `drag-over`
-- Menu de contexto: Iniciar daqui, Pausar, **Ponto de Pausa**, Ação vMix, Input vMix, Horário, Duplicar, Pular, Marcar veiculado
+- **Drag entre blocos (v3.2)**: `handleDrop` compara `dragItem.scheduledTime?.slice(0,5)` com `targetItem.scheduledTime?.slice(0,5)`. Se diferente, cria `movedItem = { ...dragItem, scheduledTime: targetItem.scheduledTime }` antes de reordenar.
+- **Seleção visual (v3.2)**: `selectedItemId: string | null` — clicar numa linha seta o ID; CSS `.block-item-row.selected` aplica borda accent e fundo translúcido.
+- **Sub-toolbar (v3.2)**: botões "+Adicionar item" (accent, sempre ativo) e "Inputs vMix" (sempre ativo, sem verificação de conexão).
+- Menu de contexto: Iniciar daqui, Pausar, **Ponto de Pausa**, Ação vMix, Input vMix, Horário, Duplicar, Pular, Marcar veiculado, **Copiar item**, **Colar abaixo**
+
+#### BlockPickerModal (v3.2)
+
+Componente local definido antes do export principal em `DaySchedulePanel.tsx`. Props:
+
+```typescript
+interface BlockPickerModalProps {
+  groups: BlockGroup[]
+  onClose: () => void
+  onPick: (g: BlockGroup) => void
+}
+```
+
+Renderizado quando `showBlockPicker === true`. Exibe cada bloco como `btn-add-choice` com ícone `Clock`, `g.time`, `g.slot?.title` e contagem de itens. Ao selecionar, fecha o picker e abre o `AddItemModal` para aquele grupo.
+
+#### ScheduleCtxMenu — Copiar / Colar (v3.2)
+
+Novos props adicionados a `ScheduleCtxMenu`:
+
+```typescript
+onCopy: () => void
+onPaste: () => void
+canPaste: boolean
+```
+
+Botão "Copiar item" sempre visível na seção "Editar". Botão "Colar abaixo" renderizado apenas quando `canPaste === true`. Estado `copiedItem: PlaylistItem | null` no componente pai (`DaySchedulePanel`). O paste herda o `scheduledTime` do item alvo (não do item copiado), garantindo que o item colado pertença ao bloco correto.
+
+### VmixInputPanel — Modo Dual (v3.2)
+
+O painel de inputs do vMix é compartilhado entre Playlist e Programação do Dia. O comportamento do botão `+` é controlado pela prop:
+
+```typescript
+interface VmixInputPanelProps {
+  onClose: () => void
+  onAddInput?: (inp: VmixInput) => void  // ← opcional (v3.2)
+}
+```
+
+| Contexto | Prop | Comportamento do `+` | Hint text |
+|----------|------|----------------------|-----------|
+| Playlist | não fornecida | `addToEnd(inp)` → `dispatch ADD_PLAYLIST_ITEM` | `Arraste para a playlist · + Adiciona ao final` |
+| Programação | fornecida | `onAddInput(inp)` | `Arraste para a programação · + Adiciona abaixo do item selecionado` |
+
+Em `DaySchedulePanel`, `onAddInput` verifica `selectedItemId`:
+- **Com seleção**: `insertAfterItem(selectedItem, newItem)` — insere no mesmo bloco do item selecionado
+- **Sem seleção**: `insertItemAtGroupEnd(groups[0], newItem)` — appenda ao primeiro bloco
 
 ### ItemModal (Criar/Editar Item da Playlist)
 
@@ -1026,10 +1101,11 @@ Chaves adicionadas em v3.1:
 | `spotRotation` | Índices de rodízio |
 | `clients` | Anunciantes |
 | `playLog` | Histórico de veiculação |
-| `adBreaks` | Legacy (compatibilidade) |
 | `activePanel` | Último painel ativo |
 
-**Startup:** `Promise.all` carrega 11 arquivos simultaneamente → `LOAD_ALL` único dispatch.
+> **Nota (v3.3):** A chave `adBreaks` foi removida do estado e do storage. Instalações antigas que possuam esse arquivo em `%APPDATA%\SpotMaster\adBreaks.json` podem ignorá-lo com segurança.
+
+**Startup:** `Promise.all` carrega 10 arquivos simultaneamente → `LOAD_ALL` único dispatch. (`adBreaks` removido em v3.3)
 
 **Migração:** `settings: { ...DEFAULT_SETTINGS, ...settingsRaw }` garante que campos novos recebem defaults em instalações antigas.
 

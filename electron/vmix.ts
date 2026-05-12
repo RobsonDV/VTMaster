@@ -130,9 +130,19 @@ export function startVmixPolling(
   currentHost = host
   currentPort = port
 
+  // Backoff counters: when vMix is offline for 3+ consecutive polls, skip
+  // 4 out of every 5 ticks → effective interval ~10 s instead of 2 s.
+  // Resets instantly on reconnect so the first successful response fires normally.
+  let consecutiveFailures = 0
+  let backoffCounter = 0
+
   const poll = async () => {
+    backoffCounter++
+    if (consecutiveFailures >= 3 && backoffCounter % 5 !== 0) return
+
     const result = await makeVmixRequest({}, host, port)
     if (result.success && result.data) {
+      consecutiveFailures = 0
       try {
         const status = parseVmixStatus(result.data)
         onStatus(status)
@@ -140,6 +150,7 @@ export function startVmixPolling(
         onStatus({ connected: false, error: 'Parse error' } as VmixStatus)
       }
     } else {
+      consecutiveFailures++
       onStatus({ connected: false, error: result.error } as VmixStatus)
     }
   }

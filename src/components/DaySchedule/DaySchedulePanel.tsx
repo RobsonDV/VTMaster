@@ -3,11 +3,12 @@ import {
   Square, ListVideo, SkipForward, CheckCircle,
   Trash2, RefreshCw, CalendarDays,
   FolderOpen, Plus, Crosshair, Music, DollarSign, Tv,
-  Zap, MonitorPlay, Clock, Copy, Play, Pause, GripVertical,
+  Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
-import type { PlaylistItem, ProgramSlot, VmixActionItem } from '../../types'
+import type { PlaylistItem, ProgramSlot, VmixActionItem, VmixInput } from '../../types'
 import { formatDuration, today } from '../../utils/time'
+import VmixInputPanel, { spotTypeForVmix } from '../Playlist/VmixInputPanel'
 import './DaySchedulePanel.css'
 import '../Playlist/ContextMenu.css'
 import '../Playlist/ItemModal.css'
@@ -90,7 +91,7 @@ const DAY_NAMES = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 
 
 interface CtxState { x: number; y: number; item: PlaylistItem }
 
-function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction, onVmixInput, onInsertPause, onDuplicate, onSkip, onMarkDone, onEditTime, isPlaying, isToday }: {
+function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction, onVmixInput, onInsertPause, onDuplicate, onSkip, onMarkDone, onEditTime, onCopy, onPaste, canPaste, isPlaying, isToday }: {
   menu: CtxState
   onClose: () => void
   onStartFromHere: () => void
@@ -102,6 +103,9 @@ function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction
   onSkip: () => void
   onMarkDone: () => void
   onEditTime: () => void
+  onCopy: () => void
+  onPaste: () => void
+  canPaste: boolean
   isPlaying: boolean
   isToday: boolean
 }) {
@@ -166,6 +170,14 @@ function ScheduleCtxMenu({ menu, onClose, onStartFromHere, onPause, onVmixAction
       <button className="ctx-item" onClick={() => run(onDuplicate)}>
         <Copy size={13} /><span>Duplicar Item</span>
       </button>
+      <button className="ctx-item" onClick={() => run(onCopy)}>
+        <Copy size={13} /><span>Copiar item</span>
+      </button>
+      {canPaste && (
+        <button className="ctx-item" onClick={() => run(onPaste)}>
+          <Clipboard size={13} /><span>Colar abaixo</span>
+        </button>
+      )}
 
       {isPlayable && (
         <>
@@ -310,6 +322,74 @@ function ScheduleTimeEditModal({ item, date, onClose }: {
   )
 }
 
+// ── Add Item Picker Modal ─────────────────────────────────────────────────────
+
+function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }: {
+  groupTime: string
+  onClose: () => void
+  onFile: () => void
+  onVmixAction: () => void
+  onVmixInput: () => void
+}) {
+  const ref = useRef<HTMLButtonElement>(null)
+  useEffect(() => { ref.current?.focus() }, [])
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 300, maxWidth: 360 }}>
+        <div className="modal-header">
+          <h2>Adicionar ao bloco {groupTime}</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px 16px' }}>
+          <button ref={ref} className="btn-add-choice" onClick={() => { onClose(); onFile() }}>
+            <FolderOpen size={16} /> Arquivo de mídia
+          </button>
+          <button className="btn-add-choice btn-add-choice--purple" onClick={() => { onClose(); onVmixAction() }}>
+            <Zap size={16} /> Ação vMix
+          </button>
+          <button className="btn-add-choice" onClick={() => { onClose(); onVmixInput() }}>
+            <MonitorPlay size={16} /> Input vMix
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Block Picker Modal ────────────────────────────────────────────────────────
+
+function BlockPickerModal({ groups, onClose, onPick }: {
+  groups: BlockGroup[]
+  onClose: () => void
+  onPick: (group: BlockGroup) => void
+}) {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', key)
+    return () => document.removeEventListener('keydown', key)
+  }, [onClose])
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ minWidth: 300, maxWidth: 380 }}>
+        <div className="modal-header">
+          <h2>Escolher bloco</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 16px 14px', maxHeight: 400, overflowY: 'auto' }}>
+          {groups.map(g => (
+            <button key={g.time} className="btn-add-choice" onClick={() => { onClose(); onPick(g) }}>
+              <Clock size={15} />
+              <span style={{ fontWeight: 600 }}>{g.time}</span>
+              {g.slot?.title && <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginLeft: 4 }}>— {g.slot.title}</span>}
+              <span style={{ marginLeft: 'auto', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{g.items.length} {g.items.length === 1 ? 'item' : 'itens'}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -340,6 +420,15 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const [vmixInputFor, setVmixInputFor]   = useState<PlaylistItem | null>(null)
   const [editTimeItem, setEditTimeItem]   = useState<PlaylistItem | null>(null)
 
+  // ── Selection & add-item state ────────────────────────────────────────────
+  const [selectedItemId, setSelectedItemId]         = useState<string | null>(null)
+  const [showVmixPanel, setShowVmixPanel]           = useState(false)
+  const [addItemGroup, setAddItemGroup]             = useState<BlockGroup | null>(null)
+  const [vmixActionForGroup, setVmixActionForGroup] = useState<BlockGroup | null>(null)
+  const [vmixInputForGroup, setVmixInputForGroup]   = useState<BlockGroup | null>(null)
+  const [copiedItem, setCopiedItem]                 = useState<PlaylistItem | null>(null)
+  const [showBlockPicker, setShowBlockPicker]       = useState(false)
+
   // ── Drag-and-drop state ───────────────────────────────────────────────────
   const [dragId, setDragId]     = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
@@ -351,18 +440,47 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
 
   const handleDragOver = (e: React.DragEvent, item: PlaylistItem) => {
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
+    e.dataTransfer.dropEffect = e.dataTransfer.types.includes('application/vmix-input') ? 'copy' : 'move'
     if (item.id !== dragId) setDragOverId(item.id)
   }
 
   const handleDrop = (e: React.DragEvent, targetItem: PlaylistItem) => {
     e.preventDefault()
+    // vMix input drop from the side panel
+    const vmixRaw = e.dataTransfer.getData('application/vmix-input')
+    if (vmixRaw) {
+      try {
+        const inp = JSON.parse(vmixRaw) as VmixInput
+        const newItem: PlaylistItem = {
+          id: crypto.randomUUID(),
+          order: targetItem.order - 0.5,
+          title: inp.title || `Input ${inp.number}`,
+          type: spotTypeForVmix(inp.type),
+          duration: inp.duration > 0 ? Math.round(inp.duration / 1000) : 30,
+          status: 'pending',
+          scheduledTime: targetItem.scheduledTime,
+          inputName: inp.number,
+        }
+        const newSchedule = [...schedule, newItem]
+          .sort((a, b) => a.order - b.order)
+          .map((i, n) => ({ ...i, order: n + 1 }))
+        dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+      } catch { /* ignore bad JSON */ }
+      setDragId(null)
+      setDragOverId(null)
+      return
+    }
+    // Internal reorder
     if (!dragId || dragId === targetItem.id) { setDragId(null); setDragOverId(null); return }
     const dragItem = sorted.find(i => i.id === dragId)
     if (!dragItem) { setDragId(null); setDragOverId(null); return }
+    // When dropped on a different block, update scheduledTime to match the target block
+    const movedItem = dragItem.scheduledTime?.slice(0, 5) !== targetItem.scheduledTime?.slice(0, 5)
+      ? { ...dragItem, scheduledTime: targetItem.scheduledTime, adBreakId: targetItem.adBreakId }
+      : dragItem
     const without = sorted.filter(i => i.id !== dragId)
     const tIdx    = without.findIndex(i => i.id === targetItem.id)
-    without.splice(tIdx, 0, dragItem)
+    without.splice(tIdx, 0, movedItem)
     dispatch({
       type: 'REORDER_DATE_SCHEDULE',
       payload: { date: selectedDate, items: without.map((i, n) => ({ ...i, order: n + 1 })) },
@@ -481,21 +599,55 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     })
   }
 
-  const handleAddToGroup = (group: BlockGroup) => {
-    const lastItem = group.items[group.items.length - 1]
-    if (lastItem) {
-      handleInsertAfter(lastItem)
-    } else {
-      const newItem: PlaylistItem = {
-        id: crypto.randomUUID(),
-        order: (sorted[sorted.length - 1]?.order ?? 0) + 1,
-        title: group.slot?.title ?? `Musical ${group.time}`,
-        type: 'vinheta', status: 'pending',
-        scheduledTime: group.time + ':00', duration: 0,
-      }
-      const newSchedule = [...schedule, newItem].map((i, n) => ({ ...i, order: n + 1 }))
-      dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+  // ── Insert item at end of a group ─────────────────────────────────────────
+  const insertItemAtGroupEnd = (group: BlockGroup, fields: Omit<PlaylistItem, 'id' | 'order'>) => {
+    const groupSorted = [...group.items].sort((a, b) => a.order - b.order)
+    const lastItem = groupSorted[groupSorted.length - 1]
+    const newItem: PlaylistItem = {
+      ...fields,
+      id: crypto.randomUUID(),
+      order: lastItem ? lastItem.order + 0.5 : (sorted[sorted.length - 1]?.order ?? 0) + 1,
+      scheduledTime: fields.scheduledTime ?? (group.time + ':00'),
     }
+    const newSchedule = [...schedule, newItem]
+      .sort((a, b) => a.order - b.order)
+      .map((i, n) => ({ ...i, order: n + 1 }))
+    dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+  }
+
+  // ── Add file to a group via file browser ──────────────────────────────────
+  const handleAddItemFile = async (group: BlockGroup) => {
+    const fp = await window.spotmaster?.browseVideoFile()
+    if (!fp) return
+    const mt = detectMediaType(fp)
+    const nameNoExt = fp.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? 'Arquivo'
+    let dur = 0
+    if (mt !== 'image') {
+      const detected = await readMediaDuration(fp, mt)
+      if (detected != null) dur = detected
+    }
+    insertItemAtGroupEnd(group, {
+      title: nameNoExt,
+      type: mt === 'audio' ? 'spot' : 'vinheta',
+      status: 'pending',
+      scheduledTime: group.time + ':00',
+      duration: dur,
+      filePath: fp,
+      mediaType: mt,
+    })
+  }
+
+  // ── Toolbar: add item to selected block ───────────────────────────────────
+  const handleAddItemFromToolbar = () => {
+    const selItem = selectedItemId ? schedule.find(i => i.id === selectedItemId) : null
+    const selGroupTime = selItem?.scheduledTime?.slice(0, 5)
+    const targetGroup = selGroupTime ? groups.find(g => g.time === selGroupTime) : null
+    if (targetGroup) setAddItemGroup(targetGroup)
+    else setShowBlockPicker(true)
+  }
+
+  const handleAddToGroup = (group: BlockGroup) => {
+    setAddItemGroup(group)
   }
 
   const playingItem   = schedule.find(i => i.status === 'playing')
@@ -564,6 +716,24 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
         </div>
       </div>
 
+      {/* ── Sub-toolbar ── */}
+      <div className="day-schedule-subtoolbar">
+        <button
+          className="day-schedule-btn accent"
+          onClick={handleAddItemFromToolbar}
+          title={selectedItemId ? 'Adicionar item ao bloco selecionado' : 'Escolher bloco para adicionar item'}
+        >
+          <Plus size={13} /> Adicionar item
+        </button>
+        <button
+          className={`day-schedule-btn${showVmixPanel ? ' accent' : ''}`}
+          onClick={() => setShowVmixPanel(v => !v)}
+          title={showVmixPanel ? 'Fechar painel de inputs' : 'Abrir painel de inputs do vMix'}
+        >
+          <MonitorPlay size={13} /> Inputs vMix
+        </button>
+      </div>
+
       {/* ── Progress bar ── */}
       {isToday && activeItemProgress && state.isSequencePlaying && (
         <div className="day-progress-bar">
@@ -593,7 +763,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
         </div>
       ) : (
         <>
-          <div className="day-schedule-scroll" ref={scrollContainerRef}>
+          <div className="day-schedule-body">
+            <div className="day-schedule-scroll" ref={scrollContainerRef}>
             {groups.map(group => {
               const cls          = cardClass(group)
               const isMusical    = cls === 'musical'
@@ -632,6 +803,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                         item.status === 'skipped' ? 'skipped'  : '',
                         isDragging  ? 'dragging'   : '',
                         isDragOver  ? 'drag-over'  : '',
+                        item.id === selectedItemId ? 'selected' : '',
                       ].filter(Boolean).join(' ')
 
                       return (
@@ -640,12 +812,13 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                           className={rowCls}
                           data-row-id={item.id}
                           draggable
+                          onClick={() => setSelectedItemId(item.id === selectedItemId ? null : item.id)}
                           onDragStart={e => handleDragStart(e, item)}
                           onDragOver={e => handleDragOver(e, item)}
                           onDrop={e => handleDrop(e, item)}
                           onDragEnd={handleDragEnd}
                           onDragLeave={() => setDragOverId(null)}
-                          onContextMenu={e => handleContextMenu(e, item)}
+                          onContextMenu={e => { handleContextMenu(e, item); setSelectedItemId(item.id) }}
                         >
                           {/* Drag handle */}
                           <span className="block-item-drag-handle" title="Arrastar para reordenar">
@@ -712,6 +885,37 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                 </div>
               )
             })}
+            </div>
+            {showVmixPanel && (
+              <VmixInputPanel
+                onClose={() => setShowVmixPanel(false)}
+                onAddInput={inp => {
+                  const selItem = selectedItemId ? schedule.find(i => i.id === selectedItemId) : null
+                  if (selItem) {
+                    // Insert below the selected item, inheriting its block time
+                    insertAfterItem(selItem, {
+                      title: inp.title,
+                      type: spotTypeForVmix(inp.type),
+                      duration: inp.duration > 0 ? Math.round(inp.duration / 1000) : 30,
+                      status: 'pending',
+                      scheduledTime: selItem.scheduledTime,
+                      inputName: inp.number,
+                    })
+                  } else {
+                    // No item selected: append to end of first group
+                    const firstGroup = groups[0]
+                    if (firstGroup) insertItemAtGroupEnd(firstGroup, {
+                      title: inp.title,
+                      type: spotTypeForVmix(inp.type),
+                      duration: inp.duration > 0 ? Math.round(inp.duration / 1000) : 30,
+                      status: 'pending',
+                      scheduledTime: firstGroup.time + ':00',
+                      inputName: inp.number,
+                    })
+                  }
+                }}
+              />
+            )}
           </div>
 
           <div className="day-schedule-footer">
@@ -728,6 +932,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           onClose={() => setCtxMenu(null)}
           isPlaying={state.isSequencePlaying}
           isToday={isToday}
+          canPaste={copiedItem !== null}
           onStartFromHere={() => { startScheduleFromItem(ctxMenu.item.id); setCtxMenu(null) }}
           onPause={() => { pauseSchedule(); setCtxMenu(null) }}
           onVmixAction={() => { setVmixActionFor(ctxMenu.item); setCtxMenu(null) }}
@@ -737,6 +942,14 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           onSkip={() => { handleSkip(ctxMenu.item); setCtxMenu(null) }}
           onMarkDone={() => { handleMarkDone(ctxMenu.item); setCtxMenu(null) }}
           onEditTime={() => { setEditTimeItem(ctxMenu.item); setCtxMenu(null) }}
+          onCopy={() => { setCopiedItem(ctxMenu.item); setCtxMenu(null) }}
+          onPaste={() => {
+            if (copiedItem) {
+              const { id: _id, order: _order, ...fields } = copiedItem
+              insertAfterItem(ctxMenu.item, { ...fields, status: 'pending', scheduledTime: ctxMenu.item.scheduledTime })
+            }
+            setCtxMenu(null)
+          }}
         />
       )}
 
@@ -768,6 +981,48 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           item={editTimeItem}
           date={selectedDate}
           onClose={() => setEditTimeItem(null)}
+        />
+      )}
+
+      {/* ── Add Item picker modal ── */}
+      {addItemGroup && (
+        <AddItemModal
+          groupTime={addItemGroup.time}
+          onClose={() => setAddItemGroup(null)}
+          onFile={() => handleAddItemFile(addItemGroup)}
+          onVmixAction={() => setVmixActionForGroup(addItemGroup)}
+          onVmixInput={() => setVmixInputForGroup(addItemGroup)}
+        />
+      )}
+
+      {/* ── vMix Action modal (via Add Item) ── */}
+      {vmixActionForGroup && (
+        <VmixActionModal
+          onInsert={action => insertItemAtGroupEnd(vmixActionForGroup, {
+            title: action.function, type: 'vmix_action', status: 'pending',
+            scheduledTime: vmixActionForGroup.time + ':00', duration: 0, vmixAction: action,
+          })}
+          onClose={() => setVmixActionForGroup(null)}
+        />
+      )}
+
+      {/* ── vMix Input modal (via Add Item) ── */}
+      {vmixInputForGroup && (
+        <VmixInputModal
+          onInsert={(name, dur) => insertItemAtGroupEnd(vmixInputForGroup, {
+            title: name, type: 'vinheta', status: 'pending',
+            scheduledTime: vmixInputForGroup.time + ':00', duration: dur, inputName: name,
+          })}
+          onClose={() => setVmixInputForGroup(null)}
+        />
+      )}
+
+      {/* ── Block picker (choose block when no item is selected) ── */}
+      {showBlockPicker && (
+        <BlockPickerModal
+          groups={groups}
+          onClose={() => setShowBlockPicker(false)}
+          onPick={g => { setShowBlockPicker(false); setAddItemGroup(g) }}
         />
       )}
     </div>

@@ -30,7 +30,8 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
   const { state, dispatch, t, saveToStorage } = useApp()
   const { settings, vmixStatus, activePanel } = state
 
-  const isPlaylistActive = activePanel === 'playlist'
+  const isPlaylistActive  = activePanel === 'playlist'
+  const isScheduleActive  = activePanel === 'programacao'
 
   // ── Disparo toggle ──
   const toggleDisparo = () => {
@@ -175,31 +176,34 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
         </button>
       </div>
 
-      {/* ── Fileira inferior: Disparo + Autoplay Comerciais + utilitários ── */}
+      {/* ── Fileira inferior: Disparo + Autoplay Comerciais (só na aba Programação) + utilitários ── */}
       <div className="toolbar-row-bottom">
 
-        {/* Disparo toggle */}
-        <button
-          className={`btn-toolbar ${settings.triggerEnabled ? 'btn-success' : ''}`}
-          onClick={toggleDisparo}
-          title={settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}
-          disabled={!settings.triggerKey}
-          style={{ fontSize: '0.74rem' }}
-        >
-          <Zap size={14} />
-          <span>{settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}</span>
-        </button>
+        {/* Disparo + Autoplay Comerciais — visíveis apenas quando a aba Programação está ativa */}
+        {isScheduleActive && (
+          <>
+            <button
+              className={`btn-toolbar ${settings.triggerEnabled ? 'btn-success' : ''}`}
+              onClick={toggleDisparo}
+              title={settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}
+              disabled={!settings.triggerKey}
+              style={{ fontSize: '0.74rem' }}
+            >
+              <Zap size={14} />
+              <span>{settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}</span>
+            </button>
 
-        {/* Autoplay Comerciais toggle */}
-        <button
-          className={`btn-toolbar ${settings.autoplayComerciais ? 'btn-success' : ''}`}
-          onClick={toggleAutoplayComerciais}
-          title={settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}
-          style={{ fontSize: '0.74rem' }}
-        >
-          <Radio size={14} />
-          <span>{settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}</span>
-        </button>
+            <button
+              className={`btn-toolbar ${settings.autoplayComerciais ? 'btn-success' : ''}`}
+              onClick={toggleAutoplayComerciais}
+              title={settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}
+              style={{ fontSize: '0.74rem' }}
+            >
+              <Radio size={14} />
+              <span>{settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}</span>
+            </button>
+          </>
+        )}
 
         {/* Utilitários — alinhados à direita */}
         <div className="toolbar-actions-right">

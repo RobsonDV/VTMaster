@@ -170,10 +170,14 @@
 .playlist-row.selected { background: var(--bg-selected); }
 
 /* Row status colors */
-.playlist-row.row-playing { background: color-mix(in srgb, var(--success) 8%, transparent); }
+.playlist-row.row-playing {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  border-left: 3px solid var(--success);
+  box-shadow: inset 3px 0 12px color-mix(in srgb, var(--success) 12%, transparent);
+}
 .playlist-row.row-done { opacity: 0.55; }
 .playlist-row.row-skipped { opacity: 0.4; }
-.playlist-row.row-error { background: color-mix(in srgb, var(--error) 8%, transparent); }
+.playlist-row.row-error { background: color-mix(in srgb, var(--error) 10%, transparent); }
 
 .playlist-table td {
   padding: 7px 10px;
@@ -307,17 +311,18 @@
 
 .progress-track {
   position: relative;
-  height: 4px;
-  background: var(--bg-tertiary);
-  overflow: hidden;
+  height: 6px;
+  background: color-mix(in srgb, var(--bg-hover) 80%, var(--border));
+  overflow: visible;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--success), color-mix(in srgb, var(--success) 70%, var(--accent)));
-  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, var(--success), color-mix(in srgb, var(--success) 60%, var(--accent)));
+  border-radius: 0 3px 3px 0;
   transition: width 0.45s linear;
   min-width: 0;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--success) 55%, transparent);
 }
 
 /* Fallback animation when vMix doesn't report position */
@@ -348,7 +353,7 @@
 }
 
 /* Show label if user hovers the progress row */
-.progress-bar-row:hover .progress-track { height: 16px; }
+.progress-bar-row:hover .progress-track { height: 14px; }
 .progress-bar-row:hover .progress-label { display: block; }
 .progress-bar-row:hover .progress-fill  { border-radius: 0 2px 2px 0; }
 
@@ -405,11 +410,11 @@
   letter-spacing: 0.3px;
 }
 
-.status-pending  { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
-.status-playing  { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); }
+.status-pending  { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
+.status-playing  { background: color-mix(in srgb, var(--success) 28%, transparent); color: var(--success); font-weight: 700; }
 .status-done     { background: color-mix(in srgb, #64748b 20%, transparent); color: #64748b; }
 .status-skipped  { background: color-mix(in srgb, #64748b 15%, transparent); color: #64748b; }
-.status-error    { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); }
+.status-error    { background: color-mix(in srgb, var(--error) 25%, transparent); color: var(--error); }
 .status-awaiting-trigger {
   background: color-mix(in srgb, #a855f7 15%, transparent);
   color: #a855f7;

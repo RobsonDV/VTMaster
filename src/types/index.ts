@@ -51,17 +51,6 @@ export interface PlaylistItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Ad Break (commercial block template)
-// ─────────────────────────────────────────────────────────────────────────────
-export interface AdBreak {
-  id: string
-  name: string
-  items: PlaylistItem[]
-  totalDuration: number     // sum of items duration
-  createdAt: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Commercial Scheduling System
 // ─────────────────────────────────────────────────────────────────────────────
 

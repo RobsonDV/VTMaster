@@ -1,4 +1,4 @@
-# VTMaster v3.0
+# VTMaster v3.3
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -7,9 +7,10 @@ Software desktop de playout para emissoras de TV e rádio com integração nativ
 O VTMaster automatiza a execução da grade de programação diária, incluindo:
 
 - Grade semanal de programação (Estrutura): blocos musicais, blocos comerciais e programas
-- Programação do Dia com view em cards por bloco, drag-and-drop e menu de contexto
+- Programação do Dia com view em cards por bloco, drag-and-drop entre blocos e menu de contexto
 - Sequência automática de playout no vMix (PlayInput → PreviewInput → Cut)
 - Blocos comerciais com round-robin por anunciante e expansão inline de spots
+- StatusBar com badge ON AIR, countdown e barra de progresso em tempo real
 - Disparo global via tecla configurável (funciona minimizado)
 - Autoplay por horário agendado
 - Log de veiculação e geração de relatórios PDF
@@ -25,7 +26,7 @@ Stack principal:
 
 - [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v3.0
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v3.3
 - [release/LEIA-ME.md](release/LEIA-ME.md): guia de uso para operador
 
 ## Requisitos

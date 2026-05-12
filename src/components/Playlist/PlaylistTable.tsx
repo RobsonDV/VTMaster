@@ -130,9 +130,9 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
     const pause: PlaylistItem = {
       id: crypto.randomUUID(),
       order: 0,
-      title: 'Pausa',
-      duration: 5,
-      type: 'outros',
+      title: 'Pausa automática',
+      duration: 0,
+      type: 'pause',
       status: 'pending',
     }
     dispatch({ type: 'INSERT_PLAYLIST_ITEM_AFTER', payload: { item: pause, afterOrder } })
