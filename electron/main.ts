@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut } from 'electron'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -238,6 +238,52 @@ ipcMain.handle('browse-video-file', async () => {
     properties: ['openFile'],
   })
   return result.canceled ? null : result.filePaths[0] ?? null
+})
+
+// Browse for a folder
+ipcMain.handle('browse-folder', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Selecionar Pasta',
+    properties: ['openDirectory'],
+  })
+  return result.canceled ? null : result.filePaths[0] ?? null
+})
+
+// Scan a folder for media files (used by AutoProg)
+ipcMain.handle('scan-music-folder', async (_event, folderPath: string, includeSubfolders: boolean) => {
+  const MEDIA_EXTS = new Set([
+    'mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff',
+    'mp4','mov','avi','mkv','wmv','flv','webm',
+  ])
+  type ScanResult = { filePath: string; filename: string; subfolder: string }
+  const results: ScanResult[] = []
+
+  function scanDir(dir: string, relative: string) {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory() && includeSubfolders) {
+          scanDir(
+            join(dir, entry.name),
+            relative ? `${relative}/${entry.name}` : entry.name,
+          )
+        } else if (entry.isFile()) {
+          const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
+          if (MEDIA_EXTS.has(ext)) {
+            results.push({
+              filePath: join(dir, entry.name),
+              filename: entry.name,
+              subfolder: relative,
+            })
+          }
+        }
+      }
+    } catch { /* ignore permissão negada e similares */ }
+  }
+
+  scanDir(folderPath, '')
+  return results
 })
 
 // vMix HTTP request

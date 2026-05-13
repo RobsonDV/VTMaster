@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
-  Square, ListVideo, SkipForward, CheckCircle,
+  Square, ListVideo, SkipForward, StopCircle, CheckCircle,
   Trash2, RefreshCw, CalendarDays,
   FolderOpen, Plus, Crosshair, Music, DollarSign, Tv,
   Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical,
@@ -65,6 +65,11 @@ interface BlockGroup {
   time: string
   slot: ProgramSlot | null
   items: PlaylistItem[]
+}
+
+type AddGroupModalState = {
+  group: BlockGroup
+  mode: 'picker' | 'vmix_action' | 'vmix_input'
 }
 
 function buildGroups(sorted: PlaylistItem[], weekSlots: ProgramSlot[]): BlockGroup[] {
@@ -420,7 +425,7 @@ interface Props {
 }
 
 export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) {
-  const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid } = useApp()
+  const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent } = useApp()
   const { dateSchedules, activeItemProgress } = state
 
   const todayStr  = today()   // local date, not UTC
@@ -435,6 +440,36 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     [schedule]
   )
   const hasPending = schedule.some(i => i.status === 'pending')
+
+  // ── Auto-read duration for items loaded without metadata (e.g. AutoProg) ────
+  const durationReadIds = useRef<Set<string>>(new Set())
+  // Reset when date changes so items on a fresh date get their durations read
+  useEffect(() => { durationReadIds.current.clear() }, [selectedDate])
+  useEffect(() => {
+    const toRead = schedule.filter(
+      i => i.filePath && (i.duration === 0 || i.duration == null)
+        && i.status !== 'playing'
+        && !durationReadIds.current.has(i.id),
+    )
+    if (toRead.length === 0) return
+    toRead.forEach(i => durationReadIds.current.add(i.id))
+    Promise.allSettled(
+      toRead.map(async item => {
+        const mt = detectMediaType(item.filePath!)
+        if (mt === 'image') return
+        const dur = await readMediaDuration(item.filePath!, mt)
+        if (dur && dur > 0) {
+          dispatch({
+            type: 'UPDATE_SCHEDULE_ITEM',
+            payload: { date: selectedDate, item: { ...item, duration: dur } },
+          })
+        } else {
+          // Read failed — remove from set to allow retry on next schedule change
+          durationReadIds.current.delete(item.id)
+        }
+      }),
+    )
+  }, [schedule, selectedDate, dispatch])
 
   const selDow   = new Date(selectedDate + 'T12:00:00').getDay()
   const weekSlots = useMemo(
@@ -455,13 +490,18 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const [editTimeItem, setEditTimeItem]   = useState<PlaylistItem | null>(null)
 
   // ── Selection & add-item state ────────────────────────────────────────────
-  const [selectedItemId, setSelectedItemId]         = useState<string | null>(null)
-  const [showVmixPanel, setShowVmixPanel]           = useState(false)
-  const [addItemGroup, setAddItemGroup]             = useState<BlockGroup | null>(null)
-  const [vmixActionForGroup, setVmixActionForGroup] = useState<BlockGroup | null>(null)
-  const [vmixInputForGroup, setVmixInputForGroup]   = useState<BlockGroup | null>(null)
-  const [copiedItem, setCopiedItem]                 = useState<PlaylistItem | null>(null)
-  const [showBlockPicker, setShowBlockPicker]       = useState(false)
+  const [selectedItemId, setSelectedItemId]   = useState<string | null>(null)
+  const [showVmixPanel, setShowVmixPanel]     = useState(false)
+  const [addGroupModal, setAddGroupModal]     = useState<AddGroupModalState | null>(null)
+  const [copiedItem, setCopiedItem]           = useState<PlaylistItem | null>(null)
+  const [showBlockPicker, setShowBlockPicker] = useState(false)
+  const [nextCrossfadeActive, setNextCrossfadeActive] = useState(false)
+  const [stopAfterArmed, setStopAfterArmed] = useState(false)
+
+  // Reset Stop Next when playback stops
+  useEffect(() => {
+    if (!state.isSequencePlaying) setStopAfterArmed(false)
+  }, [state.isSequencePlaying])
 
   // ── Drag-and-drop state ───────────────────────────────────────────────────
   const [dragId, setDragId]     = useState<string | null>(null)
@@ -678,12 +718,12 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     const selItem = selectedItemId ? schedule.find(i => i.id === selectedItemId) : null
     const selGroupTime = selItem?.scheduledTime?.slice(0, 5)
     const targetGroup = selGroupTime ? groups.find(g => g.time === selGroupTime) : null
-    if (targetGroup) setAddItemGroup(targetGroup)
+    if (targetGroup) setAddGroupModal({ group: targetGroup, mode: 'picker' })
     else setShowBlockPicker(true)
   }
 
   const handleAddToGroup = (group: BlockGroup) => {
-    setAddItemGroup(group)
+    setAddGroupModal({ group, mode: 'picker' })
   }
 
   const playingItem   = schedule.find(i => i.status === 'playing')
@@ -694,7 +734,6 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const totalDuration = schedule.reduce((a, i) => a + (i.duration ?? 0), 0)
   const completedCount = schedule.filter(i => i.status === 'done' || i.status === 'skipped').length
   const errorCount = schedule.filter(i => i.status === 'error').length
-  const selectedItem = selectedItemId ? schedule.find(i => i.id === selectedItemId) : null
   const scheduleDateLabel = new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR')
   const nowHHMM = secsToHHMM(nowSeconds())
   const currentBlock = playingItem
@@ -785,12 +824,44 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
         </div>
 
         <div className="schedule-action-row">
-          <div className="schedule-selection-hint">
-            {selectedItem
-              ? <>Selecionado: <strong>{selectedItem.title}</strong></>
-              : 'Selecione um item para inserir abaixo dele ou use Adicionar item para escolher o bloco.'}
+          {/* ── Left: playback controls ── */}
+          <div className="schedule-playback-controls">
+            {isToday ? (
+              !state.isSequencePlaying ? (
+                <button
+                  className="day-schedule-btn play"
+                  onClick={startScheduleFromNow}
+                  disabled={!hasPending}
+                  title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
+                >
+                  <ListVideo size={15} /> {t.schedule.playSchedule}
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="day-schedule-btn"
+                    disabled={nextCrossfadeActive}
+                    onClick={async () => { setNextCrossfadeActive(true); await skipToNext(); setNextCrossfadeActive(false) }}
+                    title="Próxima faixa com crossfade de 3s"
+                  >
+                    <SkipForward size={13} /> {nextCrossfadeActive ? '3s…' : 'Next'}
+                  </button>
+                  <button
+                    className={`day-schedule-btn${stopAfterArmed ? ' stop-after-armed' : ''}`}
+                    onClick={() => { const v = !stopAfterArmed; setStopAfterArmed(v); setStopAfterCurrent(v) }}
+                    title={stopAfterArmed ? 'Stop Next armado — vai parar após o item atual terminar (clique para cancelar)' : 'Parar após o item atual terminar'}
+                  >
+                    <StopCircle size={13} /> {stopAfterArmed ? 'Stop Next ✓' : 'Stop Next'}
+                  </button>
+                  <button className="day-schedule-btn stop" onClick={stopPlayback}>
+                    <Square size={13} /> {t.playlist.stopPlayback}
+                  </button>
+                </>
+              )
+            ) : null}
           </div>
 
+          {/* ── Right: management tools ── */}
           <div className="day-schedule-controls">
             {schedule.length > 0 && (
               <button className="day-schedule-btn" onClick={handleCenterBlock} title="Rolar para o bloco da hora atual">
@@ -814,24 +885,6 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
             >
               <MonitorPlay size={13} /> Inputs vMix
             </button>
-            {isToday ? (
-              !state.isSequencePlaying ? (
-                <button
-                  className="day-schedule-btn play"
-                  onClick={startScheduleFromNow}
-                  disabled={!hasPending}
-                  title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
-                >
-                  <ListVideo size={15} /> {t.schedule.playSchedule}
-                </button>
-              ) : (
-                <button className="day-schedule-btn stop" onClick={stopPlayback}>
-                  <Square size={13} /> {t.playlist.stopPlayback}
-                </button>
-              )
-            ) : (
-              <span className="schedule-preview-note">Pré-visualização · play só para hoje</span>
-            )}
           </div>
         </div>
       </div>
@@ -868,7 +921,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
             <RefreshCw size={13} /> Atualizar
           </button>
 
-          {/* Play / Stop — always visible for today; preview text for other dates */}
+          {/* Play / Stop / Next — always visible for today; preview text for other dates */}
           {isToday ? (
             !state.isSequencePlaying ? (
               <button
@@ -880,9 +933,26 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                 <ListVideo size={15} /> {t.schedule.playSchedule}
               </button>
             ) : (
-              <button className="day-schedule-btn" onClick={stopPlayback} style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>
-                <Square size={13} /> {t.playlist.stopPlayback}
-              </button>
+              <>
+                <button
+                  className="day-schedule-btn"
+                  disabled={nextCrossfadeActive}
+                  onClick={async () => { setNextCrossfadeActive(true); await skipToNext(); setNextCrossfadeActive(false) }}
+                  title="Próxima faixa com crossfade de 3s"
+                >
+                  <SkipForward size={13} /> {nextCrossfadeActive ? '3s…' : 'Next'}
+                </button>
+                <button
+                  className={`day-schedule-btn${stopAfterArmed ? ' stop-after-armed' : ''}`}
+                  onClick={() => { const v = !stopAfterArmed; setStopAfterArmed(v); setStopAfterCurrent(v) }}
+                  title={stopAfterArmed ? 'Stop Next armado — vai parar após o item atual terminar (clique para cancelar)' : 'Parar após o item atual terminar'}
+                >
+                  <StopCircle size={13} /> {stopAfterArmed ? 'Stop Next ✓' : 'Stop Next'}
+                </button>
+                <button className="day-schedule-btn" onClick={stopPlayback} style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>
+                  <Square size={13} /> {t.playlist.stopPlayback}
+                </button>
+              </>
             )
           ) : (
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
@@ -966,8 +1036,9 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                     <CardIcon size={14} />
                     <span className="block-card-time">{group.time}</span>
                     <span className="block-card-name">{group.slot?.title ?? group.time}</span>
-                    {groupDur > 0 && <span className="block-card-meta">{formatDuration(groupDur)}</span>}
-                    <span className="block-card-status">{statusLabel}</span>
+                    <span className="block-card-status">
+                      {statusLabel}{groupDur > 0 ? ` · ${formatDuration(groupDur)}` : ''}
+                    </span>
                   </div>
 
                   {/* ── Items ── */}
@@ -1179,35 +1250,41 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
       )}
 
       {/* ── Add Item picker modal ── */}
-      {addItemGroup && (
+      {addGroupModal?.mode === 'picker' && (
         <AddItemModal
-          groupTime={addItemGroup.time}
-          onClose={() => setAddItemGroup(null)}
-          onFile={() => handleAddItemFile(addItemGroup)}
-          onVmixAction={() => setVmixActionForGroup(addItemGroup)}
-          onVmixInput={() => setVmixInputForGroup(addItemGroup)}
+          key={`picker-${addGroupModal.group.time}`}
+          groupTime={addGroupModal.group.time}
+          onClose={() => setAddGroupModal(null)}
+          onFile={() => {
+            handleAddItemFile(addGroupModal.group)
+            setAddGroupModal(null)
+          }}
+          onVmixAction={() => setAddGroupModal(current => current ? { ...current, mode: 'vmix_action' } : null)}
+          onVmixInput={() => setAddGroupModal(current => current ? { ...current, mode: 'vmix_input' } : null)}
         />
       )}
 
       {/* ── vMix Action modal (via Add Item) ── */}
-      {vmixActionForGroup && (
+      {addGroupModal?.mode === 'vmix_action' && (
         <VmixActionModal
-          onInsert={action => insertItemAtGroupEnd(vmixActionForGroup, {
+          key={`vmix-action-${addGroupModal.group.time}`}
+          onInsert={action => insertItemAtGroupEnd(addGroupModal.group, {
             title: action.function, type: 'vmix_action', status: 'pending',
-            scheduledTime: vmixActionForGroup.time + ':00', duration: 0, vmixAction: action,
+            scheduledTime: addGroupModal.group.time + ':00', duration: 0, vmixAction: action,
           })}
-          onClose={() => setVmixActionForGroup(null)}
+          onClose={() => setAddGroupModal(null)}
         />
       )}
 
       {/* ── vMix Input modal (via Add Item) ── */}
-      {vmixInputForGroup && (
+      {addGroupModal?.mode === 'vmix_input' && (
         <VmixInputModal
-          onInsert={(name, dur) => insertItemAtGroupEnd(vmixInputForGroup, {
+          key={`vmix-input-${addGroupModal.group.time}`}
+          onInsert={(name, dur) => insertItemAtGroupEnd(addGroupModal.group, {
             title: name, type: 'vinheta', status: 'pending',
-            scheduledTime: vmixInputForGroup.time + ':00', duration: dur, inputName: name,
+            scheduledTime: addGroupModal.group.time + ':00', duration: dur, inputName: name,
           })}
-          onClose={() => setVmixInputForGroup(null)}
+          onClose={() => setAddGroupModal(null)}
         />
       )}
 
@@ -1216,7 +1293,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
         <BlockPickerModal
           groups={groups}
           onClose={() => setShowBlockPicker(false)}
-          onPick={g => { setShowBlockPicker(false); setAddItemGroup(g) }}
+          onPick={g => { setShowBlockPicker(false); setAddGroupModal({ group: g, mode: 'picker' }) }}
         />
       )}
     </div>

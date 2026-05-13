@@ -61,6 +61,14 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.removeAllListeners('vmix-fast-status')
   },
 
+  // Browse for folder
+  browseFolder: () =>
+    ipcRenderer.invoke('browse-folder'),
+
+  // Scan music folder for media files
+  scanMusicFolder: (folderPath: string, includeSubfolders: boolean) =>
+    ipcRenderer.invoke('scan-music-folder', folderPath, includeSubfolders),
+
   // Open external URLs
   openExternal: (url: string) =>
     ipcRenderer.invoke('open-external', url),

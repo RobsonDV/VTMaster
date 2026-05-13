@@ -29,6 +29,14 @@ contextBridge.exposeInMainWorld('spotmaster', {
   browseVideoFile: () =>
     ipcRenderer.invoke('browse-video-file'),
 
+  // Browse for a folder
+  browseFolder: () =>
+    ipcRenderer.invoke('browse-folder'),
+
+  // Scan a folder for media files (AutoProg)
+  scanMusicFolder: (folderPath: string, includeSubfolders: boolean) =>
+    ipcRenderer.invoke('scan-music-folder', folderPath, includeSubfolders),
+
   // vMix integration
   vmixRequest: (params: Record<string, string>) =>
     ipcRenderer.invoke('vmix-request', params),

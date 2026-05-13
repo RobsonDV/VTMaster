@@ -5,6 +5,7 @@ import {
   FileBarChart,
   LayoutGrid,
   ListVideo,
+  Music2,
   Settings,
   Tv,
   Users,
@@ -27,11 +28,12 @@ import Button from './components/ui/Button'
 import Modal from './components/ui/Modal'
 import { Field } from './components/ui/Field'
 import type { PlaylistItem } from './types'
+import AutoProgPanel from './components/AutoProg/AutoProgPanel'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
-type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports'
-const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'log', 'reports']
+type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports' | 'autoprog'
+const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'log', 'reports', 'autoprog']
 
 function isPanel(value: string): value is Panel {
   return PANELS.includes(value as Panel)
@@ -107,6 +109,7 @@ export default function App() {
     { id: 'clients' as Panel,     label: t.nav.clients, icon: Users },
     { id: 'log' as Panel,         label: t.nav.log, icon: ClipboardList },
     { id: 'reports' as Panel,     label: t.nav.reports, icon: FileBarChart },
+    { id: 'autoprog' as Panel,    label: 'AutoProg', icon: Music2 },
   ]
 
   const handleSetPanel = (panel: Panel) => {
@@ -182,6 +185,7 @@ export default function App() {
           {activePanel === 'clients' && <ClientsPanel />}
           {activePanel === 'log' && <LogPanel />}
           {activePanel === 'reports' && <ReportsPanel />}
+          {activePanel === 'autoprog' && <AutoProgPanel />}
         </main>
       </div>
       <StatusBar />

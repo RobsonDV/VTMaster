@@ -205,18 +205,23 @@
   margin-top: 10px;
 }
 
-.schedule-selection-hint {
-  min-width: 180px;
-  color: var(--text-secondary);
-  font-size: 0.76rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.schedule-playback-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+  flex-shrink: 0;
 }
 
-.schedule-selection-hint strong {
-  color: var(--text-primary);
-  font-weight: 700;
+.day-schedule-btn.stop-after-armed {
+  border-color: #f59e0b;
+  color: #f59e0b;
+  animation: pulse-stop-armed 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-stop-armed {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
 }
 
 .schedule-preview-note {

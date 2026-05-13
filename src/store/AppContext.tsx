@@ -19,10 +19,40 @@ import type {
   SpotRotation,
   ProgramSlot,
   WeeklyProgramGrid,
+  MusicStyle,
+  MusicSequence,
+  AutoBlocoAssignment,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
 import { now, today } from '../utils/time'
+import { generateMusicBlock as generateMusicBlockEngine } from '../utils/autoprog'
+
+// ── Media helpers for eager duration reading in generatePlaylistFromGrid ─────
+const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'])
+const _AUD_EXTS = new Set(['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'])
+
+function _detectMediaType(fp: string): 'video' | 'audio' | 'image' {
+  const ext = fp.split('.').pop()?.toLowerCase() ?? ''
+  if (_IMG_EXTS.has(ext)) return 'image'
+  if (_AUD_EXTS.has(ext)) return 'audio'
+  return 'video'
+}
+
+function _readMediaDuration(fp: string, type: 'video' | 'audio'): Promise<number | null> {
+  return new Promise(resolve => {
+    const el = document.createElement(type === 'audio' ? 'audio' : 'video') as HTMLVideoElement
+    el.preload = 'metadata'
+    const t = setTimeout(() => { el.src = ''; resolve(null) }, 10_000)
+    el.onloadedmetadata = () => {
+      clearTimeout(t)
+      const d = el.duration; el.src = ''
+      resolve(isFinite(d) && d > 0 ? Math.round(d) : null)
+    }
+    el.onerror = () => { clearTimeout(t); el.src = ''; resolve(null) }
+    el.src = 'local-media:///' + fp.replace(/\\/g, '/')
+  })
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   vmixHost: 'localhost',
@@ -53,6 +83,9 @@ interface AppState {
   clientSpots: ClientSpot[]
   spotRotation: SpotRotation
   weeklyGrid: WeeklyProgramGrid
+  musicStyles: MusicStyle[]
+  musicSequences: MusicSequence[]
+  autoBlocoAssignments: AutoBlocoAssignment[]
 }
 
 const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
@@ -72,6 +105,9 @@ const initialState: AppState = {
   clientSpots: [],
   spotRotation: {},
   weeklyGrid: DEFAULT_WEEKLY_GRID,
+  musicStyles: [],
+  musicSequences: [],
+  autoBlocoAssignments: [],
 }
 
 type Action =
@@ -111,6 +147,14 @@ type Action =
   | { type: 'UPDATE_SCHEDULE_ITEM';   payload: { date: string; item: PlaylistItem } }
   | { type: 'DELETE_SCHEDULE_ITEM';   payload: { date: string; id: string } }
   | { type: 'REORDER_DATE_SCHEDULE';  payload: { date: string; items: PlaylistItem[] } }
+  | { type: 'ADD_MUSIC_STYLE';             payload: MusicStyle }
+  | { type: 'UPDATE_MUSIC_STYLE';          payload: MusicStyle }
+  | { type: 'DELETE_MUSIC_STYLE';          payload: string }
+  | { type: 'ADD_MUSIC_SEQUENCE';          payload: MusicSequence }
+  | { type: 'UPDATE_MUSIC_SEQUENCE';       payload: MusicSequence }
+  | { type: 'DELETE_MUSIC_SEQUENCE';       payload: string }
+  | { type: 'SET_AUTO_BLOCO_ASSIGNMENT';   payload: AutoBlocoAssignment }
+  | { type: 'DELETE_AUTO_BLOCO_ASSIGNMENT'; payload: string }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -232,6 +276,35 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'REORDER_DATE_SCHEDULE':
       return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: action.payload.items } }
+    case 'ADD_MUSIC_STYLE':
+      return { ...state, musicStyles: [...state.musicStyles, action.payload] }
+    case 'UPDATE_MUSIC_STYLE':
+      return { ...state, musicStyles: state.musicStyles.map(s => s.id === action.payload.id ? action.payload : s) }
+    case 'DELETE_MUSIC_STYLE':
+      return { ...state, musicStyles: state.musicStyles.filter(s => s.id !== action.payload) }
+    case 'ADD_MUSIC_SEQUENCE':
+      return { ...state, musicSequences: [...state.musicSequences, action.payload] }
+    case 'UPDATE_MUSIC_SEQUENCE':
+      return { ...state, musicSequences: state.musicSequences.map(s => s.id === action.payload.id ? action.payload : s) }
+    case 'DELETE_MUSIC_SEQUENCE':
+      return { ...state, musicSequences: state.musicSequences.filter(s => s.id !== action.payload) }
+    case 'SET_AUTO_BLOCO_ASSIGNMENT': {
+      const exists = state.autoBlocoAssignments.some(
+        a => a.programSlotId === action.payload.programSlotId && a.dayOfWeek === action.payload.dayOfWeek,
+      )
+      return {
+        ...state,
+        autoBlocoAssignments: exists
+          ? state.autoBlocoAssignments.map(a =>
+              a.programSlotId === action.payload.programSlotId && a.dayOfWeek === action.payload.dayOfWeek
+                ? action.payload
+                : a,
+            )
+          : [...state.autoBlocoAssignments, action.payload],
+      }
+    }
+    case 'DELETE_AUTO_BLOCO_ASSIGNMENT':
+      return { ...state, autoBlocoAssignments: state.autoBlocoAssignments.filter(a => a.id !== action.payload) }
     default:
       return state
   }
@@ -252,7 +325,9 @@ interface AppContextValue {
   stopPlayback: () => Promise<void>
   loadBlockIntoPlaylist: (block: CommercialBlock) => void
   disparo: () => void
-  generatePlaylistFromGrid: (targetDate?: string, merge?: boolean) => void
+  generatePlaylistFromGrid: (targetDate?: string, merge?: boolean) => Promise<void>
+  skipToNext: () => Promise<void>
+  setStopAfterCurrent: (v: boolean) => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -281,7 +356,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Tracks last fast-poll position per input — guards progress bar against regression on audio end
   const lastFastPosRef = useRef<Record<string, number>>({})
   // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
-  const preloadedInputRef = useRef<{ guid: string; filePath: string } | null>(null)
+  const preloadedInputRef = useRef<{ guid: string; filePath: string; alreadyOnAir?: boolean } | null>(null)
   // Tracks ALL GUIDs loaded by SpotMaster via AddInput during this session.
   // Used for full cleanup at end-of-sequence or stopPlayback — ensures no
   // ghost inputs accumulate in the vMix project. Permanent vMix inputs
@@ -298,6 +373,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // same JS event-loop tick. The second scheduler returns immediately if the
   // first hasn't finished yet, avoiding double writes to scheduleInterruptTimeRef.
   const schedulerFiringRef = useRef(false)
+  // High-water mark: runSequence never selects items with order < this value.
+  // Updated when a commercial fires automatically — pending musical items from
+  // the interrupted block stay 'pending' (visible in the timeline) but are bypassed.
+  // Reset to -1 on stopPlayback and natural sequence end.
+  const minOrderRef = useRef(-1)
+  // When true, runSequence breaks after the current item finishes (Stop Next button).
+  const stopAfterCurrentRef = useRef(false)
 
   // Tracks which queue (playlist or daySchedule) runSequence is reading from.
   // Changed by startSequence() and startSchedule() before invoking runSequence().
@@ -413,7 +495,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   //   2. Commercial blocks scheduled for today (already expanded into items)
   // Sorts everything by scheduledTime and replaces the entire playlist.
   // Marks commercial blocks as loaded so the scheduler won't duplicate them.
-  const generatePlaylistFromGrid = useCallback((targetDate?: string, merge = false) => {
+  const generatePlaylistFromGrid = useCallback(async (targetDate?: string, merge = false) => {
     const dateStr = targetDate ?? today()
     // Parse day-of-week from the target date (midday avoids DST edge cases)
     const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay()
@@ -431,16 +513,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const slot = sortedSlots[si]
       if (slot.type === 'bloco_comercial' || slot.type === 'bloco_musical') {
         if (slot.type === 'bloco_musical') {
-          // One empty placeholder slot — operator fills content in the Programação panel
-          programItems.push({
-            id: crypto.randomUUID(),
-            order: 0,
-            title: slot.title,
-            type: 'vinheta' as const,
-            status: 'pending' as const,
-            scheduledTime: slot.scheduledTime,
-            duration: 0,
-          })
+          // AutoProg: verifica se há sequência atribuída a este slot+dia
+          const { autoBlocoAssignments, musicSequences, musicStyles, playLog } = stateRef.current
+          const assignment = autoBlocoAssignments.find(
+            a => a.programSlotId === slot.id && a.dayOfWeek === dayOfWeek && !!a.sequenceId,
+          )
+          let musicItemsGenerated = false
+          if (assignment?.sequenceId && window.spotmaster?.scanMusicFolder) {
+            const sequence = musicSequences.find(s => s.id === assignment.sequenceId)
+            if (sequence) {
+              try {
+                const generated = await generateMusicBlockEngine({
+                  sequence,
+                  styles: musicStyles,
+                  playLog,
+                  date: dateStr,
+                  scanFolder: (p, subs) => window.spotmaster.scanMusicFolder(p, subs),
+                })
+                if (generated.length > 0) {
+                  generated.forEach(g => {
+                    programItems.push({
+                      id: crypto.randomUUID(),
+                      order: 0,
+                      title: g.title,
+                      type: 'vinheta' as const,
+                      status: 'pending' as const,
+                      scheduledTime: slot.scheduledTime,
+                      duration: 0,
+                      filePath: g.filePath,
+                      mediaType: 'audio' as const,
+                    })
+                  })
+                  musicItemsGenerated = true
+                }
+              } catch (e) {
+                console.error('[AutoProg] Erro ao gerar bloco musical:', e)
+              }
+            }
+          }
+          if (!musicItemsGenerated) {
+            // Sem automação ou sem arquivos: placeholder manual (operador preenche)
+            programItems.push({
+              id: crypto.randomUUID(),
+              order: 0,
+              title: slot.title,
+              type: 'vinheta' as const,
+              status: 'pending' as const,
+              scheduledTime: slot.scheduledTime,
+              duration: 0,
+            })
+          }
         } else {
           // Commercial block: expand linked CommercialBlock
           if (!slot.commercialBlockId) continue
@@ -530,12 +652,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Times that have fresh AutoProg music (bloco_musical slots with generated content)
+      const freshMusicTimes = new Set<string>()
+      for (const item of generated) {
+        if (!item.adBreakId && item.filePath) {
+          const hhmm = item.scheduledTime?.slice(0, 5)
+          if (hhmm) {
+            const isMusicSlot = sortedSlots.some(
+              s => s.type === 'bloco_musical' && s.scheduledTime?.slice(0, 5) === hhmm,
+            )
+            if (isMusicSlot) freshMusicTimes.add(hhmm)
+          }
+        }
+      }
+
       // Keep all non-commercial items + commercial items that have real content.
       // Placeholders (no filePath, no inputName, not a vmix_action) are ALWAYS
       // removed when fresh data is available — even if skipped or done — because
       // they are stubs, not actual aired content.
+      // bloco_musical placeholders are also removed when AutoProg generated new content.
       const keptExisting = existing.filter(item => {
-        if (!item.adBreakId) return true
+        if (!item.adBreakId) {
+          // Remove bloco_musical placeholder when AutoProg generated real content
+          const hhmm = item.scheduledTime?.slice(0, 5)
+          if (hhmm && freshMusicTimes.has(hhmm)) {
+            const hasContent = !!(item.filePath || item.inputName || item.type === 'vmix_action')
+            if (!hasContent) return false  // remove placeholder, replaced by AutoProg items
+          }
+          return true
+        }
         const hhmm = item.scheduledTime?.slice(0, 5)
         if (!hhmm || !freshCommercialTimes.has(hhmm)) return true
         // Pending items are always replaced by fresh generation
@@ -585,6 +730,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } else {
       // ── Replace mode: build fresh schedule from scratch ────────────────────
       finalItems = generated.map((item, idx) => ({ ...item, order: idx + 1 }))
+    }
+
+    // ── Eager batch-read file durations before dispatching ──────────────────
+    // Items with filePath but no duration get their real duration from the file
+    // now, so block headers display correct totals immediately.
+    const _needsDur = finalItems.filter(
+      i => i.filePath && (i.duration === 0 || i.duration == null),
+    )
+    if (_needsDur.length > 0) {
+      const _durMap = new Map<string, number>()
+      await Promise.allSettled(
+        _needsDur.map(async item => {
+          const mt = _detectMediaType(item.filePath!)
+          if (mt === 'image') return
+          const dur = await _readMediaDuration(item.filePath!, mt)
+          if (dur && dur > 0) _durMap.set(item.id, dur)
+        }),
+      )
+      if (_durMap.size > 0) {
+        finalItems = finalItems.map(i =>
+          _durMap.has(i.id) ? { ...i, duration: _durMap.get(i.id)! } : i,
+        )
+      }
     }
 
     dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: dateStr, items: finalItems } })
@@ -761,10 +929,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Otherwise fall back to loading now (same behaviour as before this feature).
         let guid: string | null = null
         const cached = preloadedInputRef.current
+        const cachedAlreadyOnAir = !!(cached?.alreadyOnAir)  // set by skipToNext
         if (cached?.filePath === item.filePath) {
           guid = cached.guid
           preloadedInputRef.current = null
-          console.log(`[SpotMaster] using preloaded input for "${item.title}"`)
+          console.log(`[SpotMaster] using preloaded input for "${item.title}"${cachedAlreadyOnAir ? ' (already on air via Next)' : ''}`)
         } else {
           if (cached) {
             // Stale preload (e.g. playlist was reordered) — discard safely
@@ -781,32 +950,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const isImg   = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
           const isAudio = ['mp3','wav','aac','m4a','flac','ogg','wma','opus','aiff','aif'].includes(ext)
 
-          if (!isImg && !isAudio) {
-            await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
-            await sleep(300)
-          }
-          await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: guid })
-          await sleep(100)
-          await window.spotmaster.vmixRequest({ Function: 'Cut' })
-          if (isAudio) {
-            await sleep(500)
-            await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
-            await sleep(200)
-          }
+          if (!cachedAlreadyOnAir) {
+            // Normal flow: load → play → cut
+            if (!isImg && !isAudio) {
+              await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
+              await sleep(300)
+            }
+            await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: guid })
+            await sleep(100)
+            await window.spotmaster.vmixRequest({ Function: 'Cut' })
+            if (isAudio) {
+              await sleep(500)
+              await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
+              await sleep(200)
+            }
 
-          // Remove the PREVIOUS input 5 s after the cut.
-          // Delayed so the previous audio finishes fading out; GUID-based so
-          // vMix renumbering never removes the wrong input.
-          const prevGuid = activeInputRef.current
-          if (prevGuid) {
-            setTimeout(async () => {
-              if (window.spotmaster) {
-                await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
-              }
-            }, 5000)
-          }
+            // Remove the PREVIOUS input 5 s after the cut.
+            // Delayed so the previous audio finishes fading out; GUID-based so
+            // vMix renumbering never removes the wrong input.
+            const prevGuid = activeInputRef.current
+            if (prevGuid) {
+              setTimeout(async () => {
+                if (window.spotmaster) {
+                  await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
+                }
+              }, 5000)
+            }
 
-          activeInputRef.current = guid
+            activeInputRef.current = guid
+          }
+          // When alreadyOnAir=true, skipToNext already handled Cut + activeInputRef
+
           onAirInput = guid
         } else {
           // File failed to load (not found or vMix rejected AddInput).
@@ -892,6 +1066,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const durM = tag[1].match(/\bduration="(\d+)"/i)
             if (keyM && keyM[1] === onAirInput && durM) {
               durationSec = parseInt(durM[1]) / 1000
+              // Persist the real duration so block headers always show total time
+              if (activeQueueRef.current === 'schedule' && durationSec > 0) {
+                const liveItem = getQueue().find(i => i.id === item.id)
+                if (liveItem) {
+                  dispatch({
+                    type: 'UPDATE_SCHEDULE_ITEM',
+                    payload: { date: today(), item: { ...liveItem, duration: durationSec } },
+                  })
+                }
+              }
               break
             }
           }
@@ -986,30 +1170,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return timeCmp !== 0 ? timeCmp : a.order - b.order
         })
 
-      // When a commercial block is due, skip pending items that come BEFORE
-      // it in the queue — playout always moves forward.
+      // When a scheduled item becomes due, advance the playback pointer:
+      // - Commercial block (adBreakId): advance the high-water mark so items from
+      //   the interrupted musical block are bypassed. They stay 'pending' visually
+      //   (operator can see what wasn't played) but the sequence moves forward.
+      // - Generic time-jump (e.g. autoPlay recovering from a long pause): mark
+      //   items before the due item as 'skipped' as before.
       if (scheduledDue.length > 0) {
-        const firstDueOrder = scheduledDue[0].order
-        const toSkip = pending.filter(i => i.order < firstDueOrder)
-        if (toSkip.length > 0) {
-          toSkip.forEach(i => updateQueueItem({ ...i, status: 'skipped' }))
-          await sleep(150)
-          continue
+        const firstDue = scheduledDue[0]
+        if (firstDue.adBreakId) {
+          // Commercial fires: advance high-water mark, do NOT mark anything skipped.
+          minOrderRef.current = Math.max(minOrderRef.current, firstDue.order)
+        } else {
+          const toSkip = pending.filter(i => i.order < firstDue.order)
+          if (toSkip.length > 0) {
+            toSkip.forEach(i => updateQueueItem({ ...i, status: 'skipped' }))
+            await sleep(150)
+            continue
+          }
         }
       }
 
-      // When the sequence was triggered/interrupted by the autoplay scheduler
-      // (scheduleInterruptTimeRef is non-empty), stop once all currently-due items
-      // have played — prevents greedily playing future-scheduled blocks ahead of time.
-      // Manual starts (scheduleInterruptTimeRef = '') run freely without this constraint.
+      // After a commercial interrupt, always continue with the next pending item —
+      // broadcast automation never stops mid-schedule. The sequence only stops when
+      // there are no more pending items (natural end), a Pause marker, or Stop button.
+      // Release the "due-items-only" constraint so the next block plays immediately.
       if (
         activeQueueRef.current === 'schedule' &&
         (autoPlay || autoplayComerciais) &&
         scheduledDue.length === 0 &&
         scheduleInterruptTimeRef.current !== ''
-      ) break
+      ) {
+        scheduleInterruptTimeRef.current = ''
+        // Don't break — fall through and pick the next pending item by order
+      }
 
-      const next = scheduledDue[0] ?? [...pending].sort((a, b) => a.order - b.order)[0]
+      // Apply high-water mark: only consider items at or above the mark.
+      // Items below the mark stay 'pending' in the UI but are not played.
+      const candidatePending = minOrderRef.current > -1
+        ? pending.filter(i => i.order >= minOrderRef.current)
+        : pending
+      const next = scheduledDue[0] ?? [...candidatePending].sort((a, b) => a.order - b.order)[0]
+      // Guard: all remaining pending items are in blocks the scheduler bypassed — end naturally.
+      if (!next) break
 
       // Pause marker — stop the sequence exactly like a natural end.
       // All vMix inputs are cleaned up and isSequencePlaying goes false.
@@ -1057,11 +1260,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         })
       }
 
+      // Stop Next: if armed, break after this item finishes (do not advance to next item).
+      if (stopAfterCurrentRef.current) {
+        stopAfterCurrentRef.current = false
+        break
+      }
+
       await sleep(200)
     }
 
     // Sequence fully ended — clean up
     scheduleInterruptTimeRef.current = ''
+    minOrderRef.current = -1
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
 
@@ -1278,6 +1488,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     abortRef.current = true
     scheduleInterruptRef.current = false
     scheduleInterruptTimeRef.current = ''
+    minOrderRef.current = -1
+    stopAfterCurrentRef.current = false
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
     if (window.spotmaster) {
@@ -1301,6 +1513,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .filter(i => i.status === 'playing')
       .forEach(i => updateQueueItem({ ...i, status: 'pending' }))
   }, [dispatch, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── skipToNext ───────────────────────────────────────────────────────────────
+  // Manual "Next" button: loads the next pending item into vMix Preview, lets
+  // the current media continue playing for 3 seconds, then cuts to it.
+  // Uses disparoInterruptRef so runSequence keeps going after the abort.
+  const skipToNext = useCallback(async () => {
+    if (!stateRef.current.isSequencePlaying) return
+    if (!window.spotmaster) return
+
+    const dateStr = today()
+    const schedule = stateRef.current.dateSchedules[dateStr] ?? []
+    const playingIdx = schedule.findIndex(i => i.status === 'playing')
+    const nextPending = schedule
+      .slice(playingIdx >= 0 ? playingIdx + 1 : 0)
+      .find(i => i.status === 'pending')
+
+    if (!nextPending?.filePath) {
+      // No next media item — just advance naturally
+      disparoInterruptRef.current = true
+      abortRef.current = true
+      return
+    }
+
+    const nextGuid = await loadNewInput(nextPending.filePath)
+    if (!nextGuid) {
+      disparoInterruptRef.current = true
+      abortRef.current = true
+      return
+    }
+
+    const ext = nextPending.filePath.split('.').pop()?.toLowerCase() ?? ''
+    const isImg   = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
+    const isAudio = ['mp3','wav','aac','m4a','flac','ogg','wma','opus','aiff','aif'].includes(ext)
+
+    // Start playing the new input in preview — current media stays on Program
+    if (!isImg && !isAudio) {
+      await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: nextGuid })
+    }
+
+    // 3-second crossfade window — current audio/video continues
+    await sleep(3000)
+
+    // Cut to new input
+    await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: nextGuid })
+    await sleep(100)
+    await window.spotmaster.vmixRequest({ Function: 'Cut' })
+    if (isAudio) {
+      await sleep(500)
+      await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: nextGuid })
+    }
+
+    // Remove previous input after 5s grace
+    const prevGuid = activeInputRef.current
+    if (prevGuid) {
+      setTimeout(async () => {
+        if (window.spotmaster) {
+          await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
+        }
+      }, 5000)
+    }
+
+    // Mark as already on air — playItem will skip load+cut
+    activeInputRef.current = nextGuid
+    preloadedInputRef.current = { guid: nextGuid, filePath: nextPending.filePath, alreadyOnAir: true }
+
+    // Interrupt current playItem wait loop; runSequence keeps running
+    disparoInterruptRef.current = true
+    abortRef.current = true
+  }, [loadNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── setStopAfterCurrent ─────────────────────────────────────────────────────
+  // Arms the "Stop Next" feature: runSequence will break after the current item
+  // finishes, instead of advancing to the next one. Passing false disarms it.
+  const setStopAfterCurrent = useCallback((v: boolean) => {
+    stopAfterCurrentRef.current = v
+  }, [])
 
   // ── disparo ─────────────────────────────────────────────────────────────────
   // Global trigger command: starts sequence if idle, or advances to next item
@@ -1522,7 +1810,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       try {
         const [settingsRaw, playlistRaw, clientsRaw, logRaw,
-               blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw] =
+               blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw,
+               musicStylesRaw, musicSequencesRaw, autoBlocoRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -1534,6 +1823,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('activePanel'),
             window.spotmaster.loadData('weeklyGrid'),
             window.spotmaster.loadData('dateSchedules'),
+            window.spotmaster.loadData('musicStyles'),
+            window.spotmaster.loadData('musicSequences'),
+            window.spotmaster.loadData('autoBlocoAssignments'),
           ])
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -1562,6 +1854,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             activePanel:      (typeof panelRaw === 'string' ? panelRaw : null) ?? 'playlist',
             weeklyGrid:       { ...DEFAULT_WEEKLY_GRID, ...((gridRaw as WeeklyProgramGrid) ?? {}) },
             dateSchedules:    (dateSchedulesRaw as Record<string, PlaylistItem[]>) ?? {},
+            musicStyles:          (musicStylesRaw as MusicStyle[])          ?? [],
+            musicSequences:       (musicSequencesRaw as MusicSequence[])    ?? [],
+            autoBlocoAssignments: (autoBlocoRaw as AutoBlocoAssignment[])   ?? [],
           },
         })
       } catch {
@@ -1641,6 +1936,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saveToStorage('dateSchedules', pruned)
   }, [state.dateSchedules, state.isLoading, saveToStorage])
 
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('musicStyles', state.musicStyles)
+  }, [state.musicStyles, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('musicSequences', state.musicSequences)
+  }, [state.musicSequences, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('autoBlocoAssignments', state.autoBlocoAssignments)
+  }, [state.autoBlocoAssignments, state.isLoading, saveToStorage])
+
   // ── Auto-load today's schedule on startup ───────────────────────────────────
   // If today's date has no schedule stored, generate from the weekly template.
   useEffect(() => {
@@ -1664,7 +1971,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent }}>
       {children}
     </AppContext.Provider>
   )

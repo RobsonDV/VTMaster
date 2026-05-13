@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **4.0.0** — Atualizado em **12/05/2026** com melhorias recentes de interface
+> Versão **5.0.0** — Atualizado em **12/05/2026** com Fase 12: Stop Next, correção de comercial e leitura eager de duração
 
 ---
 

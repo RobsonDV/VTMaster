@@ -1,4 +1,4 @@
-# VTMaster v4.0
+# VTMaster v5.0
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -26,7 +26,7 @@ Stack principal:
 
 - [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v4.0
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.0
 - [release/LEIA-ME.md](release/LEIA-ME.md): guia de uso para operador
 
 ## Requisitos

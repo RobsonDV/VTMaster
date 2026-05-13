@@ -2,7 +2,7 @@
 
 > Software de playout e grade de programação para emissoras de TV/Rádio
 > Stack: **Electron 41 + React 19 + TypeScript 6 + Vite 8**
-> Desenvolvido por **RobsonCostaDV** — Versão **4.0.0** — Atualizado: 12/05/2026 (inclui melhorias recentes de interface)
+> Desenvolvido por **RobsonCostaDV** — Versão **5.0.0** — Atualizado: 12/05/2026 (inclui Fase 12: Stop Next, correção de comercial e leitura eager de duração)
 
 ---
 

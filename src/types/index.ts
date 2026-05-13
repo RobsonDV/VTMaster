@@ -218,6 +218,47 @@ export interface PDFReportRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AutoProg — Programação Automática de Blocos Musicais
+// ─────────────────────────────────────────────────────────────────────────────
+export type ArtistParseRule = 'filename_dash' | 'filename_underscore' | 'subfolder' | 'none'
+
+/** Estilo musical — aponta para uma pasta de arquivos de áudio */
+export interface MusicStyle {
+  id: string
+  name: string
+  folderPath: string
+  includeSubfolders: boolean
+  artistParseRule: ArtistParseRule
+  cooldownDays: number    // não repetir o mesmo arquivo por X dias
+  color?: string          // cor hex para identificação visual
+}
+
+/** Item de uma sequência — estilo + quantidade por passagem */
+export interface MusicSequenceItem {
+  styleId: string
+  count: number
+}
+
+/** Sequência musical — define ordem e regras de um bloco musical automático */
+export interface MusicSequence {
+  id: string
+  name: string
+  items: MusicSequenceItem[]
+  noSameArtistWindow: number    // não repetir artista nas últimas N músicas (0 = desabilitado)
+  fallback: 'ignore_cooldown' | 'skip' | 'alert'
+  targetMode: 'count' | 'duration'
+  targetValue: number           // N músicas ou N segundos
+}
+
+/** Atribuição de uma sequência a um bloco musical específico de um dia da semana */
+export interface AutoBlocoAssignment {
+  id: string
+  programSlotId: string   // ProgramSlot.id com type === 'bloco_musical'
+  dayOfWeek: number       // 0=Dom … 6=Sáb
+  sequenceId: string | null  // null = sem automação (modo manual)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Electron bridge type (window.spotmaster)
 // ─────────────────────────────────────────────────────────────────────────────
 export interface SpotMasterAPI {
@@ -230,6 +271,8 @@ export interface SpotMasterAPI {
   importGrid: () => Promise<unknown>
   exportPDF: (filePath: string, buffer: number[]) => Promise<boolean>
   browseVideoFile: () => Promise<string | null>
+  browseFolder: () => Promise<string | null>
+  scanMusicFolder: (folderPath: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string; subfolder: string }>>
   vmixRequest: (params: Record<string, string>) => Promise<{ success: boolean; data?: string; error?: string }>
   vmixStartPolling: (host: string, port: number) => Promise<boolean>
   vmixStopPolling: () => Promise<boolean>

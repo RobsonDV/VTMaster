@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **12/05/2026** — Versão **4.0.0** — Fase 11 concluída + melhorias de interface (Fases 1 a 3 de UX)
+> Atualizado em **12/05/2026** — Versão **5.0.0** — Fases 1–11 + melhorias de interface (Fases 1–3 de UX) + Fase 12 (Stop Next, correção de comercial e leitura eager de duração)
 
 ---
 
@@ -967,6 +967,27 @@ O script de conversão:
 - [x] **Base compartilhada aplicada em telas operacionais**: `Toolbar`, `GradePanel` e `AdBreaksPanel` agora usam o design system inicial
 - [x] **Fluxo de adicionar item na Programação refinado**: `AddItemModal`, `BlockPickerModal` e modais auxiliares ganharam hierarquia visual e melhor leitura operacional
 
+### Fase 12 — v5.0.0 — Stop Next, Correção de Comercial e Duração Eager
+
+#### 12a. Botão "Stop Next"
+- Novo botão **Stop Next** na toolbar da Programação (ao lado de Next e Stop).
+- Quando ativado (estado _armado_): a sequência termina normalmente o item atual e para ao final — sem cortar o áudio/vídeo na metade.
+- Visual: borda e texto em âmbar com animação `pulse-stop-armed` enquanto armado; clique novamente cancela.
+- Nova ref `stopAfterCurrentRef` em `AppContext.tsx`. Nova função `setStopAfterCurrent(bool)` exposta via Context.
+- Ao parar a sequência por qualquer outro meio (Stop, fim natural), o flag é resetado automaticamente.
+
+#### 12b. Correção de continuidade após bloco comercial (minOrderRef)
+- Problema anterior: ao disparar um bloco comercial pelo scheduler, itens musicais de ordem inferior ao comercial eram marcados como `skipped`, impedindo a sequência de continuar após o comercial.
+- Solução: nova ref `minOrderRef` (high-water mark). Quando o scheduler dispara um comercial (`adBreakId`), **nenhum item musical é tocado ou pulado** — apenas o ponteiro avança para `max(order dos itens skipped do comercial)`.
+- Após o bloco comercial, a sequência retoma a partir do próximo item de maior ordem, nunca voltando a itens anteriores.
+- `minOrderRef` é resetado ao parar a sequência e ao iniciar do zero.
+
+#### 12c. Leitura eager de duração de arquivo na geração de grade
+- Problema anterior: `generatePlaylistFromGrid` criava todos os itens AutoProg com `duration = 0`. O cabeçalho do bloco (total de tempo) só aparecia correto depois que o `useEffect` lazy de `DaySchedulePanel` terminava de ler os arquivos — e nunca persistia.
+- Solução: funções auxiliares `_detectMediaType` e `_readMediaDuration` adicionadas como módulo em `AppContext.tsx`, usando o protocolo `local-media:///`.
+- `generatePlaylistFromGrid` agora faz `Promise.allSettled` em paralelo em todos os itens com `filePath` e `duration = 0` **antes** do `dispatch SET_DATE_SCHEDULE`.
+- Resultado: cabeçalho do bloco exibe total correto imediatamente na primeira exibição. `useEffect` de `DaySchedulePanel` permanece como fallback para itens adicionados manualmente.
+
 ### Pós-Fase 11 — Melhorias de Interface (12/05/2026)
 
 #### Interface 1 — Polimento rápido e coesão
@@ -990,6 +1011,15 @@ O script de conversão:
 - **Modais principais migrados**: Playlist, Configurações, Estrutura e edição rápida deixaram de depender de estilos isolados.
 - **Telas operacionais alinhadas**: Toolbar, Estrutura e Blocos Comerciais receberam a mesma base visual compartilhada.
 - **Adicionar item na Programação corrigido**: o fluxo voltou a usar modal centralizado e legível, com escolha clara entre arquivo de mídia, ação vMix e input vMix, além de seletor de bloco mais limpo.
+
+### ✅ Fase 12 — v5.0.0
+
+- [x] **Stop Next**: botão na toolbar da Programação — termina item atual e para; estado _armado_ com pulse âmbar; cancela com segundo clique ou stop manual
+- [x] **minOrderRef (high-water mark)**: ao disparar comercial, itens musicais anteriores NÃO são marcados como skipped — sequência avança para maior order dos itens do comercial e retoma a partir daí
+- [x] **Leitura eager de duração**: `generatePlaylistFromGrid` lê durações reais dos arquivos em paralelo (Promise.allSettled) antes do dispatch — cabeçalho do bloco já exibe total correto no primeiro render
+- [x] **`_detectMediaType` e `_readMediaDuration`** como funções de módulo em `AppContext.tsx` (usando `local-media:///`)
+- [x] **`setStopAfterCurrent`** exposta via Context e consumida por `DaySchedulePanel`
+- [x] **`stopAfterCurrentRef` e `minOrderRef`** resetados em `stopPlayback()` e no cleanup de `runSequence`
 
 ---
 
