@@ -2,12 +2,15 @@ import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortc
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, openSync, readSync, closeSync, statSync } from 'fs'
+import electronUpdater, { type UpdateInfo } from 'electron-updater'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 const isDev = process.env.NODE_ENV === 'development'
+const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR
+const { autoUpdater } = electronUpdater
 
 // Register custom scheme BEFORE app ready — allows renderer to load local media
 // files via local-media:///path without CORS/CSP restrictions
@@ -17,6 +20,18 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null
 let registeredTriggerKey: string | null = null
+let updateDownloaded = false
+
+type UpdateStatus = {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  version?: string
+  percent?: number
+  message?: string
+}
+
+function sendUpdateStatus(status: UpdateStatus): void {
+  mainWindow?.webContents.send('update-status', status)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data store (userData JSON files)
@@ -157,6 +172,87 @@ function readNativeMediaDuration(filePath: string): number | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Auto updater (GitHub Releases via electron-updater)
+// ─────────────────────────────────────────────────────────────────────────────
+function setupAutoUpdater(): void {
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('checking-for-update', () => {
+    sendUpdateStatus({ status: 'checking', message: 'Verificando atualizações...' })
+  })
+
+  autoUpdater.on('update-available', (info: UpdateInfo) => {
+    updateDownloaded = false
+    sendUpdateStatus({ status: 'available', version: info.version, message: `Baixando versão ${info.version}...` })
+  })
+
+  autoUpdater.on('update-not-available', (info: UpdateInfo) => {
+    sendUpdateStatus({ status: 'not-available', version: info.version, message: 'Você já está na versão mais recente.' })
+  })
+
+  autoUpdater.on('download-progress', progress => {
+    sendUpdateStatus({
+      status: 'downloading',
+      percent: Math.round(progress.percent),
+      message: `Baixando atualização: ${Math.round(progress.percent)}%`,
+    })
+  })
+
+  autoUpdater.on('update-downloaded', async (info: UpdateInfo) => {
+    updateDownloaded = true
+    sendUpdateStatus({ status: 'downloaded', version: info.version, message: `Versão ${info.version} pronta para instalar.` })
+    if (!mainWindow) return
+
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      buttons: ['Reiniciar agora', 'Depois'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Atualização pronta',
+      message: `VTMaster ${info.version} foi baixado.`,
+      detail: 'Reinicie o aplicativo para aplicar a atualização. A programação salva não será apagada.',
+    })
+
+    if (result.response === 0) autoUpdater.quitAndInstall()
+  })
+
+  autoUpdater.on('error', err => {
+    sendUpdateStatus({
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    })
+  })
+}
+
+async function checkForAppUpdates(manual = false): Promise<UpdateStatus> {
+  if (!app.isPackaged || isPortable) {
+    const status: UpdateStatus = {
+      status: 'not-available',
+      version: app.getVersion(),
+      message: isPortable
+        ? 'Atualizações automáticas exigem a versão instalada pelo Setup.'
+        : 'Atualizações automáticas só rodam no app instalado.',
+    }
+    if (manual) sendUpdateStatus(status)
+    return status
+  }
+
+  try {
+    sendUpdateStatus({ status: 'checking', message: 'Verificando atualizações...' })
+    await autoUpdater.checkForUpdates()
+    return { status: 'checking', message: 'Verificação iniciada.' }
+  } catch (err) {
+    const status: UpdateStatus = {
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    }
+    sendUpdateStatus(status)
+    return status
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Window creation
 // ─────────────────────────────────────────────────────────────────────────────
 function createWindow(): void {
@@ -193,6 +289,8 @@ function createWindow(): void {
 // App lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  setupAutoUpdater()
+
   // Serve local files through custom protocol so renderer can read video/audio
   // metadata even when the page is served from http://localhost:5173 (dev mode).
   //
@@ -214,6 +312,11 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  if (app.isPackaged && !isPortable) {
+    setTimeout(() => { void checkForAppUpdates() }, 12_000)
+    setInterval(() => { void checkForAppUpdates() }, 6 * 60 * 60 * 1000)
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -248,6 +351,16 @@ ipcMain.handle('read-media-duration', (_event, filePath: string) => {
 // Get app version
 ipcMain.handle('get-version', () => {
   return app.getVersion()
+})
+
+ipcMain.handle('check-for-updates', async () => {
+  return checkForAppUpdates(true)
+})
+
+ipcMain.handle('install-update', () => {
+  if (!updateDownloaded) return false
+  autoUpdater.quitAndInstall()
+  return true
 })
 
 // Open external URL

@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **14/05/2026** — Versão **5.1.4** — Fases 1–12 + melhorias de interface + correção AutoProg/durações
+> Atualizado em **14/05/2026** — Versão **5.1.5** — Fases 1–12 + melhorias de interface + correção AutoProg/durações + auto-update
 
 ---
 
@@ -1050,6 +1050,18 @@ O que foi corrigido:
 7. O botão "Ler Tempos" agora tem fallback nativo para MP4/MOV/M4V/M4A/3GP quando o Chromium não consegue obter metadata.
 
 Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato fora do fallback nativo e cujo metadata o Chromium não consiga ler, o app ainda pode não obter duração real antes do playback. Nesses casos, o item pode ficar sem tempo até o vMix reportar duração durante a execução.
+
+### Auto-update — v5.1.5 (14/05/2026)
+
+- Provider: GitHub Releases do repositório público `RobsonDV/VTMaster`.
+- Biblioteca: `electron-updater`, integrada no processo principal Electron.
+- O updater só executa no app instalado/empacotado (`app.isPackaged`).
+- Auto-update é suportado no instalador NSIS (`Setup.exe`); o `Portable.exe` não aplica update automático.
+- Checagem automática: alguns segundos após abrir o app e depois a cada 6 horas.
+- Checagem manual: **Configurações → Atualizações → Verificar atualização**.
+- Ao concluir o download, o app oferece **Reiniciar agora** ou **Depois**.
+- Arquivos necessários em cada release: `VTMaster-x.y.z-Setup.exe`, `VTMaster-x.y.z-Setup.exe.blockmap` e `latest.yml`.
+- Versões anteriores à 5.1.5 precisam instalar manualmente uma vez; só depois passam a receber updates automáticos.
 
 ---
 

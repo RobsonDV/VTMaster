@@ -1,9 +1,13 @@
 {
   "name": "vtmaster",
   "private": true,
-  "version": "5.1.4",
+  "version": "5.1.5",
   "description": "VTMaster - Software de Playout para TV/Rádio com integração vMix",
   "author": "RobsonCostaDV",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RobsonDV/VTMaster.git"
+  },
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -11,6 +15,7 @@
     "electron:compile": "tsc -p tsconfig.electron.json && node scripts/build-preload-cjs.cjs",
     "build": "tsc -b && vite build && npm run electron:compile",
     "build:dist": "npm run build && electron-builder",
+    "release:github": "npm run build && electron-builder --publish always",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -21,6 +26,12 @@
     "directories": {
       "output": "release",
       "buildResources": "build"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "RobsonDV",
+      "repo": "VTMaster",
+      "releaseType": "release"
     },
     "files": [
       "dist/**/*",
@@ -73,6 +84,7 @@
   "dependencies": {
     "axios": "^1.16.0",
     "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.3",
     "i18next": "^26.0.8",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",

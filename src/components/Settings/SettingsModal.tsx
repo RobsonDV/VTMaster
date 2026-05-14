@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useApp } from '../../store/AppContext'
-import type { AppSettings } from '../../types'
+import type { AppSettings, UpdateStatus } from '../../types'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import { Field, FieldRow, Section } from '../ui/Field'
@@ -54,9 +54,21 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [isCapturing, setIsCapturing] = useState(false)
   const [captureHint, setCaptureHint] = useState('')
   const [appVersion, setAppVersion] = useState('')
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
 
   useEffect(() => {
     window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    window.spotmaster?.onUpdateStatus(status => {
+      setUpdateStatus(status)
+      if (status.status !== 'checking' && status.status !== 'downloading') {
+        setCheckingUpdate(false)
+      }
+    })
+    return () => window.spotmaster?.removeUpdateStatusListener()
   }, [])
 
   const set = <K extends keyof AppSettings>(field: K, value: AppSettings[K]) =>
@@ -149,6 +161,24 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     setTestResult('...')
     const result = await window.spotmaster.vmixRequest({})
     setTestResult(result.success ? 'Conectado ao vMix.' : `Erro: ${result.error}`)
+  }
+
+  const checkUpdates = async () => {
+    setCheckingUpdate(true)
+    const status = await window.spotmaster?.checkForUpdates()
+    if (status) {
+      setUpdateStatus(status)
+      if (status.status !== 'checking' && status.status !== 'downloading') {
+        setCheckingUpdate(false)
+      }
+    } else {
+      setCheckingUpdate(false)
+      setUpdateStatus({ status: 'error', message: 'API de atualização não disponível.' })
+    }
+  }
+
+  const installUpdate = async () => {
+    await window.spotmaster?.installUpdate()
   }
 
   const defaultCaptureHint = [...navigator.getGamepads()].some(Boolean)
@@ -274,6 +304,34 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             </select>
           </Field>
         </FieldRow>
+      </Section>
+
+      <Section title="Atualizações">
+        <div className="settings-inline-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={checkUpdates}
+            disabled={checkingUpdate || updateStatus?.status === 'downloading'}
+          >
+            {checkingUpdate || updateStatus?.status === 'downloading'
+              ? (updateStatus?.message ?? 'Verificando...')
+              : 'Verificar atualização'}
+          </Button>
+
+          {updateStatus?.status === 'downloaded' && (
+            <Button variant="primary" size="sm" onClick={installUpdate}>
+              Reiniciar e instalar
+            </Button>
+          )}
+        </div>
+
+        {updateStatus?.message && (
+          <div className="ui-card-note">
+            {updateStatus.message}
+            {typeof updateStatus.percent === 'number' && ` (${updateStatus.percent}%)`}
+          </div>
+        )}
       </Section>
 
       <div className="settings-brand-footer">

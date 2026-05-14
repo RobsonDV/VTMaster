@@ -16,6 +16,16 @@ contextBridge.exposeInMainWorld('spotmaster', {
   // App info
   getVersion: () =>
     ipcRenderer.invoke('get-version'),
+  checkForUpdates: () =>
+    ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () =>
+    ipcRenderer.invoke('install-update'),
+  onUpdateStatus: (callback: (status: unknown) => void) => {
+    ipcRenderer.on('update-status', (_event, status) => callback(status))
+  },
+  removeUpdateStatusListener: () => {
+    ipcRenderer.removeAllListeners('update-status')
+  },
 
   // File operations
   exportPlaylist: (data: unknown) =>

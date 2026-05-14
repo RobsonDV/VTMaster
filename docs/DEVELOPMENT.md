@@ -2,7 +2,7 @@
 
 > Software de playout e grade de programação para emissoras de TV/Rádio
 > Stack: **Electron 41 + React 19 + TypeScript 6 + Vite 8**
-> Desenvolvido por **RobsonCostaDV** — Versão **5.1.4** — Atualizado: 14/05/2026 (inclui AutoProg por duração real, cache de duração e leitura em lote com concorrência limitada)
+> Desenvolvido por **RobsonCostaDV** — Versão **5.1.5** — Atualizado: 14/05/2026 (inclui auto-update via GitHub Releases)
 
 ---
 
@@ -158,7 +158,27 @@ npm run electron:compile
 # Empacotamento
 npm run build:dist
 # = npm run build + electron-builder → release/
+
+# Publicar release no GitHub (exige GH_TOKEN com permissão de releases)
+npm run release:github
+# = npm run build + electron-builder --publish always
 ```
+
+### Atualização automática
+
+O VTMaster usa `electron-updater` com provider GitHub configurado em `package.json` (`RobsonDV/VTMaster`).
+
+Fluxo operacional:
+- O auto-update só roda no app instalado/empacotado (`app.isPackaged`), nunca no `npm run dev`.
+- O auto-update é voltado para a versão instalada pelo `Setup.exe`; o `Portable.exe` informa que é necessário usar a versão instalada.
+- Ao abrir o app instalado, o main process verifica atualização após alguns segundos e repete a cada 6 horas.
+- O operador também pode ir em **Configurações → Atualizações → Verificar atualização**.
+- Quando uma versão nova é baixada, o app pergunta se deve reiniciar agora ou depois.
+- Para uma release ser detectada, publique uma GitHub Release sem marcar como draft/pre-release e anexe `VTMaster-x.y.z-Setup.exe`, `VTMaster-x.y.z-Setup.exe.blockmap` e `latest.yml`.
+
+Primeira instalação com updater:
+- Versões anteriores à 5.1.5 não sabem se atualizar sozinhas.
+- O usuário precisa instalar manualmente a primeira versão com updater; depois disso, novas releases podem chegar automaticamente.
 
 ### tsconfig.electron.json
 

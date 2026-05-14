@@ -269,11 +269,22 @@ export interface AutoBlocoAssignment {
 // ─────────────────────────────────────────────────────────────────────────────
 // Electron bridge type (window.spotmaster)
 // ─────────────────────────────────────────────────────────────────────────────
+export interface UpdateStatus {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  version?: string
+  percent?: number
+  message?: string
+}
+
 export interface SpotMasterAPI {
   saveData: (key: string, data: unknown) => Promise<void>
   loadData: (key: string) => Promise<unknown>
   readMediaDuration: (filePath: string) => Promise<number | null>
   getVersion: () => Promise<string>
+  checkForUpdates: () => Promise<UpdateStatus>
+  installUpdate: () => Promise<boolean>
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) => void
+  removeUpdateStatusListener: () => void
   exportPlaylist: (data: unknown) => Promise<string | null>
   importPlaylist: () => Promise<unknown>
   exportGrid: (data: unknown) => Promise<string | null>
