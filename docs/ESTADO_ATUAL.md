@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **12/05/2026** — Versão **5.0.0** — Fases 1–11 + melhorias de interface (Fases 1–3 de UX) + Fase 12 (Stop Next, correção de comercial e leitura eager de duração)
+> Atualizado em **14/05/2026** — Versão **5.1.4** — Fases 1–12 + melhorias de interface + correção AutoProg/durações
 
 ---
 
@@ -209,8 +209,10 @@ Novo tipo `vmix_action` na playlist, menu de contexto completo (inserir ação/i
 
 ### Fase 9 — Correções, Ponto de Pausa, Export/Import de Grade (v3.1.0)
 
-#### 9a. Blocos musicais: 1 slot placeholder (não mais 10–20)
-`generatePlaylistFromGrid` agora cria **exatamente 1 slot vazio** por bloco musical (em vez do cálculo por duração que criava 10–20 slots). O operador preenche manualmente.
+#### 9a. Blocos musicais: fallback manual de 1 placeholder
+Historicamente, `generatePlaylistFromGrid` passou a criar **exatamente 1 slot vazio** por bloco musical quando não havia automação configurada, em vez do cálculo antigo por duração que criava 10–20 slots. Esse comportamento continua como fallback.
+
+Estado atual: se o bloco musical tiver AutoProg atribuída, o app tenta gerar músicas reais via `generateMusicBlockEngine`; se não houver atribuição, sequência, arquivos ou resultado, cai no placeholder manual.
 
 #### 9b. Merge ("Atualizar") sincroniza corretamente blocos comerciais
 Nova lógica distingue itens com e sem conteúdo real:
@@ -431,7 +433,11 @@ while (true):
 | `programa` | Vídeo/câmera/vinheta | Na **Estrutura** — arquivo ou input vMix |
 
 ### Comportamento de slots musicais gerados
-Cada `bloco_musical` gera **exatamente 1 slot vazio** na programação (placeholder). O operador adiciona músicas manualmente via [📁] ou [+ Adicionar música]. Não há mais cálculo de quantidade por duração.
+Cada `bloco_musical` pode seguir dois caminhos:
+- **Com AutoProg atribuída**: gera uma lista de músicas com `filePath`, `duration = 0` inicialmente, e depois tenta ler as durações reais.
+- **Sem AutoProg ou sem resultado**: gera **1 slot vazio** na programação (placeholder). O operador adiciona músicas manualmente via [📁] ou [+ Adicionar música].
+
+Atenção: a UI da AutoProg oferece objetivo por "Duração em minutos" e o motor agora soma durações conhecidas/cacheadas para parar no alvo. Ver a seção "Correção atual — AutoProg e tempos".
 
 ### Export / Import
 Botões **Exportar** e **Importar** na aba Estrutura:
@@ -984,9 +990,16 @@ O script de conversão:
 
 #### 12c. Leitura eager de duração de arquivo na geração de grade
 - Problema anterior: `generatePlaylistFromGrid` criava todos os itens AutoProg com `duration = 0`. O cabeçalho do bloco (total de tempo) só aparecia correto depois que o `useEffect` lazy de `DaySchedulePanel` terminava de ler os arquivos — e nunca persistia.
-- Solução: funções auxiliares `_detectMediaType` e `_readMediaDuration` adicionadas como módulo em `AppContext.tsx`, usando o protocolo `local-media:///`.
-- `generatePlaylistFromGrid` agora faz `Promise.allSettled` em paralelo em todos os itens com `filePath` e `duration = 0` **antes** do `dispatch SET_DATE_SCHEDULE`.
-- Resultado: cabeçalho do bloco exibe total correto imediatamente na primeira exibição. `useEffect` de `DaySchedulePanel` permanece como fallback para itens adicionados manualmente.
+- Solução atual: leitura centralizada em `src/utils/mediaDuration.ts`, usando o protocolo `local-media:///`.
+- `readMediaDurationBatch` lê em lote com concorrência limitada, evitando criar dezenas de elementos `<video>/<audio>` simultâneos.
+- `generatePlaylistFromGrid` chama o batch com `{ concurrency: 4, timeoutMs: 15_000 }` antes do `dispatch SET_DATE_SCHEDULE`.
+- `DaySchedulePanel` mantém fallback lazy com pool limitado para itens que ainda ficaram sem duração.
+- O botão manual "Ler Tempos" usa `{ concurrency: 2, timeoutMs: 20_000 }`.
+- Durações lidas são persistidas em `mediaDurationCache` por `filePath` normalizado.
+- Quando o metadata do Chromium falha, expira ou retorna 0, `src/utils/mediaDuration.ts` aciona o fallback nativo `window.spotmaster.readMediaDuration(filePath)`.
+- O fallback nativo fica em `electron/main.ts` e lê MP4/MOV/M4V/M4A/3GP pelo contêiner ISO BMFF (`mvhd`). Isso cobre arquivos que existem no disco mas não entregam duração via `<video>/<audio>`.
+- Observação importante: a documentação antiga citava `Promise.allSettled`; isso **não é mais o fluxo atual** no código.
+- Resultado esperado: cabeçalho do bloco exibe total correto quando a leitura termina. Se muitos itens forem gerados ou arquivos demorarem no metadata, a geração pode parecer lenta porque ainda aguarda a leitura antes do dispatch.
 
 ### Pós-Fase 11 — Melhorias de Interface (12/05/2026)
 
@@ -1016,10 +1029,27 @@ O script de conversão:
 
 - [x] **Stop Next**: botão na toolbar da Programação — termina item atual e para; estado _armado_ com pulse âmbar; cancela com segundo clique ou stop manual
 - [x] **minOrderRef (high-water mark)**: ao disparar comercial, itens musicais anteriores NÃO são marcados como skipped — sequência avança para maior order dos itens do comercial e retoma a partir daí
-- [x] **Leitura eager de duração**: `generatePlaylistFromGrid` lê durações reais dos arquivos em paralelo (Promise.allSettled) antes do dispatch — cabeçalho do bloco já exibe total correto no primeiro render
-- [x] **`_detectMediaType` e `_readMediaDuration`** como funções de módulo em `AppContext.tsx` (usando `local-media:///`)
+- [x] **Leitura eager de duração**: `generatePlaylistFromGrid` lê durações reais dos arquivos via `readMediaDurationBatch` com pool limitado antes do dispatch
+- [x] **`readMediaDuration`, `readMediaDurationBatch`, `detectMediaType` e `toLocalMediaUrl`** centralizados em `src/utils/mediaDuration.ts`
+- [x] **`mediaDurationCache` persistido**: cache por `filePath` normalizado para não reler metadata em toda geração
+- [x] **AutoProg por duração real**: `targetMode:'duration'` usa `getDuration(filePath)` e para ao atingir `targetValue * 60`
 - [x] **`setStopAfterCurrent`** exposta via Context e consumida por `DaySchedulePanel`
 - [x] **`stopAfterCurrentRef` e `minOrderRef`** resetados em `stopPlayback()` e no cleanup de `runSequence`
+
+### Correção atual — AutoProg e tempos (14/05/2026)
+
+O problema antigo de `Promise.allSettled` disparando todas as leituras em paralelo **não existe mais no código fonte atual**. A leitura de duração está limitada por pool em `readMediaDurationBatch`.
+
+O que foi corrigido:
+1. `generateMusicBlockEngine` recebeu `getDuration(filePath)`.
+2. `targetMode:'duration'` agora soma duração conhecida e para ao atingir `targetValue * 60`.
+3. `generatePlaylistFromGrid` passa uma função que consulta `mediaDurationCache` e, se necessário, lê metadata com `readMediaDuration`.
+4. Leituras novas alimentam `mediaDurationCache`, salvo via `saveData('mediaDurationCache')`.
+5. O fallback do `DaySchedulePanel` e o botão "Ler Tempos" também atualizam o cache.
+6. O merge "Atualizar" não retorna mais antes de tentar completar tempos faltantes.
+7. O botão "Ler Tempos" agora tem fallback nativo para MP4/MOV/M4V/M4A/3GP quando o Chromium não consegue obter metadata.
+
+Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato fora do fallback nativo e cujo metadata o Chromium não consiga ler, o app ainda pode não obter duração real antes do playback. Nesses casos, o item pode ficar sem tempo até o vMix reportar duração durante a execução.
 
 ---
 

@@ -14,6 +14,7 @@ export interface GeneratedMusicItem {
   title: string       // nome do arquivo sem extensão
   artist: string      // extraído pela regra artistParseRule
   styleId: string
+  duration?: number   // duração real em segundos, quando conhecida
 }
 
 /** Extrai o nome do artista de um arquivo com base na regra configurada */
@@ -53,6 +54,7 @@ interface GenerateArgs {
   playLog: PlayLog[]
   date: string  // YYYY-MM-DD — data alvo para verificação de cooldown
   scanFolder: (path: string, includeSubfolders: boolean) => Promise<ScannedFile[]>
+  getDuration?: (filePath: string) => Promise<number | null | undefined> | number | null | undefined
 }
 
 /**
@@ -65,7 +67,7 @@ interface GenerateArgs {
  * - Fallback configurável quando todos os arquivos estão em cooldown
  */
 export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedMusicItem[]> {
-  const { sequence, styles, playLog, date, scanFolder } = args
+  const { sequence, styles, playLog, date, scanFolder, getDuration } = args
   const styleMap = new Map(styles.map(s => [s.id, s]))
 
   // Mapa: título → data mais recente em que foi tocado
@@ -83,7 +85,7 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
     const style = styleMap.get(seqItem.styleId)
     if (!style) continue
 
-    let files: ScannedFile[] = []
+    let files: ScannedFile[]
     try {
       files = await scanFolder(style.folderPath, style.includeSubfolders)
     } catch {
@@ -115,12 +117,23 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
   const usedPaths = new Set<string>()
   const usedArtistsWindow: string[] = []
 
-  const targetCount = sequence.targetMode === 'count' ? sequence.targetValue : 9999
+  const countMode = sequence.targetMode === 'count'
+  const targetCount = countMode ? Math.max(1, sequence.targetValue) : Number.POSITIVE_INFINITY
+  const targetDurationSeconds = countMode ? 0 : Math.max(1, sequence.targetValue) * 60
+  const totalCandidates = [...styleCandidates.values()].reduce((acc, pool) => acc + pool.length, 0)
+  // Usado apenas para impedir loop infinito quando filtros/cooldown deixam pouca opção.
+  const maxAttempts = (countMode ? targetCount : Math.max(totalCandidates, expandedSeq.length)) * 5 + 20
+  const fallbackUnknownDuration = 180
+  let totalDuration = 0
   let seqIdx = 0
   let totalAttempts = 0
-  const maxAttempts = targetCount * 5 + 20
 
-  while (result.length < targetCount && totalAttempts < maxAttempts) {
+  while (
+    result.length < targetCount &&
+    (countMode || totalDuration < targetDurationSeconds) &&
+    usedPaths.size < totalCandidates &&
+    totalAttempts < maxAttempts
+  ) {
     totalAttempts++
     const styleId = expandedSeq[seqIdx % expandedSeq.length]
     seqIdx++
@@ -179,11 +192,25 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
       }
     }
 
+    let realDuration: number | undefined
+    if (!countMode && getDuration) {
+      try {
+        const dur = await getDuration(chosen.file.filePath)
+        if (typeof dur === 'number' && isFinite(dur) && dur > 0) {
+          realDuration = Math.round(dur)
+        }
+      } catch {
+        realDuration = undefined
+      }
+    }
+    if (!countMode) totalDuration += realDuration ?? fallbackUnknownDuration
+
     result.push({
       filePath: chosen.file.filePath,
       title: chosen.noExt,
       artist: chosen.artist,
       styleId,
+      ...(realDuration ? { duration: realDuration } : {}),
     })
   }
 

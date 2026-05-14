@@ -48,6 +48,14 @@ export interface PlaylistItem {
   notes?: string
   adBreakId?: string        // if part of an ad break
   vmixAction?: VmixActionItem  // present only when type === 'vmix_action'
+  manuallyAdded?: boolean   // true quando o operador adicionou via UI (não veio da grade)
+}
+
+/** Registro de uma deleção intencional pelo operador na Programação do Dia.
+ *  Usado para impedir que o regenerador da grade re-adicione o item no merge. */
+export interface DeletedScheduleSlot {
+  time: string        // HH:MM (apenas horas:minutos, suficiente para casar com slot da grade)
+  signature: string   // identifica o item: `${type}|${normalizedTitle}` ou `commercial-block:${adBreakId}` etc.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,7 +255,7 @@ export interface MusicSequence {
   noSameArtistWindow: number    // não repetir artista nas últimas N músicas (0 = desabilitado)
   fallback: 'ignore_cooldown' | 'skip' | 'alert'
   targetMode: 'count' | 'duration'
-  targetValue: number           // N músicas ou N segundos
+  targetValue: number           // N músicas ou N minutos
 }
 
 /** Atribuição de uma sequência a um bloco musical específico de um dia da semana */
@@ -264,6 +272,7 @@ export interface AutoBlocoAssignment {
 export interface SpotMasterAPI {
   saveData: (key: string, data: unknown) => Promise<void>
   loadData: (key: string) => Promise<unknown>
+  readMediaDuration: (filePath: string) => Promise<number | null>
   getVersion: () => Promise<string>
   exportPlaylist: (data: unknown) => Promise<string | null>
   importPlaylist: () => Promise<unknown>

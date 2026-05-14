@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, Fragment } from 'react'
+import { useState, useEffect, useRef, useCallback, memo, Fragment } from 'react'
 import { Play, ListVideo, Square, Edit2, Trash2, CheckCircle, SkipForward, ChevronUp, ChevronDown, FileVideo, Zap } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
+import { usePlaybackProgress } from '../../store/playbackProgress'
 import type { PlaylistItem, PlayLog, VmixInput, SpotType } from '../../types'
 import { formatDuration, formatTime, now } from '../../utils/time'
 import { spotTypeForVmix } from './VmixInputPanel'
@@ -13,6 +14,181 @@ interface PlaylistTableProps {
   onInsertVmixInput?: (afterOrder: number) => void
   onEditSchedule?: (item: PlaylistItem) => void
 }
+
+// Célula de "tempo restante" do item tocando — consome progress isoladamente,
+// para que linhas não-tocando não re-renderizem a cada tick de 500 ms.
+function PlayingDurationCell({ duration }: { duration: number }) {
+  const progress = usePlaybackProgress()
+  if (!progress || progress.duration <= 0) return <>{formatDuration(duration)}</>
+  const remaining = Math.max(0, Math.round((progress.duration - progress.position) / 1000))
+  return (
+    <span className="time-remaining" title={formatDuration(duration)}>
+      −{formatDuration(remaining)}
+    </span>
+  )
+}
+
+// Linha de barra de progresso — consome progress isoladamente.
+function PlayingProgressRow({ duration }: { duration: number }) {
+  const progress = usePlaybackProgress()
+  const hasReal = progress && progress.duration > 0
+  return (
+    <tr className="progress-bar-row">
+      <td colSpan={10} className="progress-bar-cell">
+        {hasReal ? (
+          <div className="progress-track">
+            <div
+              className="progress-fill"
+              style={{ width: `${Math.min(100, (progress!.position / progress!.duration) * 100)}%` }}
+            />
+            <span className="progress-label">
+              {formatDuration(Math.round(progress!.position / 1000))}
+              {' / '}
+              {formatDuration(Math.round(progress!.duration / 1000))}
+            </span>
+          </div>
+        ) : (
+          <div className="progress-track">
+            <div className="progress-fill progress-fill-anim" style={{ animationDuration: `${duration}s` }} />
+            <span className="progress-label">{formatDuration(duration)}</span>
+          </div>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+interface PlaylistRowProps {
+  item: PlaylistItem
+  index: number
+  isLast: boolean
+  isSelected: boolean
+  dragInsertAbove: boolean
+  endTime: string | null | undefined
+  t: ReturnType<typeof useApp>['t']
+  onSelect: (id: string) => void
+  onContextMenu: (e: React.MouseEvent, item: PlaylistItem, index: number) => void
+  onRowDragOver: (e: React.DragEvent, index: number) => void
+  onDrop: (e: React.DragEvent, atIndex: number) => void
+  onDragLeave: (e: React.DragEvent) => void
+  onMoveUp: (index: number) => void
+  onMoveDown: (index: number) => void
+  onPlay: (item: PlaylistItem) => void
+  onMarkDone: (item: PlaylistItem) => void
+  onSkip: (item: PlaylistItem) => void
+  onEdit: (item: PlaylistItem) => void
+  onDelete: (id: string) => void
+}
+
+const PlaylistRow = memo(function PlaylistRow({
+  item, index, isLast, isSelected, dragInsertAbove, endTime, t,
+  onSelect, onContextMenu, onRowDragOver, onDrop, onDragLeave,
+  onMoveUp, onMoveDown, onPlay, onMarkDone, onSkip, onEdit, onDelete,
+}: PlaylistRowProps) {
+  const isAwaitingTrigger = !!item.adBreakId && item.status === 'pending'
+  const isPlaying = item.status === 'playing'
+  const cls = `playlist-row ${isSelected ? 'selected' : ''} row-${item.status}${dragInsertAbove ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}${item.adBreakId ? ' row-commercial' : ''}${item.type === 'programa' && !item.adBreakId ? ' row-programa' : ''}`
+  return (
+    <Fragment>
+      <tr
+        className={cls}
+        onClick={() => onSelect(item.id)}
+        onContextMenu={(e) => onContextMenu(e, item, index)}
+        onDragOver={(e) => onRowDragOver(e, index)}
+        onDrop={(e) => onDrop(e, index)}
+        onDragLeave={onDragLeave}
+      >
+        <td className="cell-order">
+          <div className="order-group">
+            <span className="order-num">{item.order}</span>
+            <div className="order-btns">
+              <button onClick={(e) => { e.stopPropagation(); onMoveUp(index) }} disabled={index === 0}><ChevronUp size={10} /></button>
+              <button onClick={(e) => { e.stopPropagation(); onMoveDown(index) }} disabled={isLast}><ChevronDown size={10} /></button>
+            </div>
+          </div>
+        </td>
+
+        <td className="cell-time">{item.scheduledTime ?? '—'}</td>
+
+        <td className="cell-title">
+          <div className="title-cell">
+            {item.type === 'vmix_action'
+              ? <Zap size={12} className="file-icon" style={{ color: '#a78bfa' }} />
+              : item.filePath && <FileVideo size={12} className="file-icon" />
+            }
+            <span className="item-title">{item.title}</span>
+          </div>
+          {item.vmixAction && (
+            <span className="item-notes" style={{ fontFamily: 'monospace', fontSize: '0.68rem' }}>
+              {item.vmixAction.function}
+              {item.vmixAction.input ? ` → ${item.vmixAction.input}` : ''}
+              {item.vmixAction.value ? ` (${item.vmixAction.value})` : ''}
+            </span>
+          )}
+          {!item.vmixAction && item.notes && <span className="item-notes">{item.notes}</span>}
+        </td>
+
+        <td className="cell-client">{item.clientName ?? '—'}</td>
+
+        <td>
+          <span className={`type-badge type-${item.type}`}>{t.types[item.type]}</span>
+        </td>
+
+        <td className="cell-duration">
+          {isPlaying ? <PlayingDurationCell duration={item.duration} /> : formatDuration(item.duration)}
+        </td>
+
+        <td className="cell-end">{endTime ?? '—'}</td>
+
+        <td className="cell-input">
+          {item.filePath
+            ? <span className="input-auto-tag" title={item.filePath}>📁 Auto</span>
+            : (item.inputName ?? '—')}
+        </td>
+
+        <td>
+          {isAwaitingTrigger ? (
+            <span className="status-badge status-awaiting-trigger" title={t.adBreaks.awaitingTrigger}>
+              ⚡ {t.adBreaks.awaitingTrigger}
+            </span>
+          ) : (
+            <span className={`status-badge ${STATUS_CLASS[item.status]}`}>
+              {t.statuses[item.status]}
+            </span>
+          )}
+        </td>
+
+        <td className="cell-actions">
+          <div className="actions-group">
+            {item.status === 'pending' && (
+              <button className="action-btn btn-play" onClick={(e) => { e.stopPropagation(); onPlay(item) }} title={t.playlist.playItem}>
+                <Play size={13} />
+              </button>
+            )}
+            {isPlaying && (
+              <button className="action-btn btn-done" onClick={(e) => { e.stopPropagation(); onMarkDone(item) }} title={t.playlist.markDone}>
+                <CheckCircle size={13} />
+              </button>
+            )}
+            {(item.status === 'pending' || isPlaying) && (
+              <button className="action-btn btn-skip" onClick={(e) => { e.stopPropagation(); onSkip(item) }} title={t.playlist.markSkipped}>
+                <SkipForward size={13} />
+              </button>
+            )}
+            <button className="action-btn btn-edit" onClick={(e) => { e.stopPropagation(); onEdit(item) }} title={t.playlist.editItem}>
+              <Edit2 size={13} />
+            </button>
+            <button className="action-btn btn-delete" onClick={(e) => { e.stopPropagation(); onDelete(item.id) }} title={t.playlist.deleteItem}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </td>
+      </tr>
+
+      {isPlaying && <PlayingProgressRow duration={item.duration} />}
+    </Fragment>
+  )
+})
 
 const STATUS_CLASS: Record<string, string> = {
   pending: 'status-pending',
@@ -65,7 +241,6 @@ function calcEndTimes(
 export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsertVmixInput, onEditSchedule }: PlaylistTableProps) {
   const { state, dispatch, t, playItem, playSingleItem, startSequence, stopPlayback, saveToStorage } = useApp()
   const { playlist, settings } = state
-  const { activeItemProgress } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -95,15 +270,15 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
   const hasPending = playlist.some(i => i.status === 'pending')
 
   // ── Play single item ──
-  const handlePlay = (item: PlaylistItem) => playItem(item)
+  const handlePlay = useCallback((item: PlaylistItem) => { playItem(item) }, [playItem])
 
   // ── Mark as done ──
-  const handleMarkDone = (item: PlaylistItem) => {
+  const handleMarkDone = useCallback((item: PlaylistItem) => {
     dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
-  }
+  }, [dispatch])
 
   // ── Skip item ──
-  const handleSkip = (item: PlaylistItem) => {
+  const handleSkip = useCallback((item: PlaylistItem) => {
     const log: PlayLog = {
       id: crypto.randomUUID(),
       date: new Date().toISOString().slice(0, 10),
@@ -118,13 +293,13 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
     }
     dispatch({ type: 'ADD_LOG', payload: log })
     dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'skipped' } })
-  }
+  }, [dispatch])
 
   // ── Context menu ──
-  const handleContextMenu = (e: React.MouseEvent, item: PlaylistItem, index: number) => {
+  const handleContextMenu = useCallback((e: React.MouseEvent, item: PlaylistItem, index: number) => {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY, item, index })
-  }
+  }, [])
 
   const handleInsertPause = (afterOrder: number) => {
     const pause: PlaylistItem = {
@@ -150,22 +325,24 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
   }
 
   // ── Delete ──
-  const handleDelete = (id: string) => {
+  const handleDelete = useCallback((id: string) => {
     dispatch({ type: 'DELETE_PLAYLIST_ITEM', payload: id })
-    if (selectedId === id) setSelectedId(null)
-  }
+    setSelectedId(prev => prev === id ? null : prev)
+  }, [dispatch])
 
   // ── Reorder ──
-  const moveItem = (index: number, dir: -1 | 1) => {
+  const moveItem = useCallback((index: number, dir: -1 | 1) => {
     const newList = [...playlist]
     const target = index + dir
     if (target < 0 || target >= newList.length) return
     ;[newList[index], newList[target]] = [newList[target], newList[index]]
     dispatch({ type: 'REORDER_PLAYLIST', payload: newList.map((item, i) => ({ ...item, order: i + 1 })) })
-  }
+  }, [dispatch, playlist])
+  const handleMoveUp = useCallback((index: number) => moveItem(index, -1), [moveItem])
+  const handleMoveDown = useCallback((index: number) => moveItem(index, 1), [moveItem])
 
   // ── Drop vMix input into playlist at a specific position ──────────────────
-  const insertVmixInput = (inp: VmixInput, atIndex: number) => {
+  const insertVmixInput = useCallback((inp: VmixInput, atIndex: number) => {
     const newItem: PlaylistItem = {
       id: crypto.randomUUID(),
       order: 0,
@@ -178,22 +355,26 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
     const sorted = [...playlist].sort((a, b) => a.order - b.order)
     sorted.splice(atIndex, 0, newItem)
     dispatch({ type: 'REORDER_PLAYLIST', payload: sorted.map((item, i) => ({ ...item, order: i + 1 })) })
-  }
+  }, [dispatch, playlist])
 
-  const handleRowDragOver = (e: React.DragEvent, index: number) => {
+  const handleRowDragOver = useCallback((e: React.DragEvent, index: number) => {
     if (!e.dataTransfer.types.includes('application/vmix-input')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     setDragOverIndex(index)
-  }
+  }, [])
 
-  const handleDrop = (e: React.DragEvent, atIndex: number) => {
+  const handleDrop = useCallback((e: React.DragEvent, atIndex: number) => {
     e.preventDefault()
     setDragOverIndex(null)
     const raw = e.dataTransfer.getData('application/vmix-input')
     if (!raw) return
     try { insertVmixInput(JSON.parse(raw) as VmixInput, atIndex) } catch {}
-  }
+  }, [insertVmixInput])
+
+  const handleRowDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverIndex(null)
+  }, [])
 
   const totalDuration = playlist.reduce((acc, i) => acc + i.duration, 0)
 
@@ -282,149 +463,30 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
                 </tr>
               </thead>
               <tbody>
-                {playlist.map((item, index) => {
-                  // Playlist é manual: todo bloco comercial pendente aguarda disparo manual
-                  const isAwaitingTrigger =
-                    !!item.adBreakId &&
-                    item.status === 'pending'
-                  return (
-                  <Fragment key={item.id}>
-                  <tr
-                    className={`playlist-row ${selectedId === item.id ? 'selected' : ''} row-${item.status}${dragOverIndex === index ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}${item.adBreakId ? ' row-commercial' : ''}${item.type === 'programa' && !item.adBreakId ? ' row-programa' : ''}`}
-                    onClick={() => setSelectedId(item.id)}
-                    onContextMenu={(e) => handleContextMenu(e, item, index)}
-                    onDragOver={(e) => handleRowDragOver(e, index)}
-                    onDrop={(e) => handleDrop(e, index)}
-                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverIndex(null) }}
-                  >
-                    {/* Order + reorder */}
-                    <td className="cell-order">
-                      <div className="order-group">
-                        <span className="order-num">{item.order}</span>
-                        <div className="order-btns">
-                          <button onClick={(e) => { e.stopPropagation(); moveItem(index, -1) }} disabled={index === 0}><ChevronUp size={10} /></button>
-                          <button onClick={(e) => { e.stopPropagation(); moveItem(index, 1) }} disabled={index === playlist.length - 1}><ChevronDown size={10} /></button>
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="cell-time">{item.scheduledTime ?? '—'}</td>
-
-                    <td className="cell-title">
-                      <div className="title-cell">
-                        {item.type === 'vmix_action'
-                          ? <Zap size={12} className="file-icon" style={{ color: '#a78bfa' }} />
-                          : item.filePath && <FileVideo size={12} className="file-icon" />
-                        }
-                        <span className="item-title">{item.title}</span>
-                      </div>
-                      {item.vmixAction && (
-                        <span className="item-notes" style={{ fontFamily: 'monospace', fontSize: '0.68rem' }}>
-                          {item.vmixAction.function}
-                          {item.vmixAction.input ? ` → ${item.vmixAction.input}` : ''}
-                          {item.vmixAction.value ? ` (${item.vmixAction.value})` : ''}
-                        </span>
-                      )}
-                      {!item.vmixAction && item.notes && <span className="item-notes">{item.notes}</span>}
-                    </td>
-
-                    <td className="cell-client">{item.clientName ?? '—'}</td>
-
-                    <td>
-                      <span className={`type-badge type-${item.type}`}>{t.types[item.type]}</span>
-                    </td>
-
-                    <td className="cell-duration">
-                      {item.status === 'playing' && activeItemProgress && activeItemProgress.duration > 0
-                        ? (
-                          <span className="time-remaining" title={formatDuration(item.duration)}>
-                            −{formatDuration(Math.max(0, Math.round((activeItemProgress.duration - activeItemProgress.position) / 1000)))}
-                          </span>
-                        )
-                        : formatDuration(item.duration)
-                      }
-                    </td>
-
-                    <td className="cell-end">{endTimes[item.id] ?? '—'}</td>
-
-                    <td className="cell-input">
-                      {item.filePath
-                        ? <span className="input-auto-tag" title={item.filePath}>📁 Auto</span>
-                        : (item.inputName ?? '—')}
-                    </td>
-
-                    <td>
-                      {isAwaitingTrigger ? (
-                        <span className="status-badge status-awaiting-trigger" title={t.adBreaks.awaitingTrigger}>
-                          ⚡ {t.adBreaks.awaitingTrigger}
-                        </span>
-                      ) : (
-                        <span className={`status-badge ${STATUS_CLASS[item.status]}`}>
-                          {t.statuses[item.status]}
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="cell-actions">
-                      <div className="actions-group">
-                        {item.status === 'pending' && (
-                          <button className="action-btn btn-play" onClick={(e) => { e.stopPropagation(); handlePlay(item) }} title={t.playlist.playItem}>
-                            <Play size={13} />
-                          </button>
-                        )}
-                        {item.status === 'playing' && (
-                          <button className="action-btn btn-done" onClick={(e) => { e.stopPropagation(); handleMarkDone(item) }} title={t.playlist.markDone}>
-                            <CheckCircle size={13} />
-                          </button>
-                        )}
-                        {(item.status === 'pending' || item.status === 'playing') && (
-                          <button className="action-btn btn-skip" onClick={(e) => { e.stopPropagation(); handleSkip(item) }} title={t.playlist.markSkipped}>
-                            <SkipForward size={13} />
-                          </button>
-                        )}
-                        <button className="action-btn btn-edit" onClick={(e) => { e.stopPropagation(); onEditItem(item) }} title={t.playlist.editItem}>
-                          <Edit2 size={13} />
-                        </button>
-                        <button className="action-btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(item.id) }} title={t.playlist.deleteItem}>
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-
-                  {/* Progress bar row — shown below the playing item */}
-                  {item.status === 'playing' && (
-                    <tr className="progress-bar-row">
-                      <td colSpan={10} className="progress-bar-cell">
-                        {activeItemProgress && activeItemProgress.duration > 0 ? (
-                          // Real vMix position
-                          <div className="progress-track">
-                            <div
-                              className="progress-fill"
-                              style={{ width: `${Math.min(100, (activeItemProgress.position / activeItemProgress.duration) * 100)}%` }}
-                            />
-                            <span className="progress-label">
-                              {formatDuration(Math.round(activeItemProgress.position / 1000))}
-                              {' / '}
-                              {formatDuration(Math.round(activeItemProgress.duration / 1000))}
-                            </span>
-                          </div>
-                        ) : (
-                          // Fallback: CSS animation over item.duration seconds
-                          <div className="progress-track">
-                            <div
-                              className="progress-fill progress-fill-anim"
-                              style={{ animationDuration: `${item.duration}s` }}
-                            />
-                            <span className="progress-label">{formatDuration(item.duration)}</span>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )}
-                  </Fragment>
-                  )
-                })}
+                {playlist.map((item, index) => (
+                  <PlaylistRow
+                    key={item.id}
+                    item={item}
+                    index={index}
+                    isLast={index === playlist.length - 1}
+                    isSelected={selectedId === item.id}
+                    dragInsertAbove={dragOverIndex === index}
+                    endTime={endTimes[item.id]}
+                    t={t}
+                    onSelect={setSelectedId}
+                    onContextMenu={handleContextMenu}
+                    onRowDragOver={handleRowDragOver}
+                    onDrop={handleDrop}
+                    onDragLeave={handleRowDragLeave}
+                    onMoveUp={handleMoveUp}
+                    onMoveDown={handleMoveDown}
+                    onPlay={handlePlay}
+                    onMarkDone={handleMarkDone}
+                    onSkip={handleSkip}
+                    onEdit={onEditItem}
+                    onDelete={handleDelete}
+                  />
+                ))}
                 {/* Drop zone for inserting after the last item */}
                 <tr
                   className={`playlist-drop-end${dragOverIndex === playlist.length ? ' drag-insert-above' : ''}`}

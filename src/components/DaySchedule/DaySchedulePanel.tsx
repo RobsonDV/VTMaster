@@ -6,8 +6,15 @@ import {
   Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
+import { usePlaybackProgress } from '../../store/playbackProgress'
 import type { PlaylistItem, ProgramSlot, VmixActionItem, VmixInput } from '../../types'
 import { formatDuration, today } from '../../utils/time'
+import {
+  detectMediaType,
+  mediaDurationCacheKey,
+  readMediaDuration,
+  readMediaDurationBatch,
+} from '../../utils/mediaDuration'
 import VmixInputPanel, { spotTypeForVmix } from '../Playlist/VmixInputPanel'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
@@ -16,39 +23,11 @@ import Modal from '../ui/Modal'
 import './DaySchedulePanel.css'
 import '../Playlist/ContextMenu.css'
 
-const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'])
-const AUDIO_EXTS = new Set(['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'])
 const VMIX_FUNCTIONS = [
   'AudioOff','AudioOn','SetVolume','Fade',
   'OverlayInput1','OverlayInput1Out','OverlayInput2','OverlayInput2Out',
   'StartRecording','StopRecording','Cut','Merge',
 ]
-
-function detectMediaType(fp: string): 'video' | 'audio' | 'image' {
-  const ext = fp.split('.').pop()?.toLowerCase() ?? ''
-  if (IMAGE_EXTS.has(ext)) return 'image'
-  if (AUDIO_EXTS.has(ext)) return 'audio'
-  return 'video'
-}
-
-function toLocalMediaUrl(fp: string) {
-  return 'local-media:///' + fp.replace(/\\/g, '/')
-}
-
-function readMediaDuration(fp: string, type: 'video' | 'audio'): Promise<number | null> {
-  return new Promise(resolve => {
-    const el = document.createElement(type === 'audio' ? 'audio' : 'video') as HTMLVideoElement
-    el.preload = 'metadata'
-    const t = setTimeout(() => { el.src = ''; resolve(null) }, 10_000)
-    el.onloadedmetadata = () => {
-      clearTimeout(t)
-      const d = el.duration; el.src = ''
-      resolve(isFinite(d) && d > 0 ? Math.round(d) : null)
-    }
-    el.onerror = () => { clearTimeout(t); el.src = ''; resolve(null) }
-    el.src = toLocalMediaUrl(fp)
-  })
-}
 
 function nowSeconds(): number {
   const d = new Date()
@@ -426,7 +405,8 @@ interface Props {
 
 export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) {
   const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent } = useApp()
-  const { dateSchedules, activeItemProgress } = state
+  const { dateSchedules } = state
+  const activeItemProgress = usePlaybackProgress()
 
   const todayStr  = today()   // local date, not UTC
   const isToday   = selectedDate === todayStr
@@ -443,9 +423,18 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
 
   // ── Auto-read duration for items loaded without metadata (e.g. AutoProg) ────
   const durationReadIds = useRef<Set<string>>(new Set())
+  // Incrementado após falhas para forçar o useEffect a re-disparar e tentar novamente
+  const [durationRetryTick, setDurationRetryTick] = useState(0)
   // Reset when date changes so items on a fresh date get their durations read
   useEffect(() => { durationReadIds.current.clear() }, [selectedDate])
   useEffect(() => {
+    // IMPORTANTE: não usar flag 'active' para bloquear o .then() inteiro.
+    // Quando áudios (rápidos) terminam e disparam dispatch, o useEffect é
+    // re-executado e 'active' passa a false. Isso impedia que vídeos lentos
+    // (que completam/timeout depois) removessem seus IDs do durationReadIds,
+    // deixando-os presos para sempre e causando 'nada acontece' na próxima
+    // geração de playlist (IDs presos → toRead vazio).
+    let mounted = true  // usado APENAS para evitar setState em componente desmontado
     const toRead = schedule.filter(
       i => i.filePath && (i.duration === 0 || i.duration == null)
         && i.status !== 'playing'
@@ -453,23 +442,40 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     )
     if (toRead.length === 0) return
     toRead.forEach(i => durationReadIds.current.add(i.id))
-    Promise.allSettled(
-      toRead.map(async item => {
-        const mt = detectMediaType(item.filePath!)
-        if (mt === 'image') return
-        const dur = await readMediaDuration(item.filePath!, mt)
-        if (dur && dur > 0) {
-          dispatch({
-            type: 'UPDATE_SCHEDULE_ITEM',
-            payload: { date: selectedDate, item: { ...item, duration: dur } },
-          })
-        } else {
-          // Read failed — remove from set to allow retry on next schedule change
+    const succeededIds = new Set<string>()
+    const cacheUpdates: Record<string, number> = {}
+    readMediaDurationBatch(
+      toRead,
+      (item, dur) => {
+        succeededIds.add(item.id)
+        if (item.filePath) cacheUpdates[mediaDurationCacheKey(item.filePath)] = dur
+        dispatch({
+          type: 'UPDATE_SCHEDULE_ITEM',
+          payload: { date: selectedDate, item: { ...item, duration: dur } },
+        })
+      },
+      // 15 s: vídeos grandes (DVD/concerto) precisam de mais tempo para o Chromium
+      // localizar o moov atom via local-media://
+      { concurrency: 4, timeoutMs: 15_000 },
+    ).then(() => {
+      // Limpeza de IDs falhos SEMPRE executa (independente de mounted).
+      // Sem isso, IDs de vídeos que deram timeout ficam presos no set e
+      // nunca são re-tentados — inclusive após regerar a playlist em merge mode.
+      let hadFailures = false
+      for (const item of toRead) {
+        if (!succeededIds.has(item.id)) {
           durationReadIds.current.delete(item.id)
+          hadFailures = true
         }
-      }),
-    )
-  }, [schedule, selectedDate, dispatch])
+      }
+      // setDurationRetryTick muda estado → só chamar se ainda montado
+      if (hadFailures && mounted) setTimeout(() => setDurationRetryTick(t => t + 1), 5_000)
+      if (Object.keys(cacheUpdates).length > 0) {
+        dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload: cacheUpdates })
+      }
+    })
+    return () => { mounted = false }
+  }, [schedule, selectedDate, dispatch, durationRetryTick])
 
   const selDow   = new Date(selectedDate + 'T12:00:00').getDay()
   const weekSlots = useMemo(
@@ -497,6 +503,14 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const [showBlockPicker, setShowBlockPicker] = useState(false)
   const [nextCrossfadeActive, setNextCrossfadeActive] = useState(false)
   const [stopAfterArmed, setStopAfterArmed] = useState(false)
+  const [readingDurations, setReadingDurations] = useState(false)
+  const [updatingSchedule, setUpdatingSchedule] = useState(false)
+
+  // Itens com arquivo mas sem duração lida — para mostrar/ocultar botão
+  const missingDurCount = useMemo(
+    () => schedule.filter(i => i.filePath && (i.duration === 0 || i.duration == null)).length,
+    [schedule],
+  )
 
   // Reset Stop Next when playback stops
   useEffect(() => {
@@ -534,6 +548,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           status: 'pending',
           scheduledTime: targetItem.scheduledTime,
           inputName: inp.number,
+          manuallyAdded: true,
         }
         const newSchedule = [...schedule, newItem]
           .sort((a, b) => a.order - b.order)
@@ -571,7 +586,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   }
 
   const insertAfterItem = (targetItem: PlaylistItem, fields: Omit<PlaylistItem, 'id' | 'order'>) => {
-    const newItem: PlaylistItem = { id: crypto.randomUUID(), order: targetItem.order + 0.5, ...fields }
+    const newItem: PlaylistItem = { id: crypto.randomUUID(), order: targetItem.order + 0.5, manuallyAdded: true, ...fields }
     const newSchedule = [...schedule, newItem]
       .sort((a, b) => a.order - b.order)
       .map((i, n) => ({ ...i, order: n + 1 }))
@@ -620,13 +635,57 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   }, [schedule, state.isSequencePlaying, scrollToCard])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-  const handleReload = () => {
+  const handleReload = async () => {
+    if (updatingSchedule) return
     if (isToday && state.isSequencePlaying) {
       if (!window.confirm('A programação está tocando. Atualizar vai adicionar os blocos faltantes. Continuar?')) return
     }
     // merge=true: preserves existing items, only adds missing schedule times
-    generatePlaylistFromGrid(selectedDate as string, true)
+    setUpdatingSchedule(true)
+    try {
+      await generatePlaylistFromGrid(selectedDate as string, true)
+    } finally {
+      setUpdatingSchedule(false)
+    }
   }
+
+  // Lê (ou re-lê) as durações de todos os itens que ainda estão com 0.
+  // Chamado pelo botão manual — útil quando a leitura automática falhou
+  // (ex: vídeos lentos que deram timeout no batch inicial).
+  const handleRefreshDurations = useCallback(async () => {
+    const toRefresh = schedule.filter(
+      i => i.filePath && (i.duration === 0 || i.duration == null),
+    )
+    if (toRefresh.length === 0 || readingDurations) return
+    // Marca no set para o useEffect não processar os mesmos itens ao mesmo tempo
+    toRefresh.forEach(i => durationReadIds.current.add(i.id))
+    setReadingDurations(true)
+    const succeededIds = new Set<string>()
+    const cacheUpdates: Record<string, number> = {}
+    try {
+      await readMediaDurationBatch(
+        toRefresh,
+        (item, dur) => {
+          succeededIds.add(item.id)
+          if (item.filePath) cacheUpdates[mediaDurationCacheKey(item.filePath)] = dur
+          dispatch({
+            type: 'UPDATE_SCHEDULE_ITEM',
+            payload: { date: selectedDate, item: { ...item, duration: dur } },
+          })
+        },
+        { concurrency: 2, timeoutMs: 20_000 },  // 2 simultâneos, 20 s cada
+      )
+    } finally {
+      // Libera itens que falharam para eventual re-tentativa posterior
+      for (const item of toRefresh) {
+        if (!succeededIds.has(item.id)) durationReadIds.current.delete(item.id)
+      }
+      if (Object.keys(cacheUpdates).length > 0) {
+        dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload: cacheUpdates })
+      }
+      setReadingDurations(false)
+    }
+  }, [schedule, selectedDate, dispatch, readingDurations])
 
   const handleSkip     = (item: PlaylistItem) =>
     dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: selectedDate, item: { ...item, status: 'skipped' } } })
@@ -645,7 +704,10 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     let dur = item.duration
     if (mt !== 'image') {
       const detected = await readMediaDuration(fp, mt)
-      if (detected != null) dur = detected
+      if (detected != null) {
+        dur = detected
+        dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload: { [mediaDurationCacheKey(fp)]: detected } })
+      }
     }
     dispatch({
       type: 'UPDATE_SCHEDULE_ITEM',
@@ -658,6 +720,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
       id: crypto.randomUUID(), order: item.order + 0.5,
       title: item.title, type: item.type,
       status: 'pending', scheduledTime: item.scheduledTime, duration: 0,
+      manuallyAdded: true,
     }
     const newSchedule = [...schedule, newItem]
       .sort((a, b) => a.order - b.order)
@@ -680,6 +743,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     const groupSorted = [...group.items].sort((a, b) => a.order - b.order)
     const lastItem = groupSorted[groupSorted.length - 1]
     const newItem: PlaylistItem = {
+      manuallyAdded: true,
       ...fields,
       id: crypto.randomUUID(),
       order: lastItem ? lastItem.order + 0.5 : (sorted[sorted.length - 1]?.order ?? 0) + 1,
@@ -700,7 +764,10 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     let dur = 0
     if (mt !== 'image') {
       const detected = await readMediaDuration(fp, mt)
-      if (detected != null) dur = detected
+      if (detected != null) {
+        dur = detected
+        dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload: { [mediaDurationCacheKey(fp)]: detected } })
+      }
     }
     insertItemAtGroupEnd(group, {
       title: nameNoExt,
@@ -726,26 +793,36 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     setAddGroupModal({ group, mode: 'picker' })
   }
 
-  const playingItem   = schedule.find(i => i.status === 'playing')
-  const pendingItems  = sorted.filter(i => i.status === 'pending')
-  const nextItem      = playingItem
-    ? pendingItems.find(i => i.order > (playingItem.order ?? 0))
-    : pendingItems[0]
-  const totalDuration = schedule.reduce((a, i) => a + (i.duration ?? 0), 0)
-  const completedCount = schedule.filter(i => i.status === 'done' || i.status === 'skipped').length
-  const errorCount = schedule.filter(i => i.status === 'error').length
-  const scheduleDateLabel = new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR')
+  const playingItem = useMemo(() => schedule.find(i => i.status === 'playing'), [schedule])
+  const pendingItems = useMemo(() => sorted.filter(i => i.status === 'pending'), [sorted])
+  const nextItem = useMemo(
+    () => playingItem ? pendingItems.find(i => i.order > (playingItem.order ?? 0)) : pendingItems[0],
+    [playingItem, pendingItems],
+  )
+  const { totalDuration, completedCount, errorCount } = useMemo(() => {
+    let total = 0, done = 0, err = 0
+    for (const i of schedule) {
+      total += i.duration ?? 0
+      if (i.status === 'done' || i.status === 'skipped') done++
+      else if (i.status === 'error') err++
+    }
+    return { totalDuration: total, completedCount: done, errorCount: err }
+  }, [schedule])
+  const scheduleDateLabel = useMemo(
+    () => new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR'),
+    [selectedDate],
+  )
   const nowHHMM = secsToHHMM(nowSeconds())
-  const currentBlock = playingItem
-    ? groups.find(g => g.items.some(i => i.id === playingItem.id)) ?? null
-    : isToday
-      ? groups.filter(g => g.time <= nowHHMM).pop() ?? groups[0] ?? null
-      : groups[0] ?? null
-  const nextBlock = nextItem
-    ? groups.find(g => g.items.some(i => i.id === nextItem.id)) ?? null
-    : currentBlock
-      ? groups.find(g => g.time > currentBlock.time) ?? null
-      : null
+  const currentBlock = useMemo(() => {
+    if (playingItem) return groups.find(g => g.items.some(i => i.id === playingItem.id)) ?? null
+    if (isToday) return groups.filter(g => g.time <= nowHHMM).pop() ?? groups[0] ?? null
+    return groups[0] ?? null
+  }, [playingItem, groups, isToday, nowHHMM])
+  const nextBlock = useMemo(() => {
+    if (nextItem) return groups.find(g => g.items.some(i => i.id === nextItem.id)) ?? null
+    if (currentBlock) return groups.find(g => g.time > currentBlock.time) ?? null
+    return null
+  }, [nextItem, groups, currentBlock])
   const progressPct = activeItemProgress && activeItemProgress.duration > 0
     ? Math.min(100, (activeItemProgress.position / activeItemProgress.duration) * 100)
     : null
@@ -868,9 +945,26 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                 <Crosshair size={13} /> Centralizar Bloco
               </button>
             )}
-            <button className="day-schedule-btn" onClick={handleReload} title="Recarregar programação desta data">
-              <RefreshCw size={13} /> Atualizar
+            <button
+              className="day-schedule-btn"
+              onClick={handleReload}
+              disabled={updatingSchedule}
+              title={updatingSchedule ? 'Atualizando programação...' : 'Recarregar programação desta data'}
+            >
+              <RefreshCw size={13} className={updatingSchedule ? 'spin' : ''} />
+              {updatingSchedule ? 'Atualizando…' : 'Atualizar'}
             </button>
+            {missingDurCount > 0 && (
+              <button
+                className="day-schedule-btn"
+                onClick={handleRefreshDurations}
+                disabled={readingDurations}
+                title={`Ler duração de ${missingDurCount} item(s) sem tempo`}
+              >
+                <Clock size={13} className={readingDurations ? 'spin' : ''} />
+                {readingDurations ? `Lendo… (${missingDurCount})` : `Ler Tempos (${missingDurCount})`}
+              </button>
+            )}
             <button
               className="day-schedule-btn accent"
               onClick={handleAddItemFromToolbar}
@@ -917,9 +1011,28 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           )}
 
           {/* Reload */}
-          <button className="day-schedule-btn" onClick={handleReload} title="Recarregar programação desta data">
-            <RefreshCw size={13} /> Atualizar
+          <button
+            className="day-schedule-btn"
+            onClick={handleReload}
+            disabled={updatingSchedule}
+            title={updatingSchedule ? 'Atualizando programação...' : 'Recarregar programação desta data'}
+          >
+            <RefreshCw size={13} className={updatingSchedule ? 'spin' : ''} />
+            {updatingSchedule ? 'Atualizando…' : 'Atualizar'}
           </button>
+
+          {/* Ler Tempos — só aparece quando há itens sem duração */}
+          {missingDurCount > 0 && (
+            <button
+              className="day-schedule-btn"
+              onClick={handleRefreshDurations}
+              disabled={readingDurations}
+              title={`Ler duração de ${missingDurCount} item(s) sem tempo`}
+            >
+              <Clock size={13} className={readingDurations ? 'spin' : ''} />
+              {readingDurations ? `Lendo… (${missingDurCount})` : `Ler Tempos (${missingDurCount})`}
+            </button>
+          )}
 
           {/* Play / Stop / Next — always visible for today; preview text for other dates */}
           {isToday ? (
@@ -1003,8 +1116,13 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
             Nenhuma programação para {DAY_NAMES[selDow]},{' '}
             {new Date(selectedDate + 'T12:00:00').toLocaleDateString('pt-BR')}.
           </p>
-          <button className="day-schedule-btn accent" onClick={handleReload}>
-            <RefreshCw size={14} /> Gerar da Estrutura
+          <button
+            className="day-schedule-btn accent"
+            onClick={handleReload}
+            disabled={updatingSchedule}
+          >
+            <RefreshCw size={14} className={updatingSchedule ? 'spin' : ''} />
+            {updatingSchedule ? 'Gerando…' : 'Gerar da Estrutura'}
           </button>
         </div>
       ) : (

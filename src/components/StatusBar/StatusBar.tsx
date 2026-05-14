@@ -1,10 +1,12 @@
 import { today, formatDuration } from '../../utils/time'
 import { useApp } from '../../store/AppContext'
+import { usePlaybackProgress } from '../../store/playbackProgress'
 import './StatusBar.css'
 
 export default function StatusBar() {
   const { state, t } = useApp()
-  const { vmixStatus, playlist, activeItemProgress } = state
+  const { vmixStatus, playlist } = state
+  const activeItemProgress = usePlaybackProgress()
 
   const todaySchedule = state.dateSchedules?.[today()] ?? []
 

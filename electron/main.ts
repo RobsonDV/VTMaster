@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut } from 'electron'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, openSync, readSync, closeSync, statSync } from 'fs'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -45,6 +45,118 @@ function loadData(key: string): unknown {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Native media duration fallback
+// ─────────────────────────────────────────────────────────────────────────────
+function readUInt64BEAsNumber(buffer: Buffer, offset: number): number {
+  const high = buffer.readUInt32BE(offset)
+  const low = buffer.readUInt32BE(offset + 4)
+  return high * 0x100000000 + low
+}
+
+function readExact(fd: number, position: number, length: number): Buffer | null {
+  const buffer = Buffer.alloc(length)
+  const bytesRead = readSync(fd, buffer, 0, length, position)
+  return bytesRead === length ? buffer : null
+}
+
+function durationFromTimescale(duration: number, timescale: number): number | null {
+  if (!Number.isFinite(duration) || !Number.isFinite(timescale) || duration <= 0 || timescale <= 0) {
+    return null
+  }
+  const seconds = Math.round(duration / timescale)
+  return seconds > 0 ? seconds : null
+}
+
+function readMvhdDuration(fd: number, payloadStart: number, atomEnd: number): number | null {
+  const versionHeader = readExact(fd, payloadStart, 1)
+  if (!versionHeader) return null
+
+  const version = versionHeader.readUInt8(0)
+  if (version === 0) {
+    if (payloadStart + 20 > atomEnd) return null
+    const data = readExact(fd, payloadStart + 12, 8)
+    if (!data) return null
+    return durationFromTimescale(data.readUInt32BE(4), data.readUInt32BE(0))
+  }
+
+  if (version === 1) {
+    if (payloadStart + 32 > atomEnd) return null
+    const data = readExact(fd, payloadStart + 20, 12)
+    if (!data) return null
+    return durationFromTimescale(readUInt64BEAsNumber(data, 4), data.readUInt32BE(0))
+  }
+
+  return null
+}
+
+function scanMp4Atoms(fd: number, start: number, end: number, depth = 0): number | null {
+  if (depth > 8) return null
+
+  const containerAtoms = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts', 'udta', 'meta'])
+  let position = start
+
+  while (position + 8 <= end) {
+    const header = readExact(fd, position, 8)
+    if (!header) return null
+
+    const size32 = header.readUInt32BE(0)
+    const type = header.toString('ascii', 4, 8)
+    let headerSize = 8
+    let atomEnd = size32 === 0 ? end : position + size32
+
+    if (size32 === 1) {
+      const extendedSize = readExact(fd, position + 8, 8)
+      if (!extendedSize) return null
+      headerSize = 16
+      atomEnd = position + readUInt64BEAsNumber(extendedSize, 0)
+    }
+
+    if (atomEnd < position + headerSize || atomEnd > end) return null
+
+    const payloadStart = position + headerSize
+    if (type === 'mvhd') {
+      const duration = readMvhdDuration(fd, payloadStart, atomEnd)
+      if (duration) return duration
+    }
+
+    if (containerAtoms.has(type)) {
+      const nestedStart = type === 'meta' ? payloadStart + 4 : payloadStart
+      if (nestedStart < atomEnd) {
+        const duration = scanMp4Atoms(fd, nestedStart, atomEnd, depth + 1)
+        if (duration) return duration
+      }
+    }
+
+    position = atomEnd
+  }
+
+  return null
+}
+
+function readMp4Duration(filePath: string): number | null {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
+  if (!['mp4', 'm4v', 'mov', 'm4a', '3gp'].includes(ext)) return null
+
+  let fd: number | null = null
+  try {
+    const size = statSync(filePath).size
+    if (size <= 0) return null
+    fd = openSync(filePath, 'r')
+    return scanMp4Atoms(fd, 0, size)
+  } catch {
+    return null
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd) } catch { /* noop */ }
+    }
+  }
+}
+
+function readNativeMediaDuration(filePath: string): number | null {
+  return readMp4Duration(filePath)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Window creation
 // ─────────────────────────────────────────────────────────────────────────────
 function createWindow(): void {
@@ -82,10 +194,23 @@ function createWindow(): void {
 // ─────────────────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   // Serve local files through custom protocol so renderer can read video/audio
-  // metadata even when the page is served from http://localhost:5173 (dev mode)
+  // metadata even when the page is served from http://localhost:5173 (dev mode).
+  //
+  // Decodifica percent-encoding ANTES de construir o file:// — sem isso, paths
+  // com acentos (é → %C3%A9), espaços (%20) ou parênteses falham com
+  // ERR_UNEXPECTED no net.fetch, e o app não consegue ler a duração do arquivo.
   protocol.handle('local-media', (request) => {
-    const path = request.url.slice('local-media:///'.length)
-    return net.fetch(`file:///${path}`)
+    try {
+      const encoded = request.url.slice('local-media:///'.length)
+      // decodeURIComponent converte %20 → " ", %C3%A9 → "é" etc.
+      const filePath = decodeURIComponent(encoded)
+      // pathToFileURL gera um file:// URL válido para caminhos Windows (com drive),
+      // preservando caracteres especiais corretamente.
+      return net.fetch(pathToFileURL(filePath).toString())
+    } catch (err) {
+      console.error('[local-media] falha ao resolver', request.url, err)
+      return new Response(null, { status: 500 })
+    }
   })
 
   createWindow()
@@ -114,6 +239,10 @@ ipcMain.handle('save-data', (_event, key: string, data: unknown) => {
 
 ipcMain.handle('load-data', (_event, key: string) => {
   return loadData(key)
+})
+
+ipcMain.handle('read-media-duration', (_event, filePath: string) => {
+  return readNativeMediaDuration(filePath)
 })
 
 // Get app version

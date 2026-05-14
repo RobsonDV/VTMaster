@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.invoke('save-data', key, data),
   loadData: (key: string) =>
     ipcRenderer.invoke('load-data', key),
+  readMediaDuration: (filePath: string) =>
+    ipcRenderer.invoke('read-media-duration', filePath),
 
   // App info
   getVersion: () =>

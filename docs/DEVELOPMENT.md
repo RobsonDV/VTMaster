@@ -2,7 +2,7 @@
 
 > Software de playout e grade de programação para emissoras de TV/Rádio
 > Stack: **Electron 41 + React 19 + TypeScript 6 + Vite 8**
-> Desenvolvido por **RobsonCostaDV** — Versão **5.0.0** — Atualizado: 12/05/2026 (inclui Fase 12: Stop Next, correção de comercial e leitura eager de duração)
+> Desenvolvido por **RobsonCostaDV** — Versão **5.1.4** — Atualizado: 14/05/2026 (inclui AutoProg por duração real, cache de duração e leitura em lote com concorrência limitada)
 
 ---
 
@@ -354,6 +354,22 @@ el.src = toLocalMediaUrl(filePath)
 
 Timeout de 10s por segurança para arquivos corrompidos ou inacessíveis.
 
+### Leitura em lote de duração
+
+O fluxo atual centralizado fica em `src/utils/mediaDuration.ts`:
+- `readMediaDuration(filePath, type, timeoutMs)` lê um arquivo.
+- `readMediaDurationBatch(items, onDuration, { concurrency, timeoutMs })` lê vários arquivos com pool limitado.
+- Se o Chromium falhar, der timeout ou retornar duração 0, `readMediaDuration` chama `window.spotmaster.readMediaDuration(filePath)` como fallback nativo no Electron.
+- O fallback nativo atual lê MP4/MOV/M4V/M4A/3GP diretamente pelo contêiner ISO BMFF (`mvhd`), sem depender de criar `<video>/<audio>`.
+
+Importante: o código atual **não** usa mais `Promise.allSettled` disparando todos os arquivos de uma vez. Isso foi substituído por um pool para evitar saturar o decoder do Chromium quando a AutoProg gera 50-100 itens.
+
+Uso atual:
+- `generatePlaylistFromGrid` chama `readMediaDurationBatch(..., { concurrency: 4, timeoutMs: 15_000 })` antes de salvar a programação.
+- `DaySchedulePanel` mantém um fallback lazy com o mesmo pool para itens que ainda ficaram sem duração.
+- O botão manual "Ler Tempos" usa pool mais conservador: `{ concurrency: 2, timeoutMs: 20_000 }`.
+- Durações lidas são persistidas em `mediaDurationCache` (`filePath` normalizado → segundos) para evitar releitura em próximas gerações.
+
 ---
 
 ## 9. API do vMix
@@ -525,11 +541,29 @@ async function runSequence() {
 
 **Fresh mode** (merge=false, padrão):
 1. Percorre `weeklyGrid[dayOfWeek]` ordenado por scheduledTime
-2. Para `bloco_musical`: cria **1 item placeholder** (sem arquivo)
-3. Para `bloco_comercial`: chama `expandBlockItems` → itens reais com `adBreakId`
-4. Para `programa`/outros: adiciona item com filePath/inputName
-5. Para blocos não-vinculados (`blocksForDay`): expande itens
-6. Substitui `dateSchedules[date]` completo
+2. Para `bloco_musical` com AutoProg atribuída: chama `generateMusicBlockEngine` e cria itens com `filePath`
+3. Para `bloco_musical` sem AutoProg ou sem arquivos: cria **1 item placeholder** (sem arquivo)
+4. Para `bloco_comercial`: chama `expandBlockItems` → itens reais com `adBreakId`
+5. Para `programa`/outros: adiciona item com filePath/inputName
+6. Para blocos não-vinculados (`blocksForDay`): expande itens
+7. Lê durações pendentes via `readMediaDurationBatch` com pool limitado
+8. Substitui `dateSchedules[date]` completo
+
+### AutoProg e duração — estado atual
+
+O formulário de sequências permite dois objetivos:
+- `targetMode: 'count'`: número de músicas.
+- `targetMode: 'duration'`: duração em minutos.
+
+Estado real do motor em `src/utils/autoprog.ts`:
+- `targetMode: 'count'` funciona por quantidade de músicas.
+- `targetMode: 'duration'` soma durações reais quando `getDuration(filePath)` consegue ler ou encontrar o valor em cache.
+- Se uma música ainda não tem duração conhecida, o motor usa estimativa interna apenas para decidir quando parar o bloco; o item continua sem duração real até o batch/fallback ler e persistir o valor.
+
+Consequência operacional:
+- O modo por duração não gera mais milhares de candidatos.
+- `generatePlaylistFromGrid` passa `getDuration` para a AutoProg, usa `mediaDurationCache` e grava novas leituras no cache.
+- O merge "Atualizar" não sai mais cedo antes de tentar completar tempos faltantes.
 
 **Merge mode** (merge=true, botão "Atualizar"):
 

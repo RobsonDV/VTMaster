@@ -22,36 +22,25 @@ import type {
   MusicStyle,
   MusicSequence,
   AutoBlocoAssignment,
+  DeletedScheduleSlot,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
 import { now, today } from '../utils/time'
 import { generateMusicBlock as generateMusicBlockEngine } from '../utils/autoprog'
+import { setPlaybackProgress } from './playbackProgress'
+import {
+  detectMediaType,
+  mediaDurationCacheKey,
+  readMediaDuration,
+  readMediaDurationBatch,
+} from '../utils/mediaDuration'
 
-// ── Media helpers for eager duration reading in generatePlaylistFromGrid ─────
-const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'])
-const _AUD_EXTS = new Set(['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'])
-
-function _detectMediaType(fp: string): 'video' | 'audio' | 'image' {
-  const ext = fp.split('.').pop()?.toLowerCase() ?? ''
-  if (_IMG_EXTS.has(ext)) return 'image'
-  if (_AUD_EXTS.has(ext)) return 'audio'
-  return 'video'
-}
-
-function _readMediaDuration(fp: string, type: 'video' | 'audio'): Promise<number | null> {
-  return new Promise(resolve => {
-    const el = document.createElement(type === 'audio' ? 'audio' : 'video') as HTMLVideoElement
-    el.preload = 'metadata'
-    const t = setTimeout(() => { el.src = ''; resolve(null) }, 10_000)
-    el.onloadedmetadata = () => {
-      clearTimeout(t)
-      const d = el.duration; el.src = ''
-      resolve(isFinite(d) && d > 0 ? Math.round(d) : null)
-    }
-    el.onerror = () => { clearTimeout(t); el.src = ''; resolve(null) }
-    el.src = 'local-media:///' + fp.replace(/\\/g, '/')
-  })
+/** Signature usada para casar item deletado com item potencialmente regerado pela grade.
+ *  Igual para o mesmo slot independentemente de id (id muda a cada geração). */
+function _scheduleSignature(item: { type: string; title?: string; adBreakId?: string }): string {
+  if (item.adBreakId) return `block:${item.adBreakId}`
+  return `${item.type}|${(item.title ?? '').toLowerCase().trim()}`
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -71,6 +60,10 @@ const DEFAULT_SETTINGS: AppSettings = {
 interface AppState {
   playlist: PlaylistItem[]
   dateSchedules: Record<string, PlaylistItem[]>  // YYYY-MM-DD → programação daquela data
+  mediaDurationCache: Record<string, number>     // normalized filePath → duration seconds
+  /** Itens deletados manualmente da Programação por data — impede o regenerador da grade
+   *  de re-adicionar o mesmo slot no merge. Limpo no virar do dia ou no Replace mode. */
+  deletedScheduleSlots: Record<string, DeletedScheduleSlot[]>
   clients: Client[]
   playLog: PlayLog[]
   settings: AppSettings
@@ -78,7 +71,6 @@ interface AppState {
   activePanel: string
   isLoading: boolean
   isSequencePlaying: boolean
-  activeItemProgress: { inputNum: string; position: number; duration: number } | null
   commercialBlocks: CommercialBlock[]
   clientSpots: ClientSpot[]
   spotRotation: SpotRotation
@@ -90,9 +82,21 @@ interface AppState {
 
 const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
 
+function sanitizeDurationCache(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const dur = typeof value === 'number' ? value : Number(value)
+    if (key && isFinite(dur) && dur > 0) out[key] = Math.round(dur)
+  }
+  return out
+}
+
 const initialState: AppState = {
   playlist: [],
   dateSchedules: {},
+  mediaDurationCache: {},
+  deletedScheduleSlots: {},
   clients: [],
   playLog: [],
   settings: DEFAULT_SETTINGS,
@@ -100,7 +104,6 @@ const initialState: AppState = {
   activePanel: 'playlist',
   isLoading: true,
   isSequencePlaying: false,
-  activeItemProgress: null,
   commercialBlocks: [],
   clientSpots: [],
   spotRotation: {},
@@ -128,7 +131,6 @@ type Action =
   | { type: 'ADD_LOG'; payload: PlayLog }
   | { type: 'SET_LOG'; payload: PlayLog[] }
   | { type: 'SET_SEQUENCE_PLAYING'; payload: boolean }
-  | { type: 'SET_ACTIVE_ITEM_PROGRESS'; payload: { inputNum: string; position: number; duration: number } | null }
   | { type: 'ADD_COMMERCIAL_BLOCK';    payload: CommercialBlock }
   | { type: 'UPDATE_COMMERCIAL_BLOCK'; payload: CommercialBlock }
   | { type: 'DELETE_COMMERCIAL_BLOCK'; payload: string }
@@ -147,6 +149,7 @@ type Action =
   | { type: 'UPDATE_SCHEDULE_ITEM';   payload: { date: string; item: PlaylistItem } }
   | { type: 'DELETE_SCHEDULE_ITEM';   payload: { date: string; id: string } }
   | { type: 'REORDER_DATE_SCHEDULE';  payload: { date: string; items: PlaylistItem[] } }
+  | { type: 'UPSERT_MEDIA_DURATIONS'; payload: Record<string, number> }
   | { type: 'ADD_MUSIC_STYLE';             payload: MusicStyle }
   | { type: 'UPDATE_MUSIC_STYLE';          payload: MusicStyle }
   | { type: 'DELETE_MUSIC_STYLE';          payload: string }
@@ -205,14 +208,14 @@ function reducer(state: AppState, action: Action): AppState {
         clients: state.clients.filter((c) => c.id !== action.payload),
         clientSpots: state.clientSpots.filter((s) => s.clientId !== action.payload),
       }
-    case 'ADD_LOG':
-      return { ...state, playLog: [...state.playLog, action.payload] }
+    case 'ADD_LOG': {
+      const next = [...state.playLog, action.payload]
+      return { ...state, playLog: next.length > 10000 ? next.slice(-10000) : next }
+    }
     case 'SET_LOG':
-      return { ...state, playLog: action.payload }
+      return { ...state, playLog: action.payload.length > 10000 ? action.payload.slice(-10000) : action.payload }
     case 'SET_SEQUENCE_PLAYING':
       return { ...state, isSequencePlaying: action.payload }
-    case 'SET_ACTIVE_ITEM_PROGRESS':
-      return { ...state, activeItemProgress: action.payload }
     case 'ADD_COMMERCIAL_BLOCK':
       return { ...state, commercialBlocks: [...state.commercialBlocks, action.payload] }
     case 'UPDATE_COMMERCIAL_BLOCK':
@@ -270,12 +273,33 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'DELETE_SCHEDULE_ITEM': {
       const d = action.payload.date
-      return { ...state, dateSchedules: { ...state.dateSchedules,
-        [d]: (state.dateSchedules[d] ?? []).filter(i => i.id !== action.payload.id).map((i, idx) => ({ ...i, order: idx + 1 })),
-      }}
+      const existing = state.dateSchedules[d] ?? []
+      const deletedItem = existing.find(i => i.id === action.payload.id)
+      const remaining = existing.filter(i => i.id !== action.payload.id).map((i, idx) => ({ ...i, order: idx + 1 }))
+      // Registra a deleção apenas para itens que vieram da grade (não manuais),
+      // para impedir que o regenerador da grade os re-adicione no merge.
+      let nextDeleted = state.deletedScheduleSlots
+      if (deletedItem && !deletedItem.manuallyAdded) {
+        const time = deletedItem.scheduledTime?.slice(0, 5)
+        if (time) {
+          const signature = _scheduleSignature(deletedItem)
+          const dayList = nextDeleted[d] ?? []
+          const already = dayList.some(s => s.time === time && s.signature === signature)
+          if (!already) {
+            nextDeleted = { ...nextDeleted, [d]: [...dayList, { time, signature }] }
+          }
+        }
+      }
+      return {
+        ...state,
+        dateSchedules: { ...state.dateSchedules, [d]: remaining },
+        deletedScheduleSlots: nextDeleted,
+      }
     }
     case 'REORDER_DATE_SCHEDULE':
       return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: action.payload.items } }
+    case 'UPSERT_MEDIA_DURATIONS':
+      return { ...state, mediaDurationCache: { ...state.mediaDurationCache, ...action.payload } }
     case 'ADD_MUSIC_STYLE':
       return { ...state, musicStyles: [...state.musicStyles, action.payload] }
     case 'UPDATE_MUSIC_STYLE':
@@ -499,7 +523,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const dateStr = targetDate ?? today()
     // Parse day-of-week from the target date (midday avoids DST edge cases)
     const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay()
-    const { weeklyGrid, commercialBlocks, spotRotation } = stateRef.current
+    const { weeklyGrid, commercialBlocks, spotRotation, mediaDurationCache } = stateRef.current
+    const localDurationCache = new Map(Object.entries(mediaDurationCache))
+    let durationCacheUpdates: Record<string, number> = {}
+
+    const rememberDuration = (filePath: string, duration: number) => {
+      const dur = Math.round(duration)
+      if (!isFinite(dur) || dur <= 0) return
+      const key = mediaDurationCacheKey(filePath)
+      localDurationCache.set(key, dur)
+      durationCacheUpdates[key] = dur
+    }
+
+    const cachedDuration = (filePath: string): number | undefined => {
+      const dur = localDurationCache.get(mediaDurationCacheKey(filePath))
+      return dur && dur > 0 ? dur : undefined
+    }
+
+    const readDurationForAutoProg = async (filePath: string): Promise<number | null> => {
+      const cached = cachedDuration(filePath)
+      if (cached) return cached
+      const mediaType = detectMediaType(filePath)
+      if (mediaType === 'image') return null
+      const dur = await readMediaDuration(filePath, mediaType, 15_000)
+      if (dur && dur > 0) {
+        rememberDuration(filePath, dur)
+        return dur
+      }
+      return null
+    }
+
+    const flushDurationCacheUpdates = () => {
+      const payload = durationCacheUpdates
+      durationCacheUpdates = {}
+      if (Object.keys(payload).length > 0) {
+        dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload })
+      }
+    }
 
     // 1. Programs + linked blocks from weekly grid
     const programItems: PlaylistItem[] = []
@@ -508,6 +568,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const sortedSlots = (weeklyGrid[dayOfWeek] ?? [])
       .slice()
       .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime) || a.order - b.order)
+
+    // IDs de blocos referenciados por slots da grade. Calculado antes do loop
+    // para que o fallback de órfão possa atualizar (sem isso, blocos usados como
+    // fallback acabam duplicados no loop 2 abaixo).
+    const linkedBlockIds = new Set(
+      sortedSlots
+        .filter(s => s.type === 'bloco_comercial' || s.type === 'bloco_musical')
+        .map(s => s.commercialBlockId)
+        .filter((id): id is string => !!id && commercialBlocks.some(b => b.id === id))
+    )
 
     for (let si = 0; si < sortedSlots.length; si++) {
       const slot = sortedSlots[si]
@@ -529,6 +599,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   playLog,
                   date: dateStr,
                   scanFolder: (p, subs) => window.spotmaster.scanMusicFolder(p, subs),
+                  getDuration: readDurationForAutoProg,
                 })
                 if (generated.length > 0) {
                   generated.forEach(g => {
@@ -539,9 +610,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       type: 'vinheta' as const,
                       status: 'pending' as const,
                       scheduledTime: slot.scheduledTime,
-                      duration: 0,
+                      duration: g.duration ?? 0,
                       filePath: g.filePath,
-                      mediaType: 'audio' as const,
+                      mediaType: detectMediaType(g.filePath),
                     })
                   })
                   musicItemsGenerated = true
@@ -566,8 +637,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } else {
           // Commercial block: expand linked CommercialBlock
           if (!slot.commercialBlockId) continue
-          const block = commercialBlocks.find(b => b.id === slot.commercialBlockId && b.enabled)
-          if (!block) continue
+          let block = commercialBlocks.find(b => b.id === slot.commercialBlockId && b.enabled)
+          if (!block) {
+            // Fallback para referência órfã: o bloco linkado foi deletado.
+            // Tenta achar um bloco não-linkado no mesmo horário e usar como substituto.
+            // Sem isso, o slot fica órfão para sempre e nenhum comercial é puxado.
+            const slotHHMM = slot.scheduledTime?.slice(0, 5)
+            block = commercialBlocks.find(b =>
+              b.enabled &&
+              b.scheduledTime?.slice(0, 5) === slotHHMM &&
+              !linkedBlockIds.has(b.id)
+            )
+            if (block) {
+              console.warn(`[playout] Slot "${slot.title}" @${slotHHMM}: bloco linkado ${slot.commercialBlockId} não existe mais. Usando "${block.name}" como fallback.`)
+              // Marca o bloco fallback como "agora linkado" para o loop 2 não duplicar.
+              linkedBlockIds.add(block.id)
+            } else {
+              console.warn(`[playout] Slot "${slot.title}" @${slotHHMM}: bloco órfão ${slot.commercialBlockId} e sem bloco substituto disponível no mesmo horário.`)
+              continue
+            }
+          }
           const blockWithTime = { ...block, scheduledTime: slot.scheduledTime }
           const [expanded, newRot] = expandBlockItems(blockWithTime, 0, currentRotation)
           if (expanded.length > 0) {
@@ -608,12 +697,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     // 2. Commercial blocks for today NOT already covered by the schedule slots
-    const linkedBlockIds = new Set(
-      sortedSlots
-        .filter(s => s.type === 'bloco_comercial' || s.type === 'bloco_musical')
-        .map(s => s.commercialBlockId)
-        .filter(Boolean)
-    )
+    // (linkedBlockIds calculado lá em cima — inclui blocos usados como fallback de órfão)
     const blocksForDay = commercialBlocks.filter(b => {
       if (!b.enabled || linkedBlockIds.has(b.id)) return false
       const days = b.daysOfWeek?.length ? b.daysOfWeek : [0, 1, 2, 3, 4, 5, 6]
@@ -707,10 +791,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Deleções intencionais registradas pelo operador para esta data — não re-adicionar.
+      const deletedForDate = stateRef.current.deletedScheduleSlots[dateStr] ?? []
+      const deletedKeySet = new Set(deletedForDate.map(d => `${d.time}|${d.signature}`))
+
       // What to add: refreshed commercial items + non-commercial items for brand-new times
       const toAdd = generated.filter(item => {
         const hhmm = item.scheduledTime?.slice(0, 5)
         if (!hhmm) return false
+        // Bloqueia tudo que o operador apagou explicitamente
+        if (deletedKeySet.has(`${hhmm}|${_scheduleSignature(item)}`)) return false
         if (item.adBreakId) {
           if (occupiedCommercialTimes.has(hhmm)) return false  // bloco já foi ao ar, não duplicar
           return freshCommercialTimes.has(hhmm)
@@ -718,35 +808,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return !coveredTimes.has(hhmm)                               // non-commercial: only new times
       })
 
-      if (toAdd.length === 0 && keptExisting.length === existing.length) {
-        // Nothing changed — schedule is already up-to-date
-        dispatch({ type: 'SET_SPOT_ROTATION', payload: currentRotation })
-        return
-      }
-
       finalItems = [...keptExisting, ...toAdd]
         .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))
         .map((item, idx) => ({ ...item, order: idx + 1 }))
     } else {
       // ── Replace mode: build fresh schedule from scratch ────────────────────
-      finalItems = generated.map((item, idx) => ({ ...item, order: idx + 1 }))
+      // Mesmo no replace, respeita deleções intencionais do operador para a data.
+      const deletedForDate = stateRef.current.deletedScheduleSlots[dateStr] ?? []
+      const deletedKeySet = new Set(deletedForDate.map(d => `${d.time}|${d.signature}`))
+      finalItems = generated
+        .filter(item => {
+          const hhmm = item.scheduledTime?.slice(0, 5)
+          if (!hhmm) return true
+          return !deletedKeySet.has(`${hhmm}|${_scheduleSignature(item)}`)
+        })
+        .map((item, idx) => ({ ...item, order: idx + 1 }))
     }
 
+    finalItems = finalItems.map(item => {
+      if (!item.filePath || item.duration > 0) return item
+      const cached = cachedDuration(item.filePath)
+      return cached ? { ...item, duration: cached } : item
+    })
+
     // ── Eager batch-read file durations before dispatching ──────────────────
-    // Items with filePath but no duration get their real duration from the file
-    // now, so block headers display correct totals immediately.
+    // Lê em lotes com concorrência limitada (4 paralelos) para evitar saturar
+    // o decoder do Chromium em programações grandes (50-100 músicas) — sem o
+    // pool, dezenas de leituras simultâneas dão timeout e os itens chegam ao
+    // operador com duração 0.
     const _needsDur = finalItems.filter(
       i => i.filePath && (i.duration === 0 || i.duration == null),
     )
     if (_needsDur.length > 0) {
       const _durMap = new Map<string, number>()
-      await Promise.allSettled(
-        _needsDur.map(async item => {
-          const mt = _detectMediaType(item.filePath!)
-          if (mt === 'image') return
-          const dur = await _readMediaDuration(item.filePath!, mt)
-          if (dur && dur > 0) _durMap.set(item.id, dur)
-        }),
+      await readMediaDurationBatch(
+        _needsDur,
+        (item, dur) => {
+          _durMap.set(item.id, dur)
+          if (item.filePath) rememberDuration(item.filePath, dur)
+        },
+        { concurrency: 4, timeoutMs: 15_000 },
       )
       if (_durMap.size > 0) {
         finalItems = finalItems.map(i =>
@@ -755,6 +856,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // ── Race-condition guard ────────────────────────────────────────────────
+    // O batch acima é assíncrono. Se handleRefreshDurations ou o useEffect do
+    // DaySchedulePanel atualizou alguma duração via UPDATE_SCHEDULE_ITEM
+    // enquanto aguardávamos, stateRef.current já tem esses valores mais recentes.
+    // Sem esta etapa, SET_DATE_SCHEDULE sobrescreveria durações já lidas,
+    // causando o efeito "tempo aparece e some".
+    {
+      const _cur = stateRef.current.dateSchedules[dateStr] ?? []
+      const _curDur = new Map(_cur.map(i => [i.id, i.duration]))
+      finalItems = finalItems.map(i => {
+        const latest = _curDur.get(i.id)
+        return (latest && latest > 0 && (i.duration === 0 || i.duration == null))
+          ? { ...i, duration: latest }
+          : i
+      })
+    }
+
+    flushDurationCacheUpdates()
     dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: dateStr, items: finalItems } })
     dispatch({ type: 'SET_SPOT_ROTATION', payload: currentRotation })
 
@@ -791,20 +910,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!window.spotmaster) return 0
     const st = await window.spotmaster.vmixRequest({})
     if (!st.success || !st.data) return 0
-    const matches = [...st.data.matchAll(/<input[^>]*number="(\d+)"/gi)]
+    const matches = [...st.data.matchAll(/<input\b[^>]*\bnumber="(\d+)"/gi)]
     return matches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0)
   }, [])
 
   // Polls until a new input (number > prevMax) appears after AddInput.
   // Returns the input's GUID (key attribute) — stable across renumbering.
+  // Aceita tanto <input ...>content</input> quanto <input ... /> (self-closing).
   const pollForNewInput = useCallback(async (prevMax: number): Promise<string | null> => {
     for (let attempt = 0; attempt < 50; attempt++) {
       await sleep(200)
       if (!window.spotmaster) return null
       const st = await window.spotmaster.vmixRequest({})
       if (st.success && st.data) {
-        // Parse every <input ...> tag and find one with number > prevMax
-        const tags = [...st.data.matchAll(/<input\s([^>]*)>/gi)]
+        // Match abertura da tag input — não exige </input>, então funciona em ambos os formatos.
+        const tags = [...st.data.matchAll(/<input\b([^>]*?)\/?>/gi)]
         for (const tag of tags) {
           const attrs = tag[1]
           const numM = attrs.match(/\bnumber="(\d+)"/i)
@@ -817,6 +937,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     return null
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Polls até o state de um input específico ficar pronto pra tocar.
+  // vMix v28/29 mantém state="Loading" enquanto decodifica o arquivo; PlayInput
+  // enviado nesse momento é silenciosamente ignorado — daí o sintoma "input
+  // adicionado mas não inicia". Esperamos por estados terminais (Paused/Running/Completed).
+  const waitForInputReady = useCallback(async (guid: string, timeoutMs = 6000): Promise<boolean> => {
+    if (!window.spotmaster) return false
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      const st = await window.spotmaster.vmixRequest({})
+      if (st.success && st.data) {
+        // Procura a tag input com o key dado e extrai state
+        const escaped = guid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const re = new RegExp(`<input\\b[^>]*\\bkey="${escaped}"[^>]*\\bstate="([^"]*)"`, 'i')
+        const m = st.data.match(re)
+        if (m) {
+          const state = m[1]
+          // Loading = ainda decodificando. Empty = falhou. Qualquer outro = pronto.
+          if (state && state !== 'Loading' && state !== 'Empty') return true
+        }
+      }
+      await sleep(150)
+    }
+    return false
+  }, [])
+
+  // Polls até o state virar Running (clip efetivamente tocando) ou a position avançar.
+  // Usado logo após PlayInput para confirmar que o vMix aceitou o comando.
+  const waitForInputPlaying = useCallback(async (guid: string, timeoutMs = 1200): Promise<boolean> => {
+    if (!window.spotmaster) return false
+    const start = Date.now()
+    const escaped = guid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`<input\\b[^>]*\\bkey="${escaped}"[^>]*\\bstate="([^"]*)"[^>]*\\bposition="(\\d+)"`, 'i')
+    while (Date.now() - start < timeoutMs) {
+      const st = await window.spotmaster.vmixRequest({})
+      if (st.success && st.data) {
+        const m = st.data.match(re)
+        if (m) {
+          const state = m[1]
+          const pos = parseInt(m[2] || '0')
+          if (state === 'Running' || pos > 0) return true
+        }
+      }
+      await sleep(100)
+    }
+    return false
+  }, [])
 
   // Loads a file as a new input in vMix.
   // Returns the input's GUID (stable — never changes when vMix renumbers).
@@ -832,12 +999,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const guid = await pollForNewInput(prevMax)  // returns GUID
     if (!guid) return null
     spotmasterGuidsRef.current.add(guid)  // register so we can clean up later
-    await sleep(1000) // let vMix fully decode/buffer
+    // Aguarda o vMix terminar de carregar/decodar o arquivo antes de tocar.
+    // Sem isso, PlayInput pode chegar enquanto state="Loading" e ser ignorado
+    // silenciosamente — o input aparece no vMix mas não inicia a reprodução.
     if (!isImage) {
+      const ready = await waitForInputReady(guid, 6000)
+      if (!ready) {
+        // Fallback: dá mais tempo absoluto pra arquivos lentos antes de desistir
+        await sleep(1000)
+      }
       await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: guid, Value: '0' })
     }
     return guid
-  }, [getMaxInputNum, pollForNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [getMaxInputNum, pollForNewInput, waitForInputReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── cleanupInputs ───────────────────────────────────────────────────────────
   // Removes the active input (by GUID) from vMix after delayMs.
@@ -947,22 +1121,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (guid) {
           const ext = item.filePath.split('.').pop()?.toLowerCase() ?? ''
-          const isImg   = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
-          const isAudio = ['mp3','wav','aac','m4a','flac','ogg','wma','opus','aiff','aif'].includes(ext)
+          const isImg = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
 
           if (!cachedAlreadyOnAir) {
-            // Normal flow: load → play → cut
-            if (!isImg && !isAudio) {
-              await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
-              await sleep(300)
-            }
+            // Ordem correta para vMix 28+:
+            //   1) PreviewInput  → input vai pro PVW
+            //   2) Cut           → PVW vira PGM (input visível mas ainda Paused se for vídeo/áudio)
+            //   3) PlayInput     → só agora o clip começa a reproduzir
+            // Enviar PlayInput ANTES de o input estar no Program faz o vMix descartá-lo
+            // silenciosamente em algumas versões — sintoma: "input vai pra play e não roda".
             await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: guid })
-            await sleep(100)
+            await sleep(150)
             await window.spotmaster.vmixRequest({ Function: 'Cut' })
-            if (isAudio) {
-              await sleep(500)
+            await sleep(150)
+            if (!isImg) {
               await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
               await sleep(200)
+              // Verifica se o input realmente saiu de Paused. Se não, manda um 2º PlayInput.
+              // Isso cobre o caso raro de vMix descartar o primeiro logo após o Cut.
+              const ok = await waitForInputPlaying(guid, 1200)
+              if (!ok) {
+                await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
+              }
             }
 
             // Remove the PREVIOUS input 5 s after the cut.
@@ -1089,13 +1269,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       while (Date.now() - start < totalMs) {
         if (abortRef.current) break
         const elapsed = Date.now() - start
-        dispatch({
-          type: 'SET_ACTIVE_ITEM_PROGRESS',
-          payload: {
-            inputNum: onAirInput || 'clock',
-            position: elapsed,
-            duration: totalMs,
-          },
+        setPlaybackProgress({
+          inputNum: onAirInput || 'clock',
+          position: elapsed,
+          duration: totalMs,
         })
         // ── Anticipatory preload ─────────────────────────────────────────────
         // Start loading the next file-based item ~10 s before this one ends.
@@ -1122,7 +1299,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
+    setPlaybackProgress(null)
 
     // Mark done. Items interrupted by a scheduled block go 'done' —
     // playout always moves forward, never returns to what was playing.
@@ -1130,7 +1307,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
       updateQueueItem({ ...fresh, status: 'done' })
     }
-  }, [dispatch, loadNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, loadNewInput, waitForInputPlaying]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── runSequence ─────────────────────────────────────────────────────────────
   // Infinite while-loop that reads the LIVE playlist on every iteration.
@@ -1273,7 +1450,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     scheduleInterruptTimeRef.current = ''
     minOrderRef.current = -1
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
-    dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
+    setPlaybackProgress(null)
 
     // Discard any preloaded input that was never used (sequence ended before it played)
     const unusedPreload = preloadedInputRef.current
@@ -1491,7 +1668,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     minOrderRef.current = -1
     stopAfterCurrentRef.current = false
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
-    dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
+    setPlaybackProgress(null)
     if (window.spotmaster) {
       await window.spotmaster.vmixStopFastPolling()
       // Discard any in-progress preload so it doesn't linger in vMix
@@ -1624,7 +1801,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     playItem(first).then(() => {
       dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
-      dispatch({ type: 'SET_ACTIVE_ITEM_PROGRESS', payload: null })
+      setPlaybackProgress(null)
       if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
       // cleanupInputs reads and zeros activeInputRef internally
       cleanupInputs(5000)
@@ -1648,10 +1825,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
       lastFastPosRef.current[num] = inp.position
-      dispatch({
-        type: 'SET_ACTIVE_ITEM_PROGRESS',
-        payload: { inputNum: inp.number, position: inp.position, duration: inp.duration },
-      })
+      setPlaybackProgress({ inputNum: inp.number, position: inp.position, duration: inp.duration })
     })
     return () => window.spotmaster?.removeVmixFastStatusListener()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1727,6 +1901,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => {
       if (midiAccess) {
+        midiAccess.onstatechange = null
         midiAccess.inputs.forEach(input => { input.onmidimessage = null })
       }
     }
@@ -1811,7 +1986,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const [settingsRaw, playlistRaw, clientsRaw, logRaw,
                blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw,
-               musicStylesRaw, musicSequencesRaw, autoBlocoRaw] =
+               musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -1826,6 +2001,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('musicStyles'),
             window.spotmaster.loadData('musicSequences'),
             window.spotmaster.loadData('autoBlocoAssignments'),
+            window.spotmaster.loadData('deletedScheduleSlots'),
+            window.spotmaster.loadData('mediaDurationCache'),
           ])
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -1854,6 +2031,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             activePanel:      (typeof panelRaw === 'string' ? panelRaw : null) ?? 'playlist',
             weeklyGrid:       { ...DEFAULT_WEEKLY_GRID, ...((gridRaw as WeeklyProgramGrid) ?? {}) },
             dateSchedules:    (dateSchedulesRaw as Record<string, PlaylistItem[]>) ?? {},
+            mediaDurationCache: sanitizeDurationCache(durationCacheRaw),
+            deletedScheduleSlots: (deletedSlotsRaw as Record<string, DeletedScheduleSlot[]>) ?? {},
             musicStyles:          (musicStylesRaw as MusicStyle[])          ?? [],
             musicSequences:       (musicSequencesRaw as MusicSequence[])    ?? [],
             autoBlocoAssignments: (autoBlocoRaw as AutoBlocoAssignment[])   ?? [],
@@ -1935,6 +2114,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     )
     saveToStorage('dateSchedules', pruned)
   }, [state.dateSchedules, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('mediaDurationCache', state.mediaDurationCache)
+  }, [state.mediaDurationCache, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (state.isLoading) return
+    // Mesmo pruning de 30 dias do dateSchedules
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 30)
+    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    const pruned = Object.fromEntries(
+      Object.entries(state.deletedScheduleSlots).filter(([date]) => date >= cutoffStr),
+    )
+    saveToStorage('deletedScheduleSlots', pruned)
+  }, [state.deletedScheduleSlots, state.isLoading, saveToStorage])
 
   useEffect(() => {
     if (!state.isLoading) saveToStorage('musicStyles', state.musicStyles)

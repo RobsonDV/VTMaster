@@ -26,14 +26,21 @@ function readMediaDuration(fp: string, type: 'video' | 'audio'): Promise<number 
   return new Promise(resolve => {
     const el = document.createElement(type === 'audio' ? 'audio' : 'video') as HTMLVideoElement
     el.preload = 'metadata'
-    const t = setTimeout(() => { el.src = ''; resolve(null) }, 10_000)
+    const cleanup = () => {
+      el.onloadedmetadata = null
+      el.onerror = null
+      try { el.pause() } catch {}
+      el.removeAttribute('src')
+      try { el.load() } catch {}
+    }
+    const t = setTimeout(() => { cleanup(); resolve(null) }, 10_000)
     el.onloadedmetadata = () => {
       clearTimeout(t)
       const d = el.duration
-      el.src = ''
+      cleanup()
       resolve(isFinite(d) && d > 0 ? Math.round(d) : null)
     }
-    el.onerror = () => { clearTimeout(t); el.src = ''; resolve(null) }
+    el.onerror = () => { clearTimeout(t); cleanup(); resolve(null) }
     el.src = toLocalMediaUrl(fp)
   })
 }

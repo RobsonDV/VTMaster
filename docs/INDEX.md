@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **5.0.0** — Atualizado em **12/05/2026** com Fase 12: Stop Next, correção de comercial e leitura eager de duração
+> Versão **5.1.4** — Atualizado em **14/05/2026** com correção AutoProg por duração real, cache de duração e leitura em lote com concorrência limitada
 
 ---
 
@@ -97,3 +97,4 @@
 | Fase 10 — v3.2.0 | 11/05/2026 | Arrastar entre blocos, copiar/colar, BlockPickerModal, seleção visual, VmixInputPanel dual-mode |
 | Fase 11 — v3.3.0 | 12/05/2026 | 8 bugs + 5 robustez, remoção do legacy adBreaks, StatusBar redesenhada (ON AIR badge, countdown, progress bar), PlaylistTable e DaySchedulePanel mais vivos |
 | Interface — Fases 1 a 3 | 12/05/2026 | Sidebar com ícones, toolbar reorganizada, favicon VTMaster, cockpit operacional da Programação, design system inicial nas telas principais e fluxo de adicionar item refinado |
+| Correção AutoProg — v5.1.4 | 14/05/2026 | `Promise.allSettled` não é mais o fluxo atual; leitura de duração usa `readMediaDurationBatch` com pool, cache persistido e fallback nativo Electron para MP4/MOV/M4V/M4A/3GP quando o Chromium não lê metadata. |
