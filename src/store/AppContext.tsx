@@ -349,7 +349,11 @@ interface AppContextValue {
   stopPlayback: () => Promise<void>
   loadBlockIntoPlaylist: (block: CommercialBlock) => void
   disparo: () => void
-  generatePlaylistFromGrid: (targetDate?: string, merge?: boolean) => Promise<void>
+  generatePlaylistFromGrid: (
+    targetDate?: string,
+    merge?: boolean,
+    onDurationProgress?: (done: number, total: number) => void,
+  ) => Promise<void>
   skipToNext: () => Promise<void>
   setStopAfterCurrent: (v: boolean) => void
 }
@@ -496,7 +500,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     return [items, newRotation]
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
   // Expands a block's items and appends them to the playlist tail.
@@ -519,7 +523,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   //   2. Commercial blocks scheduled for today (already expanded into items)
   // Sorts everything by scheduledTime and replaces the entire playlist.
   // Marks commercial blocks as loaded so the scheduler won't duplicate them.
-  const generatePlaylistFromGrid = useCallback(async (targetDate?: string, merge = false) => {
+  const generatePlaylistFromGrid = useCallback(async (
+    targetDate?: string,
+    merge = false,
+    onDurationProgress?: (done: number, total: number) => void,
+  ) => {
     const dateStr = targetDate ?? today()
     // Parse day-of-week from the target date (midday avoids DST edge cases)
     const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay()
@@ -841,13 +849,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     )
     if (_needsDur.length > 0) {
       const _durMap = new Map<string, number>()
+      onDurationProgress?.(0, _needsDur.length)
       await readMediaDurationBatch(
         _needsDur,
         (item, dur) => {
           _durMap.set(item.id, dur)
           if (item.filePath) rememberDuration(item.filePath, dur)
         },
-        { concurrency: 4, timeoutMs: 15_000 },
+        { concurrency: 4, timeoutMs: 15_000, onProgress: onDurationProgress },
       )
       if (_durMap.size > 0) {
         finalItems = finalItems.map(i =>
@@ -936,7 +945,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
     return null
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // Polls até o state de um input específico ficar pronto pra tocar.
   // vMix v28/29 mantém state="Loading" enquanto decodifica o arquivo; PlayInput
@@ -1011,7 +1020,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: guid, Value: '0' })
     }
     return guid
-  }, [getMaxInputNum, pollForNewInput, waitForInputReady]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [getMaxInputNum, pollForNewInput, waitForInputReady])  
 
   // ── cleanupInputs ───────────────────────────────────────────────────────────
   // Removes the active input (by GUID) from vMix after delayMs.
@@ -1024,7 +1033,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: toRemove })
       }
     }, delayMs)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // ── playItem ────────────────────────────────────────────────────────────────
   // Sends ONE item to air and awaits until it finishes playing.
@@ -1101,7 +1110,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (item.filePath) {
         // Use a preloaded GUID if available for this exact file (eliminates gap between items).
         // Otherwise fall back to loading now (same behaviour as before this feature).
-        let guid: string | null = null
+        let guid: string | null
         const cached = preloadedInputRef.current
         const cachedAlreadyOnAir = !!(cached?.alreadyOnAir)  // set by skipToNext
         if (cached?.filePath === item.filePath) {
@@ -1307,7 +1316,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
       updateQueueItem({ ...fresh, status: 'done' })
     }
-  }, [dispatch, loadNewInput, waitForInputPlaying]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, loadNewInput, waitForInputPlaying])  
 
   // ── runSequence ─────────────────────────────────────────────────────────────
   // Infinite while-loop that reads the LIVE playlist on every iteration.
@@ -1689,7 +1698,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     getQueue()
       .filter(i => i.status === 'playing')
       .forEach(i => updateQueueItem({ ...i, status: 'pending' }))
-  }, [dispatch, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, cleanupInputs])  
 
   // ── skipToNext ───────────────────────────────────────────────────────────────
   // Manual "Next" button: loads the next pending item into vMix Preview, lets
@@ -1758,7 +1767,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Interrupt current playItem wait loop; runSequence keeps running
     disparoInterruptRef.current = true
     abortRef.current = true
-  }, [loadNewInput]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadNewInput])  
 
   // ── setStopAfterCurrent ─────────────────────────────────────────────────────
   // Arms the "Stop Next" feature: runSequence will break after the current item
@@ -1782,7 +1791,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startSequence()
       }
     }
-  }, [startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startSequence, startSchedule])  
 
   // ── playSingleItem ──────────────────────────────────────────────────────────
   const playSingleItem = useCallback(() => {
@@ -1828,7 +1837,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPlaybackProgress({ inputNum: inp.number, position: inp.position, duration: inp.duration })
     })
     return () => window.spotmaster?.removeVmixFastStatusListener()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // ── Disparo: listen for trigger-fired from main process ────────────────────
   useEffect(() => {
@@ -1925,7 +1934,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (triggerTime < sessionStartRef.current) return  // não dispara blocos vencidos antes do startup
         if (!stateRef.current.isSequencePlaying) {
           scheduleInterruptTimeRef.current = triggerTime
-          activeQueueRef.current === 'schedule' ? startSchedule() : startSequence()
+          if (activeQueueRef.current === 'schedule') startSchedule()
+          else startSequence()
         } else {
           scheduleInterruptTimeRef.current = triggerTime
           scheduleInterruptRef.current = true
@@ -1936,7 +1946,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSequence, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.isLoading, startSequence, startSchedule])  
 
   // ── Scheduler: Autoplay Comerciais (blocos com adBreakId) ──────────────────
   // Dispara EXCLUSIVAMENTE blocos comerciais da Programação do Dia.
@@ -1974,7 +1984,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.isLoading, startSchedule])  
 
   // ── Load all data on startup ───────────────────────────────────────────────
   useEffect(() => {
@@ -2172,6 +2182,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useApp(): AppContextValue {
   const ctx = useContext(AppContext)
   if (!ctx) throw new Error('useApp must be used inside AppProvider')

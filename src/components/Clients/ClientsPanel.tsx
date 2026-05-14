@@ -2,46 +2,9 @@ import { useState } from 'react'
 import { Plus, Edit2, Trash2, Search, ChevronDown, ChevronRight, Film, Music, Image as ImageIcon } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { Client, ClientSpot } from '../../types'
+import { detectMediaType, readMediaDuration } from '../../utils/mediaDuration'
 import { formatDuration } from '../../utils/time'
 import '../AdBreaks/AdBreaksPanel.css'
-
-// ─── Media helpers ────────────────────────────────────────────────────────────
-const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'])
-const AUDIO_EXTS = new Set(['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'])
-
-function detectMediaType(fp: string): 'video' | 'audio' | 'image' {
-  const ext = fp.split('.').pop()?.toLowerCase() ?? ''
-  if (IMAGE_EXTS.has(ext)) return 'image'
-  if (AUDIO_EXTS.has(ext)) return 'audio'
-  return 'video'
-}
-
-function toLocalMediaUrl(fp: string) {
-  return 'local-media:///' + fp.replace(/\\/g, '/')
-}
-
-function readMediaDuration(fp: string, type: 'video' | 'audio'): Promise<number | null> {
-  return new Promise(resolve => {
-    const el = document.createElement(type === 'audio' ? 'audio' : 'video') as HTMLVideoElement
-    el.preload = 'metadata'
-    const cleanup = () => {
-      el.onloadedmetadata = null
-      el.onerror = null
-      try { el.pause() } catch {}
-      el.removeAttribute('src')
-      try { el.load() } catch {}
-    }
-    const t = setTimeout(() => { cleanup(); resolve(null) }, 10_000)
-    el.onloadedmetadata = () => {
-      clearTimeout(t)
-      const d = el.duration
-      cleanup()
-      resolve(isFinite(d) && d > 0 ? Math.round(d) : null)
-    }
-    el.onerror = () => { clearTimeout(t); cleanup(); resolve(null) }
-    el.src = toLocalMediaUrl(fp)
-  })
-}
 
 function MediaIcon({ type }: { type: 'video' | 'audio' | 'image' }) {
   if (type === 'image') return <ImageIcon size={12} />
@@ -64,7 +27,7 @@ function SpotForm({ spot, onSave, onCancel }: {
   const browse = async () => {
     const path = await window.spotmaster?.browseVideoFile()
     if (!path) return
-    const nameNoExt = path.split(/[\\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? ''
+    const nameNoExt = path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? ''
     const mt = detectMediaType(path)
     setFilePath(path)
     setMediaType(mt)

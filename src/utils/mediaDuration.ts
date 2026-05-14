@@ -92,14 +92,16 @@ export function readMediaDuration(
 export async function readMediaDurationBatch<T extends { filePath?: string }>(
   items: T[],
   onDuration: (item: T, duration: number) => void,
-  options: { concurrency?: number; timeoutMs?: number } = {},
+  options: { concurrency?: number; timeoutMs?: number; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<void> {
-  const { concurrency = 4, timeoutMs = 10_000 } = options
+  const { concurrency = 4, timeoutMs = 10_000, onProgress } = options
   // Só vídeo e áudio; imagens não têm duração intrínseca.
   const queue = items.filter(i => {
     if (!i.filePath) return false
     return detectMediaType(i.filePath) !== 'image'
   })
+  const total = queue.length
+  let done = 0
 
   let cursor = 0
   const workers: Promise<void>[] = []
@@ -113,6 +115,8 @@ export async function readMediaDurationBatch<T extends { filePath?: string }>(
         if (mt === 'image') continue
         const dur = await readMediaDuration(item.filePath!, mt, timeoutMs)
         if (dur && dur > 0) onDuration(item, dur)
+        done++
+        onProgress?.(done, total)
       }
     })())
   }

@@ -307,6 +307,12 @@
 .day-schedule-btn.accent:hover { opacity: 0.88; }
 .day-schedule-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.schedule-action-error {
+  color: var(--error);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
 /* Ícone girando — usado no botão "Ler Tempos" enquanto lê durações */
 @keyframes spin {
   from { transform: rotate(0deg); }

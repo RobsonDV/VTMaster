@@ -15,7 +15,8 @@ import {
   readMediaDuration,
   readMediaDurationBatch,
 } from '../../utils/mediaDuration'
-import VmixInputPanel, { spotTypeForVmix } from '../Playlist/VmixInputPanel'
+import { spotTypeForVmix } from '../../utils/vmixInputs'
+import VmixInputPanel from '../Playlist/VmixInputPanel'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import { Field, FieldRow } from '../ui/Field'
@@ -505,6 +506,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const [stopAfterArmed, setStopAfterArmed] = useState(false)
   const [readingDurations, setReadingDurations] = useState(false)
   const [updatingSchedule, setUpdatingSchedule] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState<{ done: number; total: number } | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
 
   // Itens com arquivo mas sem duração lida — para mostrar/ocultar botão
   const missingDurCount = useMemo(
@@ -514,7 +517,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
 
   // Reset Stop Next when playback stops
   useEffect(() => {
-    if (!state.isSequencePlaying) setStopAfterArmed(false)
+    if (!state.isSequencePlaying) queueMicrotask(() => setStopAfterArmed(false))
   }, [state.isSequencePlaying])
 
   // ── Drag-and-drop state ───────────────────────────────────────────────────
@@ -642,10 +645,18 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     }
     // merge=true: preserves existing items, only adds missing schedule times
     setUpdatingSchedule(true)
+    setUpdateProgress(null)
+    setUpdateError(null)
     try {
-      await generatePlaylistFromGrid(selectedDate as string, true)
+      await generatePlaylistFromGrid(selectedDate as string, true, (done, total) => {
+        setUpdateProgress({ done, total })
+      })
+    } catch (err) {
+      console.error('[DaySchedule] Falha ao atualizar programação:', err)
+      setUpdateError('Não foi possível atualizar a programação.')
     } finally {
       setUpdatingSchedule(false)
+      setUpdateProgress(null)
     }
   }
 
@@ -829,6 +840,16 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const remainingLabel = activeItemProgress && activeItemProgress.duration > 0
     ? formatDuration(Math.max(0, Math.round((activeItemProgress.duration - activeItemProgress.position) / 1000)))
     : null
+  const updateLabel = updatingSchedule && updateProgress?.total
+    ? `Atualizando… ${updateProgress.done}/${updateProgress.total}`
+    : updatingSchedule
+      ? 'Atualizando…'
+      : 'Atualizar'
+  const generateLabel = updatingSchedule && updateProgress?.total
+    ? `Gerando… ${updateProgress.done}/${updateProgress.total}`
+    : updatingSchedule
+      ? 'Gerando…'
+      : 'Gerar da Estrutura'
 
   return (
     <div className="day-schedule-panel">
@@ -952,7 +973,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
               title={updatingSchedule ? 'Atualizando programação...' : 'Recarregar programação desta data'}
             >
               <RefreshCw size={13} className={updatingSchedule ? 'spin' : ''} />
-              {updatingSchedule ? 'Atualizando…' : 'Atualizar'}
+              {updateLabel}
             </button>
             {missingDurCount > 0 && (
               <button
@@ -965,6 +986,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                 {readingDurations ? `Lendo… (${missingDurCount})` : `Ler Tempos (${missingDurCount})`}
               </button>
             )}
+            {updateError && <span className="schedule-action-error">{updateError}</span>}
             <button
               className="day-schedule-btn accent"
               onClick={handleAddItemFromToolbar}
@@ -1018,7 +1040,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
             title={updatingSchedule ? 'Atualizando programação...' : 'Recarregar programação desta data'}
           >
             <RefreshCw size={13} className={updatingSchedule ? 'spin' : ''} />
-            {updatingSchedule ? 'Atualizando…' : 'Atualizar'}
+            {updateLabel}
           </button>
 
           {/* Ler Tempos — só aparece quando há itens sem duração */}
@@ -1033,6 +1055,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
               {readingDurations ? `Lendo… (${missingDurCount})` : `Ler Tempos (${missingDurCount})`}
             </button>
           )}
+          {updateError && <span className="schedule-action-error">{updateError}</span>}
 
           {/* Play / Stop / Next — always visible for today; preview text for other dates */}
           {isToday ? (
@@ -1122,8 +1145,9 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
             disabled={updatingSchedule}
           >
             <RefreshCw size={14} className={updatingSchedule ? 'spin' : ''} />
-            {updatingSchedule ? 'Gerando…' : 'Gerar da Estrutura'}
+            {generateLabel}
           </button>
+          {updateError && <span className="schedule-action-error">{updateError}</span>}
         </div>
       ) : (
         <>

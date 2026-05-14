@@ -1,34 +1,12 @@
 import { useState, useEffect } from 'react'
 import { X, Monitor, Search } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
-import type { VmixInput, PlaylistItem, SpotType } from '../../types'
+import type { VmixInput, PlaylistItem } from '../../types'
+import { INPUT_TYPE_LABELS, spotTypeForVmix } from '../../utils/vmixInputs'
 import './VmixInputPickerModal.css'
 
 interface VmixInputPickerModalProps {
   onClose: () => void
-}
-
-const INPUT_TYPE_LABELS: Record<string, string> = {
-  Video: 'Vídeo',
-  Camera: 'Câmera',
-  NDI: 'NDI',
-  VirtualSet: 'Cenário Virtual',
-  Mix: 'Mix',
-  Colour: 'Cor',
-  GT: 'Gráfico',
-  Browser: 'Browser',
-  Image: 'Imagem',
-  AudioFile: 'Áudio',
-  Flash: 'Flash',
-  PowerPoint: 'PowerPoint',
-  VideoList: 'Lista de Vídeos',
-}
-
-const spotTypeForVmix = (type: string): SpotType => {
-  if (type === 'Camera' || type === 'NDI') return 'programa'
-  if (type === 'Video' || type === 'VideoList') return 'spot'
-  if (type === 'GT' || type === 'Browser') return 'vinheta'
-  return 'outros'
 }
 
 export default function VmixInputPickerModal({ onClose }: VmixInputPickerModalProps) {
@@ -82,7 +60,8 @@ export default function VmixInputPickerModal({ onClose }: VmixInputPickerModalPr
   const toggleSelect = (num: string) => {
     setSelected(prev => {
       const next = new Set(prev)
-      next.has(num) ? next.delete(num) : next.add(num)
+      if (next.has(num)) next.delete(num)
+      else next.add(num)
       return next
     })
   }

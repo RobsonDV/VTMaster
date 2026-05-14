@@ -44,7 +44,7 @@ export default function ContextMenu({
       document.removeEventListener('mousedown', handleClick)
       document.removeEventListener('keydown', handleKey)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // Ajustar posição para não sair da tela
   const style: React.CSSProperties = {

@@ -452,7 +452,7 @@ ipcMain.handle('vmix-stop-fast-polling', () => {
 // Gamepad e MIDI são gerenciados no renderer — apenas teclas de teclado usam globalShortcut
 ipcMain.handle('register-trigger', (_event, key: string) => {
   if (registeredTriggerKey) {
-    try { globalShortcut.unregister(registeredTriggerKey) } catch {}
+    try { globalShortcut.unregister(registeredTriggerKey) } catch { /* ignore invalid shortcut unregister */ }
     registeredTriggerKey = null
   }
   // Gamepad e MIDI são tratados no renderer via polling/Web MIDI API
@@ -472,7 +472,7 @@ ipcMain.handle('register-trigger', (_event, key: string) => {
 // Unregister global trigger shortcut
 ipcMain.handle('unregister-trigger', () => {
   if (registeredTriggerKey) {
-    try { globalShortcut.unregister(registeredTriggerKey) } catch {}
+    try { globalShortcut.unregister(registeredTriggerKey) } catch { /* ignore invalid shortcut unregister */ }
     registeredTriggerKey = null
   }
 })

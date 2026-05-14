@@ -7,6 +7,7 @@ import Button from '../ui/Button'
 import { Field, FieldRow } from '../ui/Field'
 import Modal from '../ui/Modal'
 import SegmentedControl from '../ui/SegmentedControl'
+import { detectMediaType, readMediaDuration } from '../../utils/mediaDuration'
 import './ItemModal.css'
 
 interface ItemModalProps {
@@ -27,43 +28,7 @@ const VMIX_FUNCTIONS = [
   { value: 'OverlayInput1Out', label: 'Overlay 1 - Fechar', hasInput: false, hasValue: false, valuePlaceholder: '' },
 ] as const
 
-const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif', 'ico', 'svg'])
-const AUDIO_EXTS = new Set(['mp3', 'wav', 'aac', 'ogg', 'flac', 'm4a', 'wma', 'opus', 'aiff'])
-type MediaType = 'video' | 'image' | 'audio'
-
-function detectMediaType(filePath: string): MediaType {
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
-  if (IMAGE_EXTS.has(ext)) return 'image'
-  if (AUDIO_EXTS.has(ext)) return 'audio'
-  return 'video'
-}
-
-function toLocalMediaUrl(filePath: string): string {
-  return 'local-media:///' + filePath.replace(/\\/g, '/')
-}
-
-function readMediaDuration(filePath: string, type: 'video' | 'audio'): Promise<number | null> {
-  return new Promise((resolve) => {
-    const el = document.createElement(type === 'audio' ? 'audio' : 'video') as HTMLVideoElement
-    el.preload = 'metadata'
-    const cleanup = () => {
-      el.onloadedmetadata = null
-      el.onerror = null
-      try { el.pause() } catch {}
-      el.removeAttribute('src')
-      try { el.load() } catch {}
-    }
-    const timer = setTimeout(() => { cleanup(); resolve(null) }, 10_000)
-    el.onloadedmetadata = () => {
-      clearTimeout(timer)
-      const d = el.duration
-      cleanup()
-      resolve(isFinite(d) && d > 0 ? Math.round(d) : null)
-    }
-    el.onerror = () => { clearTimeout(timer); cleanup(); resolve(null) }
-    el.src = toLocalMediaUrl(filePath)
-  })
-}
+type MediaType = ReturnType<typeof detectMediaType>
 
 const MediaIcon = ({ type, size = 13 }: { type: MediaType; size?: number }) => {
   if (type === 'image') return <ImageIcon size={size} />

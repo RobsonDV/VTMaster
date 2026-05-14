@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useApp } from '../../store/AppContext'
 import { formatDate, formatDuration } from '../../utils/time'
 import '../AdBreaks/AdBreaksPanel.css'
@@ -14,8 +14,10 @@ export default function LogPanel() {
   const [filterTitle,    setFilterTitle]    = useState('')
 
   const [page, setPage] = useState(1)
-  // Reset to page 1 whenever any filter changes
-  useEffect(() => { setPage(1) }, [filterDateFrom, filterDateTo, filterClientId, filterStatus, filterTitle])
+  const updateFilter = (setter: (value: string) => void, value: string) => {
+    setter(value)
+    setPage(1)
+  }
 
   const PAGE_SIZE = 100
 
@@ -45,6 +47,7 @@ export default function LogPanel() {
     setFilterClientId('')
     setFilterStatus('')
     setFilterTitle('')
+    setPage(1)
   }
 
   const exportCSV = () => {
@@ -97,7 +100,7 @@ export default function LogPanel() {
           <input
             type="text"
             value={filterTitle}
-            onChange={(e) => setFilterTitle(e.target.value)}
+            onChange={(e) => updateFilter(setFilterTitle, e.target.value)}
             placeholder="Buscar título..."
             style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', color: 'var(--text-primary)', fontSize: '0.8rem', outline: 'none', width: 140 }}
           />
@@ -105,7 +108,7 @@ export default function LogPanel() {
           <input
             type="date"
             value={filterDateFrom}
-            onChange={(e) => setFilterDateFrom(e.target.value)}
+            onChange={(e) => updateFilter(setFilterDateFrom, e.target.value)}
             title="De"
             style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', color: 'var(--text-primary)', fontSize: '0.8rem', outline: 'none' }}
           />
@@ -113,14 +116,14 @@ export default function LogPanel() {
           <input
             type="date"
             value={filterDateTo}
-            onChange={(e) => setFilterDateTo(e.target.value)}
+            onChange={(e) => updateFilter(setFilterDateTo, e.target.value)}
             title="Até"
             style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', color: 'var(--text-primary)', fontSize: '0.8rem', outline: 'none' }}
           />
           {/* Client */}
           <select
             value={filterClientId}
-            onChange={(e) => setFilterClientId(e.target.value)}
+            onChange={(e) => updateFilter(setFilterClientId, e.target.value)}
             title={t.log.filterClient}
             style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', color: 'var(--text-primary)', fontSize: '0.8rem', outline: 'none' }}
           >
@@ -130,7 +133,7 @@ export default function LogPanel() {
           {/* Status */}
           <select
             value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
+            onChange={(e) => updateFilter(setFilterStatus, e.target.value)}
             title="Status"
             style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', color: 'var(--text-primary)', fontSize: '0.8rem', outline: 'none' }}
           >

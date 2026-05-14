@@ -4,7 +4,7 @@ import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
 import type { PlaylistItem, PlayLog, VmixInput, SpotType } from '../../types'
 import { formatDuration, formatTime, now } from '../../utils/time'
-import { spotTypeForVmix } from './VmixInputPanel'
+import { spotTypeForVmix } from '../../utils/vmixInputs'
 import ContextMenu, { type ContextMenuState } from './ContextMenu'
 import './PlaylistTable.css'
 
@@ -369,7 +369,7 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
     setDragOverIndex(null)
     const raw = e.dataTransfer.getData('application/vmix-input')
     if (!raw) return
-    try { insertVmixInput(JSON.parse(raw) as VmixInput, atIndex) } catch {}
+    try { insertVmixInput(JSON.parse(raw) as VmixInput, atIndex) } catch { /* ignore malformed drag payload */ }
   }, [insertVmixInput])
 
   const handleRowDragLeave = useCallback((e: React.DragEvent) => {
