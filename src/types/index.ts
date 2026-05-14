@@ -193,6 +193,7 @@ export interface VmixStatus {
   previewInput?: string
   recording?: boolean
   streaming?: boolean
+  external?: boolean
   fadeToBlack?: boolean
   error?: string
 }
@@ -206,6 +207,17 @@ export interface VmixInput {
   state: string
   duration: number
   position: number
+}
+
+export interface VmixCommandLog {
+  id: string
+  at: string
+  source: string
+  functionName: string
+  params: Record<string, string>
+  success: boolean
+  latencyMs: number
+  error?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -279,6 +291,8 @@ export interface UpdateStatus {
 export interface SpotMasterAPI {
   saveData: (key: string, data: unknown) => Promise<void>
   loadData: (key: string) => Promise<unknown>
+  createBackup: (reason?: string) => Promise<{ success: boolean; path?: string; error?: string }>
+  fileExists: (filePaths: string[]) => Promise<Record<string, boolean>>
   readMediaDuration: (filePath: string) => Promise<number | null>
   getVersion: () => Promise<string>
   checkForUpdates: () => Promise<UpdateStatus>
@@ -302,6 +316,8 @@ export interface SpotMasterAPI {
   vmixStopFastPolling: () => Promise<boolean>
   onVmixFastStatus: (callback: (status: VmixStatus) => void) => void
   removeVmixFastStatusListener: () => void
+  onVmixCommandLog: (callback: (log: VmixCommandLog) => void) => void
+  removeVmixCommandLogListener: () => void
   openExternal: (url: string) => Promise<void>
   // Disparo (global trigger)
   registerTrigger: (key: string) => Promise<boolean>

@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
-  Square, ListVideo, SkipForward, StopCircle, CheckCircle,
+  Activity, AlertTriangle, ShieldCheck, Square, ListVideo, SkipForward, StopCircle, CheckCircle,
   Trash2, RefreshCw, CalendarDays,
   FolderOpen, Plus, Crosshair, Music, DollarSign, Tv,
   Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
-import type { PlaylistItem, ProgramSlot, VmixActionItem, VmixInput } from '../../types'
+import type { PlaylistItem, ProgramSlot, VmixActionItem, VmixCommandLog, VmixInput, VmixStatus } from '../../types'
 import { formatDuration, today } from '../../utils/time'
+import { runSchedulePreflight, type PreflightSeverity, type PreflightSummary } from '../../utils/preflight'
 import {
   detectMediaType,
   mediaDurationCacheKey,
@@ -399,6 +400,162 @@ function BlockPickerModal({ groups, onClose, onPick }: {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+type PreflightMode = 'manual' | 'start'
+
+const PREFLIGHT_LABEL: Record<PreflightSeverity, string> = {
+  error: 'Erro',
+  warning: 'Aviso',
+  info: 'Info',
+}
+
+function PreflightModal({ summary, mode, onClose, onStartAnyway }: {
+  summary: PreflightSummary
+  mode: PreflightMode
+  onClose: () => void
+  onStartAnyway: () => void
+}) {
+  const hasErrors = summary.errorCount > 0
+  const hasWarnings = summary.warningCount > 0
+  const title = hasErrors
+    ? 'Preflight com bloqueios'
+    : hasWarnings
+      ? 'Preflight com avisos'
+      : 'Preflight aprovado'
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      maxWidth={720}
+      bodyStyle={{ maxHeight: 520, overflowY: 'auto' }}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>Fechar</Button>
+          {mode === 'start' && !hasErrors && hasWarnings && (
+            <Button variant="warning" onClick={onStartAnyway}>Iniciar com avisos</Button>
+          )}
+        </>
+      }
+    >
+      <div className="preflight-summary-strip">
+        <div className="preflight-summary-cell error">
+          <strong>{summary.errorCount}</strong>
+          <span>erros</span>
+        </div>
+        <div className="preflight-summary-cell warning">
+          <strong>{summary.warningCount}</strong>
+          <span>avisos</span>
+        </div>
+        <div className="preflight-summary-cell info">
+          <strong>{summary.infoCount}</strong>
+          <span>infos</span>
+        </div>
+      </div>
+
+      {summary.issues.length === 0 ? (
+        <div className="preflight-empty">
+          <ShieldCheck size={26} />
+          <div>
+            <strong>Nenhum problema encontrado</strong>
+            <span>Arquivos, inputs e estrutura basica passaram na validacao.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="preflight-issue-list">
+          {summary.issues.map(issue => (
+            <div key={issue.id} className={`preflight-issue ${issue.severity}`}>
+              <div className="preflight-issue-icon">
+                {issue.severity === 'info' ? <ShieldCheck size={16} /> : <AlertTriangle size={16} />}
+              </div>
+              <div className="preflight-issue-copy">
+                <div className="preflight-issue-title">
+                  <span>{PREFLIGHT_LABEL[issue.severity]}</span>
+                  <strong>{issue.title}</strong>
+                  {issue.time && <em>{issue.time}</em>}
+                </div>
+                <p>{issue.detail}</p>
+                {issue.action && <small>{issue.action}</small>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="preflight-checked-at">
+        Validado as {new Date(summary.checkedAt).toLocaleTimeString('pt-BR')}
+      </div>
+    </Modal>
+  )
+}
+
+function VmixHealthModal({ status, logs, referenceTime, onClose }: {
+  status: VmixStatus
+  logs: VmixCommandLog[]
+  referenceTime: number
+  onClose: () => void
+}) {
+  const recentLogs = logs.slice(-25).reverse()
+  const tenMinutesAgo = referenceTime - 10 * 60 * 1000
+  const recentWindow = logs.filter(log => Date.parse(log.at) >= tenMinutesAgo)
+  const failedRecent = recentWindow.filter(log => !log.success).length
+  const successfulRecent = recentWindow.filter(log => log.success)
+  const avgLatency = successfulRecent.length
+    ? Math.round(successfulRecent.reduce((sum, log) => sum + log.latencyMs, 0) / successfulRecent.length)
+    : 0
+
+  return (
+    <Modal
+      title="Saude vMix"
+      onClose={onClose}
+      maxWidth={760}
+      bodyStyle={{ maxHeight: 560, overflowY: 'auto' }}
+      actions={<Button variant="primary" onClick={onClose}>Fechar</Button>}
+    >
+      <div className="vmix-health-grid">
+        <div className={`vmix-health-tile ${status.connected ? 'ok' : 'bad'}`}>
+          <span>Conexao</span>
+          <strong>{status.connected ? 'Conectado' : 'Offline'}</strong>
+          <small>{status.error || `${status.version ?? 'vMix'} ${status.edition ?? ''}`.trim()}</small>
+        </div>
+        <div className="vmix-health-tile">
+          <span>Inputs</span>
+          <strong>{status.inputs?.length ?? 0}</strong>
+          <small>lidos do XML atual</small>
+        </div>
+        <div className="vmix-health-tile">
+          <span>Ultimos 10 min</span>
+          <strong>{recentWindow.length}</strong>
+          <small>{failedRecent} falha(s), {avgLatency} ms medio</small>
+        </div>
+        <div className="vmix-health-tile">
+          <span>Estado</span>
+          <strong>{status.recording ? 'REC' : status.streaming ? 'STREAM' : status.external ? 'EXT' : 'Idle'}</strong>
+          <small>recording, streaming ou external</small>
+        </div>
+      </div>
+
+      <div className="vmix-command-log">
+        <div className="vmix-command-log-head">
+          <strong>Comandos recentes</strong>
+          <span>{logs.length} armazenados</span>
+        </div>
+        {recentLogs.length === 0 ? (
+          <div className="vmix-command-empty">Nenhum comando vMix registrado ainda.</div>
+        ) : (
+          recentLogs.map(log => (
+            <div key={log.id} className={`vmix-command-row ${log.success ? 'ok' : 'bad'}`}>
+              <span className="vmix-command-time">{new Date(log.at).toLocaleTimeString('pt-BR')}</span>
+              <strong>{log.functionName}</strong>
+              <span>{log.params.Input ? `Input ${log.params.Input}` : log.params.Value ? `Value ${log.params.Value}` : ''}</span>
+              <em>{log.success ? `${log.latencyMs} ms` : log.error ?? 'falha'}</em>
+            </div>
+          ))
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 interface Props {
   selectedDate: string        // lifted to App.tsx — persists across tab navigation
   onDateChange: (date: string) => void
@@ -508,6 +665,11 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const [updatingSchedule, setUpdatingSchedule] = useState(false)
   const [updateProgress, setUpdateProgress] = useState<{ done: number; total: number } | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  const [preflightRunning, setPreflightRunning] = useState(false)
+  const [preflightMode, setPreflightMode] = useState<PreflightMode>('manual')
+  const [preflightSummary, setPreflightSummary] = useState<PreflightSummary | null>(null)
+  const [showVmixHealth, setShowVmixHealth] = useState(false)
+  const [vmixHealthReferenceTime, setVmixHealthReferenceTime] = useState(0)
 
   // Itens com arquivo mas sem duração lida — para mostrar/ocultar botão
   const missingDurCount = useMemo(
@@ -638,6 +800,53 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   }, [schedule, state.isSequencePlaying, scrollToCard])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
+  const runPreflight = useCallback(async (mode: PreflightMode = 'manual') => {
+    if (preflightRunning) return null
+    setPreflightRunning(true)
+    setPreflightMode(mode)
+    try {
+      const summary = await runSchedulePreflight({
+        date: selectedDate,
+        schedule: sorted,
+        weekSlots,
+        commercialBlocks: state.commercialBlocks,
+        clientSpots: state.clientSpots,
+        vmixStatus: state.vmixStatus,
+        settings: state.settings,
+        fileExists: window.spotmaster?.fileExists
+          ? paths => window.spotmaster.fileExists(paths)
+          : undefined,
+      })
+      setPreflightSummary(summary)
+      return summary
+    } finally {
+      setPreflightRunning(false)
+    }
+  }, [
+    preflightRunning,
+    selectedDate,
+    sorted,
+    weekSlots,
+    state.commercialBlocks,
+    state.clientSpots,
+    state.vmixStatus,
+    state.settings,
+  ])
+
+  const handleStartScheduleWithPreflight = useCallback(async () => {
+    const summary = await runPreflight('start')
+    if (!summary) return
+    if (summary.errorCount === 0 && summary.warningCount === 0) {
+      setPreflightSummary(null)
+      startScheduleFromNow()
+    }
+  }, [runPreflight, startScheduleFromNow])
+
+  const handleStartAfterPreflightWarning = useCallback(() => {
+    setPreflightSummary(null)
+    startScheduleFromNow()
+  }, [startScheduleFromNow])
+
   const handleReload = async () => {
     if (updatingSchedule) return
     if (isToday && state.isSequencePlaying) {
@@ -702,9 +911,10 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
     dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: selectedDate, item: { ...item, status: 'skipped' } } })
   const handleMarkDone = (item: PlaylistItem) =>
     dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: selectedDate, item: { ...item, status: 'done' } } })
-  const handleDelete   = (id: string) => {
-    if (window.confirm(t.common.confirmDelete))
-      dispatch({ type: 'DELETE_SCHEDULE_ITEM', payload: { date: selectedDate, id } })
+  const handleDelete   = async (id: string) => {
+    if (!window.confirm(t.common.confirmDelete)) return
+    await window.spotmaster?.createBackup?.('before-schedule-delete').catch(() => {})
+    dispatch({ type: 'DELETE_SCHEDULE_ITEM', payload: { date: selectedDate, id } })
   }
 
   const handleBrowseFile = async (item: PlaylistItem) => {
@@ -928,8 +1138,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
               !state.isSequencePlaying ? (
                 <button
                   className="day-schedule-btn play"
-                  onClick={startScheduleFromNow}
-                  disabled={!hasPending}
+                  onClick={handleStartScheduleWithPreflight}
+                  disabled={!hasPending || preflightRunning}
                   title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
                 >
                   <ListVideo size={15} /> {t.schedule.playSchedule}
@@ -966,6 +1176,22 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                 <Crosshair size={13} /> Centralizar Bloco
               </button>
             )}
+            <button
+              className="day-schedule-btn"
+              onClick={() => { void runPreflight('manual') }}
+              disabled={preflightRunning}
+              title="Validar arquivos, inputs e comandos antes da execucao"
+            >
+              <ShieldCheck size={13} className={preflightRunning ? 'spin' : ''} />
+              {preflightRunning ? 'Validando...' : 'Validar'}
+            </button>
+            <button
+              className="day-schedule-btn"
+              onClick={() => { setVmixHealthReferenceTime(Date.now()); setShowVmixHealth(true) }}
+              title="Ver saude da conexao e log de comandos vMix"
+            >
+              <Activity size={13} /> vMix
+            </button>
             <button
               className="day-schedule-btn"
               onClick={handleReload}
@@ -1062,8 +1288,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
             !state.isSequencePlaying ? (
               <button
                 className="day-schedule-btn accent"
-                onClick={startScheduleFromNow}
-                disabled={!hasPending}
+                onClick={handleStartScheduleWithPreflight}
+                disabled={!hasPending || preflightRunning}
                 title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
               >
                 <ListVideo size={15} /> {t.schedule.playSchedule}
@@ -1436,6 +1662,24 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
           groups={groups}
           onClose={() => setShowBlockPicker(false)}
           onPick={g => { setShowBlockPicker(false); setAddGroupModal({ group: g, mode: 'picker' }) }}
+        />
+      )}
+
+      {preflightSummary && (
+        <PreflightModal
+          summary={preflightSummary}
+          mode={preflightMode}
+          onClose={() => setPreflightSummary(null)}
+          onStartAnyway={handleStartAfterPreflightWarning}
+        />
+      )}
+
+      {showVmixHealth && (
+        <VmixHealthModal
+          status={state.vmixStatus}
+          logs={state.vmixCommandLog}
+          referenceTime={vmixHealthReferenceTime}
+          onClose={() => setShowVmixHealth(false)}
         />
       )}
     </div>

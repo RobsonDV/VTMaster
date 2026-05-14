@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.invoke('save-data', key, data),
   loadData: (key: string) =>
     ipcRenderer.invoke('load-data', key),
+  createBackup: (reason?: string) =>
+    ipcRenderer.invoke('create-backup', reason),
+  fileExists: (filePaths: string[]) =>
+    ipcRenderer.invoke('file-exists', filePaths),
   readMediaDuration: (filePath: string) =>
     ipcRenderer.invoke('read-media-duration', filePath),
 
@@ -71,6 +75,12 @@ contextBridge.exposeInMainWorld('spotmaster', {
   },
   removeVmixFastStatusListener: () => {
     ipcRenderer.removeAllListeners('vmix-fast-status')
+  },
+  onVmixCommandLog: (callback: (log: unknown) => void) => {
+    ipcRenderer.on('vmix-command-log', (_event, log) => callback(log))
+  },
+  removeVmixCommandLogListener: () => {
+    ipcRenderer.removeAllListeners('vmix-command-log')
   },
 
   // Browse for folder

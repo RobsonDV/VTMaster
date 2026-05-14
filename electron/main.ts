@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, openSync, readSync, closeSync, statSync } from 'fs'
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { randomUUID } from 'crypto'
 import electronUpdater, { type UpdateInfo } from 'electron-updater'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
 
@@ -22,11 +23,41 @@ let mainWindow: BrowserWindow | null = null
 let registeredTriggerKey: string | null = null
 let updateDownloaded = false
 
+const BACKUP_KEYS = [
+  'settings',
+  'playlist',
+  'clients',
+  'playLog',
+  'commercialBlocks',
+  'clientSpots',
+  'spotRotation',
+  'activePanel',
+  'weeklyGrid',
+  'dateSchedules',
+  'musicStyles',
+  'musicSequences',
+  'autoBlocoAssignments',
+  'deletedScheduleSlots',
+  'mediaDurationCache',
+  'vmixCommandLog',
+]
+
 type UpdateStatus = {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
   version?: string
   percent?: number
   message?: string
+}
+
+type VmixCommandLog = {
+  id: string
+  at: string
+  source: string
+  functionName: string
+  params: Record<string, string>
+  success: boolean
+  latencyMs: number
+  error?: string
 }
 
 function sendUpdateStatus(status: UpdateStatus): void {
@@ -42,13 +73,26 @@ function getUserDataPath(): string {
   return dataDir
 }
 
+function assertStorageKey(key: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(key)) {
+    throw new Error(`Invalid storage key: ${key}`)
+  }
+}
+
+function storageFilePath(key: string): string {
+  assertStorageKey(key)
+  return join(getUserDataPath(), `${key}.json`)
+}
+
 function saveData(key: string, data: unknown): void {
-  const filePath = join(getUserDataPath(), `${key}.json`)
-  writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+  const filePath = storageFilePath(key)
+  const tmpPath = `${filePath}.${process.pid}.tmp`
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
+  renameSync(tmpPath, filePath)
 }
 
 function loadData(key: string): unknown {
-  const filePath = join(getUserDataPath(), `${key}.json`)
+  const filePath = storageFilePath(key)
   if (existsSync(filePath)) {
     try {
       return JSON.parse(readFileSync(filePath, 'utf-8'))
@@ -57,6 +101,80 @@ function loadData(key: string): unknown {
     }
   }
   return null
+}
+
+function backupTimestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, '-')
+}
+
+function sanitizeBackupReason(reason: string): string {
+  return reason
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'manual'
+}
+
+function pruneOldBackups(maxBackups = 60): void {
+  const backupRoot = join(getUserDataPath(), 'backups')
+  if (!existsSync(backupRoot)) return
+  const dirs = readdirSync(backupRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const path = join(backupRoot, entry.name)
+      let mtime = 0
+      try { mtime = statSync(path).mtimeMs } catch { /* ignore */ }
+      return { name: entry.name, path, mtime }
+    })
+    .sort((a, b) => b.mtime - a.mtime)
+
+  for (const old of dirs.slice(maxBackups)) {
+    try { rmSync(old.path, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+}
+
+function createDataBackup(reason = 'manual'): string {
+  const dataDir = getUserDataPath()
+  const backupRoot = join(dataDir, 'backups')
+  if (!existsSync(backupRoot)) mkdirSync(backupRoot, { recursive: true })
+
+  const dirName = `${backupTimestamp()}-${sanitizeBackupReason(reason)}`
+  const backupDir = join(backupRoot, dirName)
+  mkdirSync(backupDir, { recursive: true })
+
+  const copied: string[] = []
+  for (const key of BACKUP_KEYS) {
+    const src = join(dataDir, `${key}.json`)
+    if (!existsSync(src)) continue
+    try {
+      copyFileSync(src, join(backupDir, `${key}.json`))
+      copied.push(key)
+    } catch { /* ignore individual file copy failures */ }
+  }
+
+  writeFileSync(
+    join(backupDir, 'manifest.json'),
+    JSON.stringify({ createdAt: new Date().toISOString(), reason, copied }, null, 2),
+    'utf-8',
+  )
+  pruneOldBackups()
+  return backupDir
+}
+
+function ensureDailyBackup(): void {
+  const backupRoot = join(getUserDataPath(), 'backups')
+  if (!existsSync(backupRoot)) mkdirSync(backupRoot, { recursive: true })
+  const todayPrefix = new Date().toISOString().slice(0, 10)
+  const alreadyExists = readdirSync(backupRoot, { withFileTypes: true })
+    .some(entry => entry.isDirectory() && entry.name.startsWith(todayPrefix) && entry.name.includes('daily'))
+  if (!alreadyExists) createDataBackup('daily')
+}
+
+function appendVmixCommandLog(log: VmixCommandLog): void {
+  const current = loadData('vmixCommandLog')
+  const list = Array.isArray(current) ? current as VmixCommandLog[] : []
+  const next = [...list, log].slice(-2000)
+  saveData('vmixCommandLog', next)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,6 +429,8 @@ app.whenReady().then(() => {
     }
   })
 
+  try { ensureDailyBackup() } catch (err) { console.error('[backup] daily backup failed', err) }
+
   createWindow()
   if (app.isPackaged && !isPortable) {
     setTimeout(() => { void checkForAppUpdates() }, 12_000)
@@ -342,6 +462,26 @@ ipcMain.handle('save-data', (_event, key: string, data: unknown) => {
 
 ipcMain.handle('load-data', (_event, key: string) => {
   return loadData(key)
+})
+
+ipcMain.handle('create-backup', (_event, reason?: string) => {
+  try {
+    return { success: true, path: createDataBackup(reason || 'manual') }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('file-exists', (_event, filePaths: string[]) => {
+  const out: Record<string, boolean> = {}
+  for (const filePath of filePaths) {
+    try {
+      out[filePath] = existsSync(filePath) && statSync(filePath).isFile()
+    } catch {
+      out[filePath] = false
+    }
+  }
+  return out
 })
 
 ipcMain.handle('read-media-duration', (_event, filePath: string) => {
@@ -530,7 +670,23 @@ ipcMain.handle('scan-music-folder', async (_event, folderPath: string, includeSu
 
 // vMix HTTP request
 ipcMain.handle('vmix-request', async (_event, params: Record<string, string>) => {
-  return makeVmixRequest(params)
+  const startedAt = Date.now()
+  const result = await makeVmixRequest(params)
+  if (params.Function) {
+    const log: VmixCommandLog = {
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      source: 'vmix-request',
+      functionName: params.Function,
+      params,
+      success: result.success,
+      latencyMs: Date.now() - startedAt,
+      ...(result.error ? { error: result.error } : {}),
+    }
+    try { appendVmixCommandLog(log) } catch { /* non-critical */ }
+    mainWindow?.webContents.send('vmix-command-log', log)
+  }
+  return result
 })
 
 // Start vMix polling

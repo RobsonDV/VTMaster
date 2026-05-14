@@ -13,6 +13,7 @@ import type {
   PlayLog,
   AppSettings,
   VmixStatus,
+  VmixCommandLog,
   ClientSpot,
   CommercialBlock,
   CommercialBlockItem,
@@ -68,6 +69,7 @@ interface AppState {
   playLog: PlayLog[]
   settings: AppSettings
   vmixStatus: VmixStatus
+  vmixCommandLog: VmixCommandLog[]
   activePanel: string
   isLoading: boolean
   isSequencePlaying: boolean
@@ -101,6 +103,7 @@ const initialState: AppState = {
   playLog: [],
   settings: DEFAULT_SETTINGS,
   vmixStatus: { connected: false },
+  vmixCommandLog: [],
   activePanel: 'playlist',
   isLoading: true,
   isSequencePlaying: false,
@@ -119,6 +122,8 @@ type Action =
   | { type: 'SET_ACTIVE_PANEL'; payload: string }
   | { type: 'SET_SETTINGS'; payload: AppSettings }
   | { type: 'SET_VMIX_STATUS'; payload: VmixStatus }
+  | { type: 'ADD_VMIX_COMMAND_LOG'; payload: VmixCommandLog }
+  | { type: 'SET_VMIX_COMMAND_LOG'; payload: VmixCommandLog[] }
   | { type: 'SET_PLAYLIST'; payload: PlaylistItem[] }
   | { type: 'ADD_PLAYLIST_ITEM'; payload: PlaylistItem }
   | { type: 'UPDATE_PLAYLIST_ITEM'; payload: PlaylistItem }
@@ -171,6 +176,12 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, settings: action.payload }
     case 'SET_VMIX_STATUS':
       return { ...state, vmixStatus: action.payload }
+    case 'ADD_VMIX_COMMAND_LOG': {
+      const next = [...state.vmixCommandLog, action.payload]
+      return { ...state, vmixCommandLog: next.length > 2000 ? next.slice(-2000) : next }
+    }
+    case 'SET_VMIX_COMMAND_LOG':
+      return { ...state, vmixCommandLog: action.payload.length > 2000 ? action.payload.slice(-2000) : action.payload }
     case 'SET_PLAYLIST':
       return { ...state, playlist: action.payload }
     case 'ADD_PLAYLIST_ITEM':
@@ -529,6 +540,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     onDurationProgress?: (done: number, total: number) => void,
   ) => {
     const dateStr = targetDate ?? today()
+    const existingScheduleForBackup = stateRef.current.dateSchedules[dateStr] ?? []
+    if (existingScheduleForBackup.length > 0 && window.spotmaster?.createBackup) {
+      window.spotmaster
+        .createBackup(merge ? 'before-schedule-merge' : 'before-schedule-generate')
+        .catch(() => {})
+    }
     // Parse day-of-week from the target date (midday avoids DST edge cases)
     const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay()
     const { weeklyGrid, commercialBlocks, spotRotation, mediaDurationCache } = stateRef.current
@@ -1996,7 +2013,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const [settingsRaw, playlistRaw, clientsRaw, logRaw,
                blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw,
-               musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw] =
+               musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw, vmixCommandLogRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -2013,6 +2030,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('autoBlocoAssignments'),
             window.spotmaster.loadData('deletedScheduleSlots'),
             window.spotmaster.loadData('mediaDurationCache'),
+            window.spotmaster.loadData('vmixCommandLog'),
           ])
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -2042,6 +2060,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             weeklyGrid:       { ...DEFAULT_WEEKLY_GRID, ...((gridRaw as WeeklyProgramGrid) ?? {}) },
             dateSchedules:    (dateSchedulesRaw as Record<string, PlaylistItem[]>) ?? {},
             mediaDurationCache: sanitizeDurationCache(durationCacheRaw),
+            vmixCommandLog:    ((vmixCommandLogRaw as VmixCommandLog[]) ?? []).slice(-2000),
             deletedScheduleSlots: (deletedSlotsRaw as Record<string, DeletedScheduleSlot[]>) ?? {},
             musicStyles:          (musicStylesRaw as MusicStyle[])          ?? [],
             musicSequences:       (musicSequencesRaw as MusicSequence[])    ?? [],
@@ -2068,6 +2087,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
     })
     return () => { window.spotmaster?.removeVmixStatusListener() }
+  }, [])
+
+  useEffect(() => {
+    if (!window.spotmaster?.onVmixCommandLog) return
+    window.spotmaster.onVmixCommandLog((log) => {
+      dispatch({ type: 'ADD_VMIX_COMMAND_LOG', payload: log })
+    })
+    return () => { window.spotmaster?.removeVmixCommandLogListener?.() }
   }, [])
 
   useEffect(() => {
