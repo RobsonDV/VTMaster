@@ -1,4 +1,4 @@
-# VTMaster v5.0
+# VTMaster v5.1.6
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -26,8 +26,8 @@ Stack principal:
 
 - [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.0
-- [release/LEIA-ME.md](release/LEIA-ME.md): guia de uso para operador
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.1.6
+- [docs/ATUALIZACOES.md](docs/ATUALIZACOES.md): como publicar releases e testar atualização automática
 
 ## Requisitos
 
@@ -56,6 +56,7 @@ npm run dev
 | `npm run electron:compile` | Compila apenas código Electron |
 | `npm run build` | Build de produção (frontend + Electron) |
 | `npm run build:dist` | Gera instaladores via electron-builder |
+| `npm run release:github` | Publica release no GitHub via electron-builder (`GH_TOKEN` necessário) |
 | `npm run lint` | Executa ESLint |
 
 ## Build de distribuição
@@ -66,8 +67,22 @@ npm run build:dist
 
 Artefatos gerados em `release/`:
 
-- `VTMaster-3.0.0-Setup.exe` — instalador NSIS
-- `VTMaster-3.0.0-Portable.exe` — executável portátil
+- `VTMaster-x.y.z-Setup.exe` — instalador NSIS
+- `VTMaster-x.y.z-Portable.exe` — executável portátil
+- `latest.yml` — metadata usada pelo auto-update
+
+## Atualização automática
+
+Desde a v5.1.5, o VTMaster instalado via `Setup.exe` verifica novas versões em GitHub Releases.
+
+Para publicar uma atualização, gere os artefatos, crie uma GitHub Release e anexe:
+
+- `VTMaster-x.y.z-Setup.exe`
+- `VTMaster-x.y.z-Setup.exe.blockmap`
+- `latest.yml`
+- `VTMaster-x.y.z-Portable.exe` (opcional, recomendado)
+
+Passo a passo completo em [docs/ATUALIZACOES.md](docs/ATUALIZACOES.md).
 
 ## Estrutura principal
 

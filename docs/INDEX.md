@@ -7,7 +7,7 @@
 ## Por perfil
 
 ### Operação (emissora / playout)
-1. [release/LEIA-ME.md](../release/LEIA-ME.md) — Manual do operador
+1. [README.md](../README.md) — Instalação e visão geral
 2. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md) — Funcionalidades disponíveis
 
 ### Desenvolvimento
@@ -15,10 +15,11 @@
 2. [docs/DEVELOPMENT.md](DEVELOPMENT.md) — Documentação técnica completa
 3. [docs/ESTADO_ATUAL.md](ESTADO_ATUAL.md) — Estado do produto, fases, backlog
 4. [docs/Melhoriadeinterface.md](Melhoriadeinterface.md) — Plano de UX/UI, fases visuais e pendências de interface
+5. [docs/ATUALIZACOES.md](ATUALIZACOES.md) — Como publicar e testar updates automáticos
 
 ### Release e distribuição
 1. [README.md](../README.md) — Scripts de build
-2. [release/LEIA-ME.md](../release/LEIA-ME.md) — Manual do instalador
+2. [docs/ATUALIZACOES.md](ATUALIZACOES.md) — Auto-update, publicação de releases e checklist de atualização
 
 ---
 
@@ -59,12 +60,12 @@
 - O que já foi implementado nas Fases 1 a 3
 - Pendências e backlog visual para continuidade
 
-### [release/LEIA-ME.md](../release/LEIA-ME.md)
-- Manual para o operador de emissora
-- Primeiros passos e configuração
-- Como usar o Disparo
-- Como configurar blocos comerciais
-- Integração com vMix
+### [docs/ATUALIZACOES.md](ATUALIZACOES.md)
+- Como funciona o auto-update via GitHub Releases
+- Checklist para subir novas versões
+- Arquivos obrigatórios (`Setup.exe`, `.blockmap`, `latest.yml`)
+- Como testar uma atualização real entre duas versões
+- Troubleshooting de update
 
 ---
 
@@ -74,9 +75,10 @@
 1. [README.md](../README.md) — rodar o projeto
 2. [DEVELOPMENT.md](DEVELOPMENT.md) — entender a arquitetura
 3. [ESTADO_ATUAL.md](ESTADO_ATUAL.md) — estado, decisões e backlog
+4. [ATUALIZACOES.md](ATUALIZACOES.md) — publicar versões e validar auto-update
 
 **Para operadores:**
-1. [release/LEIA-ME.md](../release/LEIA-ME.md) — instalar e usar
+1. [README.md](../README.md) — instalar e usar
 2. [ESTADO_ATUAL.md](ESTADO_ATUAL.md) seção 13 — lista do que funciona
 
 ---

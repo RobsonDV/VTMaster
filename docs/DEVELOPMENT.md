@@ -168,6 +168,8 @@ npm run release:github
 
 O VTMaster usa `electron-updater` com provider GitHub configurado em `package.json` (`RobsonDV/VTMaster`).
 
+Documento operacional completo: [ATUALIZACOES.md](ATUALIZACOES.md).
+
 Fluxo operacional:
 - O auto-update só roda no app instalado/empacotado (`app.isPackaged`), nunca no `npm run dev`.
 - O auto-update é voltado para a versão instalada pelo `Setup.exe`; o `Portable.exe` informa que é necessário usar a versão instalada.
@@ -179,6 +181,16 @@ Fluxo operacional:
 Primeira instalação com updater:
 - Versões anteriores à 5.1.5 não sabem se atualizar sozinhas.
 - O usuário precisa instalar manualmente a primeira versão com updater; depois disso, novas releases podem chegar automaticamente.
+
+Checklist curto para release:
+1. Subir `version` em `package.json`.
+2. Rodar `npm.cmd install --package-lock-only`.
+3. Atualizar documentação de versão.
+4. Rodar `npm.cmd run lint` e `npm.cmd run build`.
+5. Rodar `npm.cmd run build:dist`.
+6. Confirmar `release/latest.yml` apontando para a versão nova.
+7. Fazer commit e push.
+8. Criar GitHub Release normal (`vX.Y.Z`) com `Setup.exe`, `.blockmap`, `latest.yml` e, opcionalmente, `Portable.exe`.
 
 ### tsconfig.electron.json
 
