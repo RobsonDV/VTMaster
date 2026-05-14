@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **5.1.5** — Atualizado em **14/05/2026** com atualização automática via GitHub Releases (`electron-updater`)
+> Versão **5.1.6** — Atualizado em **14/05/2026** com release de teste para validar atualização automática
 
 ---
 
@@ -99,3 +99,4 @@
 | Interface — Fases 1 a 3 | 12/05/2026 | Sidebar com ícones, toolbar reorganizada, favicon VTMaster, cockpit operacional da Programação, design system inicial nas telas principais e fluxo de adicionar item refinado |
 | Correção AutoProg — v5.1.4 | 14/05/2026 | `Promise.allSettled` não é mais o fluxo atual; leitura de duração usa `readMediaDurationBatch` com pool, cache persistido e fallback nativo Electron para MP4/MOV/M4V/M4A/3GP quando o Chromium não lê metadata. |
 | Auto-update — v5.1.5 | 14/05/2026 | App instalado passa a consultar GitHub Releases via `electron-updater`; Configurações ganhou botão "Verificar atualização"; releases devem publicar `Setup.exe`, `.blockmap` e `latest.yml`. |
+| Teste auto-update — v5.1.6 | 14/05/2026 | Release pequena para validar se instalações 5.1.5 detectam, baixam e instalam uma nova versão via GitHub Releases. |

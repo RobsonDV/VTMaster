@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **14/05/2026** — Versão **5.1.5** — Fases 1–12 + melhorias de interface + correção AutoProg/durações + auto-update
+> Atualizado em **14/05/2026** — Versão **5.1.6** — Fases 1–12 + melhorias de interface + correção AutoProg/durações + auto-update
 
 ---
 
@@ -1062,6 +1062,12 @@ Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato f
 - Ao concluir o download, o app oferece **Reiniciar agora** ou **Depois**.
 - Arquivos necessários em cada release: `VTMaster-x.y.z-Setup.exe`, `VTMaster-x.y.z-Setup.exe.blockmap` e `latest.yml`.
 - Versões anteriores à 5.1.5 precisam instalar manualmente uma vez; só depois passam a receber updates automáticos.
+
+### Teste auto-update — v5.1.6 (14/05/2026)
+
+- Release pequena criada para validar o ciclo real 5.1.5 → 5.1.6.
+- Não altera regra operacional; objetivo é confirmar detecção, download e instalação via `electron-updater`.
+- Teste esperado: instalar a 5.1.5, abrir Configurações → Atualizações → Verificar atualização, baixar 5.1.6 e reiniciar.
 
 ---
 
