@@ -194,6 +194,7 @@ export interface Campaign {
   segmentId?: string           // Segment.id — para regra de concorrentes
   programWindowIds?: string[]  // ProgramWindow.id[] — janelas elegíveis (vazio = todos os blocos)
   priority: CampaignPriority
+  blockPosition?: number       // 0-100, posição preferencial no bloco; desempate por priority
   status: CampaignStatus
   notes?: string
   createdAt: string
@@ -236,6 +237,56 @@ export interface AppSettings {
   triggerKey: string | null
   autoplayComerciais: boolean
   preloadMinutes: number
+  // ── GC Musical automático ─────────────────────────────────────────────────
+  gcMusicEnabled: boolean
+  gcMusicDelaySeconds: number    // delay após o início (padrão: 5)
+  gcMusicInputName: string       // nome do input de título no vMix
+  gcMusicLine1Field: string      // campo da linha 1 no vMix (ex: "Artist")
+  gcMusicLine2Field: string      // campo da linha 2 no vMix (ex: "Title")
+  gcMusicDynamic: boolean        // true = ambas dinâmicas; false = linha 2 estática
+  gcMusicStaticLine2?: string    // texto fixo para linha 2 quando !gcMusicDynamic
+  gcMusicOverlay?: number        // canal de overlay 1-4 (0 = não ativar)
+  gcMusicHideDuration?: number   // segundos até esconder o overlay (0 = manual)
+  // ── Data Sources ──────────────────────────────────────────────────────────
+  dataSourcesEnabled: boolean
+  dataSourcesPort: number        // porta do servidor local (padrão: 7070)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grafismos — inputs de título e templates
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GrafismoField {
+  name: string    // nome do campo no vMix (ex: "Artist")
+  label: string   // rótulo de exibição no VTMaster
+}
+
+export interface GrafismoTitleInput {
+  id: string
+  name: string             // nome exato do input no vMix (ex: "Lower Third")
+  fields: GrafismoField[]
+  createdAt: string
+}
+
+export type GrafismoFieldSource =
+  | 'now_artist'   | 'now_song'    | 'now_title'
+  | 'next_artist'  | 'next_song'   | 'next_title'
+  | 'time'         | 'station'     | 'static'
+
+export interface GrafismoTemplateMapping {
+  fieldName: string
+  source: GrafismoFieldSource
+  staticValue?: string
+}
+
+export interface GrafismoTemplate {
+  id: string
+  name: string
+  inputId: string
+  mappings: GrafismoTemplateMapping[]
+  overlayChannel?: number    // 1-4, 0 = não ativar overlay
+  hideDuration?: number      // segundos para esconder (0 = manual)
+  createdAt: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -426,6 +477,11 @@ export interface SpotMasterAPI {
   unregisterTrigger: () => Promise<void>
   onTriggerFired: (callback: () => void) => void
   removeTriggerListener: () => void
+  // Data Sources
+  updateDataSources: (snapshot: unknown) => Promise<void>
+  startDataSourcesServer: (port: number) => Promise<{ success: boolean; port?: number; error?: string }>
+  stopDataSourcesServer: () => Promise<{ success: boolean }>
+  getDataSourcesStatus: () => Promise<{ running: boolean }>
 }
 
 declare global {

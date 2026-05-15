@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut } from 'electron'
+import { createServer, type Server } from 'http'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
@@ -43,7 +44,13 @@ const BACKUP_KEYS = [
   'campaigns',
   'segments',
   'programWindows',
+  'grafismoTitleInputs',
+  'grafismoTemplates',
 ]
+
+// ── Data Sources HTTP server ──────────────────────────────────────────────────
+let dataSourcesServer: Server | null = null
+let dataSourcesSnapshot: Record<string, unknown> = {}
 
 type UpdateStatus = {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
@@ -801,4 +808,53 @@ ipcMain.handle('unregister-trigger', () => {
     try { globalShortcut.unregister(registeredTriggerKey) } catch { /* ignore invalid shortcut unregister */ }
     registeredTriggerKey = null
   }
+})
+
+// ── Data Sources IPC handlers ─────────────────────────────────────────────────
+
+ipcMain.handle('datasources-update', (_event, snapshot: unknown) => {
+  dataSourcesSnapshot = snapshot as Record<string, unknown>
+})
+
+ipcMain.handle('datasources-start', (_event, port: number) => {
+  if (dataSourcesServer) return { success: true, port }
+  return new Promise<{ success: boolean; port?: number; error?: string }>((resolve) => {
+    const server = createServer((req, res) => {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      const url = req.url ?? '/'
+      let body: unknown
+      if (url.startsWith('/vtmaster/now-next')) {
+        body = { nowPlaying: dataSourcesSnapshot.nowPlaying ?? null, nextItem: dataSourcesSnapshot.nextItem ?? null }
+      } else if (url.startsWith('/vtmaster/schedule')) {
+        body = { date: new Date().toISOString().slice(0, 10), schedule: dataSourcesSnapshot.schedule ?? [] }
+      } else if (url.startsWith('/vtmaster/log-today')) {
+        body = { date: new Date().toISOString().slice(0, 10), log: dataSourcesSnapshot.log ?? [] }
+      } else {
+        body = { status: 'VTMaster Data Sources', endpoints: ['/vtmaster/now-next', '/vtmaster/schedule', '/vtmaster/log-today'] }
+      }
+      res.writeHead(200)
+      res.end(JSON.stringify(body, null, 2))
+    })
+    server.once('error', (err: Error) => {
+      dataSourcesServer = null
+      resolve({ success: false, error: err.message })
+    })
+    server.listen(port, '127.0.0.1', () => {
+      dataSourcesServer = server
+      resolve({ success: true, port })
+    })
+  })
+})
+
+ipcMain.handle('datasources-stop', () => {
+  if (dataSourcesServer) {
+    dataSourcesServer.close()
+    dataSourcesServer = null
+  }
+  return { success: true }
+})
+
+ipcMain.handle('datasources-status', () => {
+  return { running: dataSourcesServer !== null }
 })

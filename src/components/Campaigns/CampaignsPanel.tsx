@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import {
   Plus, Trash2, Edit2, ChevronDown, ChevronUp, AlertTriangle,
-  CheckCircle, Clock, TrendingUp, Calendar, Users, Zap, RotateCcw,
+  CheckCircle, Clock, TrendingUp, Calendar, Users, Zap, RotateCcw, RefreshCw, Ban,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type {
@@ -20,6 +20,12 @@ const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
 
 function daysBetween(start: string, end: string): number {
   return Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 86400000)
+}
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
 }
 
 function computeEffectiveStatus(camp: Campaign, todayStr: string): CampaignStatus {
@@ -56,22 +62,24 @@ function blockIsInWindow(block: CommercialBlock, pw: ProgramWindow, todayDow: nu
 interface DistributionPreview {
   block: CommercialBlock
   reason: string
+  blocked: boolean
 }
 
 function DistributeModal({
-  campaign, blocks, programWindows, clients, onConfirm, onCancel,
+  campaign, blocks, programWindows, clients, campaigns, onConfirm, onCancel,
 }: {
   campaign: Campaign
   blocks: CommercialBlock[]
   programWindows: ProgramWindow[]
   clients: { id: string; name: string }[]
+  campaigns: Campaign[]
   onConfirm: (targetBlockIds: string[]) => void
   onCancel: () => void
 }) {
   const todayDow = new Date().getDay()
 
-  const eligible: DistributionPreview[] = useMemo(() => {
-    if (campaign.modality === 'rotativo') return []
+  const { eligible, blockedBySegment } = useMemo(() => {
+    if (campaign.modality === 'rotativo') return { eligible: [], blockedBySegment: [] }
 
     const enabledBlocks = blocks.filter(b => b.enabled)
 
@@ -89,8 +97,29 @@ function DistributeModal({
       )
     )
 
-    return notDuplicate.map(b => ({ block: b, reason: '' }))
-  }, [campaign, blocks, programWindows, todayDow])
+    const eligible: DistributionPreview[] = []
+    const blockedBySegment: DistributionPreview[] = []
+
+    for (const b of notDuplicate) {
+      if (campaign.segmentId) {
+        // Find any competitor (same segment, different client) already in this block
+        const competitorItem = (b.items ?? []).find(it => {
+          if (it.type !== 'spot_client' || !it.clientId || it.clientId === campaign.clientId) return false
+          if (!it.campaignId) return false
+          const otherCamp = campaigns.find(c => c.id === it.campaignId)
+          return otherCamp?.segmentId === campaign.segmentId
+        })
+        if (competitorItem) {
+          const competitorName = clients.find(c => c.id === competitorItem.clientId)?.name ?? 'concorrente'
+          blockedBySegment.push({ block: b, reason: competitorName, blocked: true })
+          continue
+        }
+      }
+      eligible.push({ block: b, reason: '', blocked: false })
+    }
+
+    return { eligible, blockedBySegment }
+  }, [campaign, blocks, programWindows, campaigns, clients, todayDow])
 
   // Randomize and respect spotsPerDay limit
   const selected = useMemo(() => {
@@ -103,7 +132,7 @@ function DistributeModal({
 
   const clientName = clients.find(c => c.id === campaign.clientId)?.name ?? '—'
 
-  if (eligible.length === 0) {
+  if (eligible.length === 0 && blockedBySegment.length === 0) {
     return (
       <div style={{
         position: 'fixed', inset: 0, background: '#00000080', zIndex: 1000,
@@ -113,6 +142,33 @@ function DistributeModal({
           <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 12 }}>Distribuição</div>
           <div style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: 20 }}>
             Nenhum bloco elegível encontrado para esta campanha.
+          </div>
+          <Button variant="ghost" onClick={onCancel}>Fechar</Button>
+        </div>
+      </div>
+    )
+  }
+
+  if (eligible.length === 0 && blockedBySegment.length > 0) {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: '#00000080', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{ background: 'var(--bg-secondary)', borderRadius: 12, padding: 28, maxWidth: 480, width: '90%', border: '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 8 }}>Distribuição bloqueada</div>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+            Todos os blocos elegíveis já contêm um concorrente do mesmo segmento. A campanha <b style={{ color: 'var(--text-primary)' }}>{campaign.name}</b> não pode ser distribuída sem conflito de segmento.
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            {blockedBySegment.map(({ block, reason }) => (
+              <div key={block.id} style={{ padding: '6px 10px', borderRadius: 6, marginBottom: 4, background: '#ef444410', border: '1px solid #ef444430', fontSize: '0.82rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 600 }}>{block.name}</span>
+                <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Ban size={11} /> {reason}
+                </span>
+              </div>
+            ))}
           </div>
           <Button variant="ghost" onClick={onCancel}>Fechar</Button>
         </div>
@@ -149,12 +205,124 @@ function DistributeModal({
               <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{block.scheduledTime}</span>
             </div>
           ))}
+
+          {blockedBySegment.length > 0 && (
+            <>
+              <div style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 600, margin: '10px 0 6px', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Ban size={11} /> {blockedBySegment.length} bloco{blockedBySegment.length !== 1 ? 's' : ''} bloqueado{blockedBySegment.length !== 1 ? 's' : ''} por concorrência de segmento
+              </div>
+              {blockedBySegment.map(({ block, reason }) => (
+                <div key={block.id} style={{
+                  padding: '7px 10px', borderRadius: 6, marginBottom: 4,
+                  background: '#ef444410', border: '1px solid #ef444430',
+                  fontSize: '0.83rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{block.name}</span>
+                  <span style={{ color: '#ef4444', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Ban size={11} /> {reason}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
           <Button variant="primary" onClick={() => onConfirm(selected.map(s => s.block.id))}>
             Aplicar Distribuição
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Renew modal ───────────────────────────────────────────────────────────────
+
+function RenewModal({
+  campaign,
+  clients,
+  onConfirm,
+  onCancel,
+}: {
+  campaign: Campaign
+  clients: { id: string; name: string }[]
+  onConfirm: (newStartDate: string, newEndDate: string, markPreviousCompleted: boolean) => void
+  onCancel: () => void
+}) {
+  const duration = Math.max(1, daysBetween(campaign.startDate, campaign.endDate))
+  const defaultStart = addDays(campaign.endDate, 1)
+  const defaultEnd = addDays(defaultStart, duration)
+
+  const [newStart, setNewStart] = useState(defaultStart)
+  const [newEnd, setNewEnd] = useState(defaultEnd)
+  const [markCompleted, setMarkCompleted] = useState(true)
+
+  const clientName = clients.find(c => c.id === campaign.clientId)?.name ?? '—'
+  const newDuration = Math.max(0, daysBetween(newStart, newEnd))
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#00000080', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{ background: 'var(--bg-secondary)', borderRadius: 12, padding: 28, maxWidth: 460, width: '90%', border: '1px solid var(--border)' }}>
+        <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 4 }}>Renovar Campanha</div>
+        <div style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: 20 }}>
+          <b style={{ color: 'var(--text-primary)' }}>{campaign.name}</b> — {clientName}
+        </div>
+
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Período anterior</div>
+        <div style={{ fontSize: '0.85rem', fontFamily: 'monospace', color: 'var(--text-secondary)', marginBottom: 16, padding: '6px 10px', background: 'var(--bg-primary)', borderRadius: 6, border: '1px solid var(--border)' }}>
+          {campaign.startDate} → {campaign.endDate} ({duration} dias, {campaign.totalSpots} spots)
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+          <div>
+            <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Novo início *</label>
+            <input
+              type="date"
+              value={newStart}
+              onChange={e => setNewStart(e.target.value)}
+              style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none', width: '100%' }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Novo fim *</label>
+            <input
+              type="date"
+              value={newEnd}
+              min={newStart}
+              onChange={e => setNewEnd(e.target.value)}
+              style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none', width: '100%' }}
+            />
+          </div>
+        </div>
+
+        {newDuration > 0 && (
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+            Nova duração: <b style={{ color: 'var(--text-primary)' }}>{newDuration} dias</b> · Spots contratados: <b style={{ color: 'var(--text-primary)' }}>{campaign.totalSpots}</b> (herdados)
+          </div>
+        )}
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.83rem', color: 'var(--text-primary)', marginBottom: 20, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={markCompleted}
+            onChange={e => setMarkCompleted(e.target.checked)}
+          />
+          Marcar campanha anterior como <b>Concluída</b>
+        </label>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
+          <Button
+            variant="primary"
+            disabled={!newStart || !newEnd || newEnd < newStart}
+            onClick={() => onConfirm(newStart, newEnd, markCompleted)}
+          >
+            Criar Renovação
           </Button>
         </div>
       </div>
@@ -176,6 +344,7 @@ interface CampaignFormState {
   segmentId: string
   programWindowIds: string[]
   priority: CampaignPriority
+  blockPosition: number
   status: CampaignStatus
   notes: string
 }
@@ -186,6 +355,7 @@ const EMPTY_FORM: CampaignFormState = {
   totalSpots: 30, spotsPerDay: 1,
   daysOfWeek: ALL_DAYS, segmentId: '',
   programWindowIds: [], priority: 2,
+  blockPosition: 0,
   status: 'active', notes: '',
 }
 
@@ -207,6 +377,7 @@ export default function CampaignsPanel() {
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null)
   const [form, setForm] = useState<CampaignFormState>(EMPTY_FORM)
   const [distributeTarget, setDistributeTarget] = useState<Campaign | null>(null)
+  const [renewTarget, setRenewTarget] = useState<Campaign | null>(null)
 
   // Segment tab state
   const [editingSegment, setEditingSegment] = useState<Segment | null>(null)
@@ -285,7 +456,9 @@ export default function CampaignsPanel() {
       daysOfWeek: camp.daysOfWeek ?? ALL_DAYS,
       segmentId: camp.segmentId ?? '',
       programWindowIds: camp.programWindowIds ?? [],
-      priority: camp.priority, status: camp.status, notes: camp.notes ?? '',
+      priority: camp.priority,
+      blockPosition: camp.blockPosition ?? 0,
+      status: camp.status, notes: camp.notes ?? '',
     })
     setShowForm(true)
   }
@@ -303,7 +476,9 @@ export default function CampaignsPanel() {
       daysOfWeek: form.daysOfWeek.length === 7 ? undefined : form.daysOfWeek,
       segmentId: form.segmentId || undefined,
       programWindowIds: form.programWindowIds.length > 0 ? form.programWindowIds : undefined,
-      priority: form.priority, status: form.status,
+      priority: form.priority,
+      blockPosition: form.blockPosition > 0 ? form.blockPosition : undefined,
+      status: form.status,
       notes: form.notes || undefined,
     }
     if (editingCampaign) {
@@ -328,7 +503,6 @@ export default function CampaignsPanel() {
     const camp = distributeTarget
     const updatedBlocks = state.commercialBlocks.map(block => {
       if (!targetBlockIds.includes(block.id)) return block
-      // Check if client already in block for this campaign
       const already = (block.items ?? []).some(
         it => it.type === 'spot_client' && it.clientId === camp.clientId && it.campaignId === camp.id
       )
@@ -343,7 +517,6 @@ export default function CampaignsPanel() {
       }
       return { ...block, items: [...(block.items ?? []), newItem] }
     })
-    // Dispatch updates
     for (const block of updatedBlocks) {
       const orig = state.commercialBlocks.find(b => b.id === block.id)
       if (orig && orig.items.length !== block.items.length) {
@@ -352,6 +525,36 @@ export default function CampaignsPanel() {
     }
     saveToStorage('commercialBlocks', updatedBlocks)
     setDistributeTarget(null)
+  }
+
+  const handleRenew = (newStartDate: string, newEndDate: string, markPreviousCompleted: boolean) => {
+    if (!renewTarget) return
+    const orig = renewTarget
+
+    // Create renewed campaign with new dates, same settings
+    const renewed: Campaign = {
+      ...orig,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      name: `${orig.name} (Renovação)`,
+      startDate: newStartDate,
+      endDate: newEndDate,
+      status: 'active',
+    }
+
+    let updatedCampaigns = [...state.campaigns, renewed]
+
+    // Optionally mark the previous campaign as completed
+    if (markPreviousCompleted) {
+      updatedCampaigns = updatedCampaigns.map(c =>
+        c.id === orig.id ? { ...c, status: 'completed' as CampaignStatus } : c
+      )
+      dispatch({ type: 'UPDATE_CAMPAIGN', payload: { ...orig, status: 'completed' } })
+    }
+
+    dispatch({ type: 'ADD_CAMPAIGN', payload: renewed })
+    saveToStorage('campaigns', updatedCampaigns)
+    setRenewTarget(null)
   }
 
   // ── Segment handlers ─────────────────────────────────────────────────────────
@@ -517,6 +720,7 @@ export default function CampaignsPanel() {
               const isExpiringSoon = eff === 'active' && daysLeft >= 0 && daysLeft <= 7
               const segment = segments.find(s => s.id === camp.segmentId)
               const pws = (camp.programWindowIds ?? []).map(id => programWindows.find(p => p.id === id)?.name).filter(Boolean)
+              const canRenew = eff === 'expired' || eff === 'completed' || (eff === 'active' && pct >= 90)
 
               return (
                 <div key={camp.id} style={{ border: '1px solid var(--border)', borderRadius: 10, marginBottom: 10, overflow: 'hidden', background: 'var(--bg-secondary)' }}>
@@ -563,6 +767,15 @@ export default function CampaignsPanel() {
                           <Zap size={11} style={{ display: 'inline', marginRight: 3 }} />Distribuir
                         </button>
                       )}
+                      {canRenew && (
+                        <button
+                          onClick={e => { e.stopPropagation(); setRenewTarget(camp) }}
+                          title="Renovar campanha"
+                          style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--success)', cursor: 'pointer', padding: '3px 8px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}
+                        >
+                          <RefreshCw size={11} />Renovar
+                        </button>
+                      )}
                       <button onClick={e => { e.stopPropagation(); openEditCampaign(camp) }} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4, borderRadius: 4 }} title={tc.editCampaign}><Edit2 size={14} /></button>
                       <button onClick={e => { e.stopPropagation(); handleDeleteCampaign(camp.id) }} style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', padding: 4, borderRadius: 4 }} title={tc.deleteCampaign}><Trash2 size={14} /></button>
                       {isExpanded ? <ChevronUp size={14} style={{ color: 'var(--text-secondary)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-secondary)' }} />}
@@ -576,6 +789,7 @@ export default function CampaignsPanel() {
                       <StatBox icon={<CheckCircle size={13} />} label={tc.aired} value={String(aired)} color={aired > 0 ? 'var(--success)' : undefined} />
                       <StatBox icon={<Clock size={13} />} label={tc.remaining} value={String(Math.max(0, camp.totalSpots - aired))} />
                       {camp.spotsPerDay && <StatBox label="Limite/dia" value={`${camp.spotsPerDay} spots`} />}
+                      {(camp.blockPosition ?? 0) > 0 && <StatBox label={tc.blockPosition.replace(' (0–100)', '')} value={String(camp.blockPosition)} />}
                       {camp.modality === 'rotativo' && (
                         <StatBox icon={<RotateCcw size={13} />} label={tc.rotativoPosition} value={rotativoPosition(camp)} color="#7c3aed" />
                       )}
@@ -641,6 +855,15 @@ export default function CampaignsPanel() {
                         <option value={2}>{tc.priorityMedium}</option>
                         <option value={3}>{tc.priorityLow}</option>
                       </select>
+                    </FormField>
+
+                    <FormField label={tc.blockPosition} hint={tc.blockPositionHint}>
+                      <input
+                        type="number" min={0} max={100}
+                        value={form.blockPosition}
+                        onChange={e => setForm(f => ({ ...f, blockPosition: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) }))}
+                        style={inp}
+                      />
                     </FormField>
 
                     {form.modality === 'standard' && (
@@ -820,8 +1043,19 @@ export default function CampaignsPanel() {
           blocks={commercialBlocks}
           programWindows={programWindows}
           clients={clients}
+          campaigns={campaigns}
           onConfirm={handleDistribute}
           onCancel={() => setDistributeTarget(null)}
+        />
+      )}
+
+      {/* Renew modal */}
+      {renewTarget && (
+        <RenewModal
+          campaign={renewTarget}
+          clients={clients}
+          onConfirm={handleRenew}
+          onCancel={() => setRenewTarget(null)}
         />
       )}
     </div>

@@ -40,6 +40,86 @@ export default function ReportsPanel() {
     [campaigns, campaignId]
   )
 
+  const generateCSV = async () => {
+    setGenerating(true)
+    try {
+      let csvContent = ''
+
+      if (reportType === 'campaign' && !campaignId) {
+        // Summary: one row per campaign
+        const headers = ['Campanha', 'Anunciante', 'Modalidade', 'Início', 'Fim', 'Contratado', 'Veiculado', 'Falhas', 'Restante', '% Conclusão', 'Status']
+        csvContent = headers.join(';') + '\n'
+
+        for (const camp of campaigns) {
+          const client = clients.find(c => c.id === camp.clientId)
+          const logsForCamp = playLog.filter(l => l.campaignId === camp.id)
+          const aired = logsForCamp.filter(l => l.status === 'aired').length
+          const failed = logsForCamp.filter(l => l.status === 'error').length
+          const remaining = Math.max(0, camp.totalSpots - aired)
+          const pct = camp.totalSpots > 0 ? Math.round((aired / camp.totalSpots) * 100) : 0
+          const modLabel = camp.modality === 'rotativo' ? 'Rotativo' : 'Padrão'
+
+          const row = [
+            camp.name,
+            client?.name ?? '—',
+            modLabel,
+            camp.startDate,
+            camp.endDate,
+            String(camp.totalSpots),
+            String(aired),
+            String(failed),
+            String(remaining),
+            `${pct}%`,
+            camp.status,
+          ].map(v => `"${v.replace(/"/g, '""')}"`).join(';')
+
+          csvContent += row + '\n'
+        }
+      } else {
+        // Detail: log rows for selected campaign (or all)
+        const headers = ['Data', 'Campanha', 'Anunciante', 'Título', 'Hora Programada', 'Hora Real', 'Duração (s)', 'Status']
+        csvContent = headers.join(';') + '\n'
+
+        const sorted = [...filteredLogs].sort((a, b) => {
+          const dc = a.date.localeCompare(b.date)
+          return dc !== 0 ? dc : a.actualTime.localeCompare(b.actualTime)
+        })
+
+        for (const l of sorted) {
+          const camp = l.campaignId ? campaigns.find(c => c.id === l.campaignId) : undefined
+          const row = [
+            l.date,
+            camp?.name ?? '—',
+            l.clientName ?? '—',
+            l.title,
+            l.scheduledTime ?? '—',
+            l.actualTime,
+            String(l.duration),
+            l.status,
+          ].map(v => `"${v.replace(/"/g, '""')}"`).join(';')
+          csvContent += row + '\n'
+        }
+      }
+
+      const fileName = reportType === 'campaign'
+        ? `financeiro-campanha-${selectedCampaign?.name ?? 'todas'}.csv`
+        : `financeiro-${clients.find(c => c.id === clientId)?.name ?? 'todos'}-${dateFrom}-${dateTo}.csv`
+
+      const buffer = Array.from(new TextEncoder().encode('﻿' + csvContent))
+      if (window.spotmaster) {
+        await window.spotmaster.exportPDF(fileName, buffer)
+      } else {
+        const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = fileName; a.click()
+        URL.revokeObjectURL(url)
+      }
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   const generatePDF = async () => {
     setGenerating(true)
     try {
@@ -346,17 +426,33 @@ export default function ReportsPanel() {
           </div>
         </div>
 
-        {/* Generate button */}
-        <button
-          className="btn-save"
-          onClick={generatePDF}
-          disabled={generating || filteredLogs.length === 0}
-          style={{ width: '100%', padding: '12px', fontSize: '0.9rem', opacity: filteredLogs.length === 0 ? 0.4 : 1 }}
-        >
-          {generating ? t.common.loading : `📄 ${t.reports.generatePDF}`}
-        </button>
+        {/* Generate buttons */}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            className="btn-save"
+            onClick={generatePDF}
+            disabled={generating || filteredLogs.length === 0}
+            style={{ flex: 1, padding: '12px', fontSize: '0.9rem', opacity: filteredLogs.length === 0 ? 0.4 : 1 }}
+          >
+            {generating ? t.common.loading : `📄 ${t.reports.generatePDF}`}
+          </button>
 
-        {filteredLogs.length === 0 && (
+          <button
+            onClick={generateCSV}
+            disabled={generating || (reportType !== 'campaign' && filteredLogs.length === 0)}
+            style={{
+              padding: '12px 20px', fontSize: '0.9rem', borderRadius: 7, border: '1px solid var(--border)',
+              background: 'var(--bg-secondary)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600,
+              opacity: (generating || (reportType !== 'campaign' && filteredLogs.length === 0)) ? 0.4 : 1,
+              whiteSpace: 'nowrap',
+            }}
+            title="Exportar relatório financeiro em CSV (abre em Excel/Planilhas)"
+          >
+            📊 Exportar CSV
+          </button>
+        </div>
+
+        {filteredLogs.length === 0 && reportType !== 'campaign' && (
           <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.83rem', marginTop: 12 }}>
             {t.reports.noData}
           </p>

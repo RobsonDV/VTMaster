@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **14/05/2026** — Versão **5.1.6** — Fases 1–13 + Comercial Pro completo + correção crítica do Autoplay Comercial
+> Atualizado em **15/05/2026** — Versão **5.2.0** — Fases 1–13 + Comercial Pro completo + Fase 2 Grafismos + correções e melhorias
 
 ---
 
@@ -25,7 +25,9 @@
 17. [Funcionalidades — checklist v3.3](#17-funcionalidades--checklist-v33)
 18. [Comercial Pro — Fase 13](#18-comercial-pro--fase-13)
 19. [Correção crítica: Autoplay Comercial](#19-correção-crítica-autoplay-comercial)
-20. [Backlog](#20-backlog)
+20. [Melhorias v5.2.0](#20-melhorias-v520)
+21. [Fase 2 — Grafismos (v5.2.0)](#21-fase-2--grafismos-v520)
+22. [Backlog](#22-backlog)
 
 ---
 
@@ -1432,14 +1434,190 @@ Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato f
 
 ---
 
-## 20. Backlog
+## 20. Melhorias v5.2.0
+
+> Implementado em **15/05/2026**.
+
+### 20.1. Comercial Pro — complementos
+
+**Bloqueio automático de concorrentes na distribuição (`CampaignsPanel.tsx`):**
+O `DistributeModal` agora separa os blocos elegíveis em duas listas: elegíveis (recebem o cliente) e bloqueados por segmento (já têm concorrente). Blocos bloqueados são exibidos com o nome do concorrente e ícone de proibido. Se todos os blocos estiverem bloqueados, o modal explica e não permite confirmar.
+
+**Renovação assistida de campanha:**
+Botão "Renovar" aparece em campanhas expiradas, concluídas ou com ≥ 90 % de execução. Abre modal com período anterior visível, novo início/fim pré-preenchidos (mesma duração), opção de marcar a anterior como Concluída. Cria nova campanha herdando todos os parâmetros.
+
+**Relatório financeiro CSV (`ReportsPanel.tsx`):**
+Botão "Exportar CSV" ao lado do "Gerar PDF". No modo Campanha sem seleção: uma linha por campanha (Contratado/Veiculado/Falhas/Restante/%). Com campanha selecionada: log detalhado daquela campanha. Arquivo com BOM UTF-8, separador `;` — compatível com Excel e Google Planilhas.
+
+### 20.2. Posição no bloco por campanha (`blockPosition`)
+
+Novo campo `blockPosition?: number` (0–100) na interface `Campaign`. Quando uma campanha tem posição configurada, o motor de playout (`expandBlockItems`) reordena os `spot_client` dentro do bloco por `blockPosition → priority → order`, sem deslocar itens `vmix_action` ou `vmix_input`.
+
+Regra: posição 0 + Alta prioridade = primeiro; posição 0 + Média = segundo; posição 50 = depois dos de posição 0. `vmix_action` e `vmix_input` permanecem na posição manual configurada pelas setas do AdBreaksPanel.
+
+Campo visível no formulário de campanha (Comercial Pro → Campanhas) e no card expandido quando diferente de 0.
+
+### 20.3. Virada automática de meia-noite (`App.tsx`)
+
+**Bug crítico corrigido:** o `scheduleDate` em `App.tsx` era inicializado uma vez e nunca avançava sozinho — ao virar a meia-noite o app ficava travado exibindo o dia anterior mesmo após o `AppContext` gerar a programação do novo dia.
+
+**Correção:** `useRef` + `useEffect` com intervalo de 30 s que verifica se `scheduleDate < today()` e avança para o novo dia. Só avança quando a data exibida ficou no passado — datas futuras escolhidas manualmente pelo operador são preservadas.
+
+---
+
+## 21. Fase 2 — Grafismos (v5.2.0)
+
+> Implementado em **15/05/2026**. Esta fase entrega controle completo de grafismos e títulos vMix diretamente do VTMaster, incluindo GC musical automático, cadastro de inputs, templates de lower third e servidor local de Data Sources.
+
+### Novo painel "Grafismos" (navegação lateral)
+
+Ícone `MonitorPlay`. 4 abas: GC Automático, Meus Títulos, Templates, Data Sources.
+
+### 21.1. GC Automático
+
+Configurações do GC musical (antes no modal de Configurações) agora vivem aqui. Quando uma música começa a tocar num bloco musical (item sem `adBreakId`, com `filePath`, não `vmix_action`, não `pause`), o VTMaster aguarda o delay configurado e envia `SetText` para um input de título do vMix.
+
+**Configurações:**
+| Campo | Descrição |
+|-------|-----------|
+| Delay (s) | Segundos após o início da música (padrão: 5) |
+| Input vMix | Nome exato do input GT no vMix |
+| Campo linha 1 | Nome do campo de texto para o artista (`Artist.Text`) |
+| Campo linha 2 | Nome do campo de texto para a música (`Title.Text`) |
+| Modo linha 2 | Dinâmico (parse do arquivo) ou Fixo (texto estático) |
+| Canal overlay | 1–4 para ativar `OverlayInputNIn`; 0 = só seta texto |
+| Esconder após | Segundos até `OverlayInputNOff`; 0 = manual |
+
+**Nota importante:** títulos GT do vMix exigem o sufixo `.Text` no nome do campo. Exemplo: se o campo no editor GT se chama `Artist`, o valor configurado deve ser `Artist.Text`.
+
+**Botão "Testar GC agora":** dispara com texto fixo de exemplo e exibe o retorno real do vMix — permite diagnóstico imediato de erros no nome do campo ou do input.
+
+**Parse de artista/música:** o arquivo deve ter o formato `ARTISTA - MÚSICA`. O VTMaster separa pelo ` - ` e envia artista na linha 1 e música na linha 2. Se não houver separador, o título inteiro vai para a linha 1 e a linha 2 recebe o texto estático configurado (ou espaço, para limpar o campo).
+
+**Guard de commercial:** se `item.adBreakId` estiver presente, o GC nunca dispara. Blocos comerciais não recebem GC musical.
+
+### 21.2. Meus Títulos
+
+Cadastro de inputs de título do vMix (`GrafismoTitleInput[]`). Para cada input: nome exato no vMix + lista de campos com nome e rótulo. Os campos cadastrados aqui são oferecidos como opções de dropdown na aba Templates, evitando erros de digitação.
+
+**Tipos persistidos:**
+```typescript
+interface GrafismoField {
+  name: string    // nome do campo no vMix (ex: "Artist.Text")
+  label: string   // rótulo de exibição no VTMaster
+}
+
+interface GrafismoTitleInput {
+  id: string
+  name: string             // nome exato do input no vMix (ex: "Lower Third")
+  fields: GrafismoField[]
+  createdAt: string
+}
+```
+
+Persistido em `grafismoTitleInputs.json`. Incluído no `BACKUP_KEYS`.
+
+### 21.3. Templates
+
+Templates de lower third com botão **"Disparar"** manual. Cada template define:
+- Nome (ex: "Agora no ar", "A seguir", "Intervalo comercial", "Hora certa", "Plantão")
+- Input de título alvo (selecionado dentre os cadastrados em Meus Títulos)
+- Mapeamentos: campo do vMix → fonte dos dados
+- Canal de overlay e duração de esconder
+
+**Fontes disponíveis:**
+
+| Fonte | O que envia |
+|-------|-------------|
+| `now_artist` | Artista do item tocando agora |
+| `now_song` | Música do item tocando agora |
+| `now_title` | Título completo do item atual |
+| `next_artist` | Artista do próximo item pendente |
+| `next_song` | Música do próximo item |
+| `next_title` | Título completo do próximo item |
+| `time` | Hora atual `HH:MM` |
+| `station` | Nome da emissora (das Configurações) |
+| `static` | Texto fixo configurado no template |
+
+**Tipos persistidos:**
+```typescript
+type GrafismoFieldSource = 'now_artist' | 'now_song' | 'now_title' | 'next_artist' | 'next_song' | 'next_title' | 'time' | 'station' | 'static'
+
+interface GrafismoTemplateMapping {
+  fieldName: string
+  source: GrafismoFieldSource
+  staticValue?: string
+}
+
+interface GrafismoTemplate {
+  id: string
+  name: string
+  inputId: string                   // GrafismoTitleInput.id
+  mappings: GrafismoTemplateMapping[]
+  overlayChannel?: number           // 1-4, 0 = não ativar
+  hideDuration?: number             // segundos, 0 = manual
+  createdAt: string
+}
+```
+
+Persistido em `grafismoTemplates.json`. Incluído no `BACKUP_KEYS`.
+
+### 21.4. Data Sources — servidor HTTP local
+
+Servidor HTTP embutido no processo Electron (Node `http.createServer`). Porta configurável (padrão 7070). Quando ativo, o vMix pode consumir os endpoints como Data Sources Web e atualizar títulos automaticamente sem nenhuma intervenção do operador.
+
+**Endpoints:**
+
+| URL | Conteúdo |
+|-----|----------|
+| `/vtmaster/now-next` | Item atual + próximo, com `artist`, `song`, `title`, `type`, `duration`, `scheduledTime` |
+| `/vtmaster/schedule` | Grade completa do dia (todos os itens com status) |
+| `/vtmaster/log-today` | Log de veiculação do dia |
+
+**Como configurar no vMix:** Add Input → Data Source → Web → colar a URL. O vMix consulta periodicamente e atualiza os campos do título mapeados.
+
+**IPC adicionados em `electron/main.ts`:**
+- `datasources-update` — renderer envia snapshot de estado quando playlist/schedule/log mudam
+- `datasources-start(port)` — inicia o servidor HTTP
+- `datasources-stop` — para o servidor
+- `datasources-status` — retorna `{ running: boolean }`
+
+**Bridge adicionada em `electron/preload.ts`:**
+`updateDataSources`, `startDataSourcesServer`, `stopDataSourcesServer`, `getDataSourcesStatus`
+
+**Tipos adicionados em `SpotMasterAPI`:** os 4 métodos acima.
+
+**AppSettings adicionados:**
+```typescript
+dataSourcesEnabled: boolean
+dataSourcesPort: number    // padrão: 7070
+```
+
+**Push automático de estado:** `useEffect` em `AppContext` observa `playlist`, `dateSchedules` e `playLog` — quando `dataSourcesEnabled === true`, envia snapshot ao servidor via IPC automaticamente.
+
+### 21.5. Arquivos adicionados/modificados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `src/components/Grafismos/GrafismosPanel.tsx` | **NOVO** — painel com 4 abas |
+| `src/types/index.ts` | `GrafismoField`, `GrafismoTitleInput`, `GrafismoFieldSource`, `GrafismoTemplateMapping`, `GrafismoTemplate`; `dataSourcesEnabled`, `dataSourcesPort` em `AppSettings`; 4 métodos em `SpotMasterAPI` |
+| `src/store/AppContext.tsx` | `grafismoTitleInputs`, `grafismoTemplates` em state/actions/reducer/loadAll/saveEffects; push de Data Sources |
+| `electron/main.ts` | Servidor HTTP + 4 IPC handlers; `grafismoTitleInputs` e `grafismoTemplates` no `BACKUP_KEYS` |
+| `electron/preload.ts` | 4 métodos de Data Sources |
+| `src/App.tsx` | Painel `'grafismos'` + ícone `MonitorPlay` |
+| `src/components/Settings/SettingsModal.tsx` | Seção GC Musical removida (movida para Grafismos) |
+| `src/i18n/pt.ts` e `en.ts` | `nav.grafismos` |
+| `package.json` | Versão `5.1.7` → `5.2.0` |
+
+---
+
+## 22. Backlog
 
 ### Alta prioridade
 
 | Item | Descrição |
 |------|-----------|
-| **Regra de concorrência na distribuição** | A detecção visual de conflito de segmento já existe no painel, mas o bloqueio automático ao distribuir ainda não está implementado — dois clientes do mesmo segmento podem ser colocados no mesmo bloco se o operador não prestar atenção |
-| **Cleanup ao excluir anunciante** | `clientSpots` ficam órfãos ao deletar o cliente — já corrigido para campanhas (DELETE_CLIENT remove campaigns), mas os spots não são limpos das referências em `commercialBlocks.items` |
+| **Cleanup ao excluir anunciante** | `clientSpots` ficam órfãos ao deletar o cliente — spots não são limpos das referências em `commercialBlocks.items` |
 | **Prévia de mídia** | Pré-visualizar clipe antes de adicionar à programação |
 | **Edição inline de título/duração** | Editar diretamente na linha do card sem abrir modal |
 
@@ -1448,38 +1626,36 @@ Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato f
 | Item | Descrição |
 |------|-----------|
 | **Regra de separação mínima** | Não veicular dois spots do mesmo cliente em intervalos muito próximos no mesmo dia |
-| **Comprovante por campanha com evidência** | Snapshot vMix (`SnapshotInput`) capturado no início de cada spot da campanha — depende da Fase 3 do PLANOGPT (Outputs/Recording) |
-| **Relatório financeiro de campanha** | Saldo contratado × veiculado × falhas, exportável para planilha |
-| **Renovação assistida** | Botão "Renovar campanha" que duplica a campanha com novo período e zera o contador |
-| **Alerta de campanha quase vencendo** | Notificação na interface quando restam menos de X dias e ainda há spots pendentes |
+| **Comprovante por campanha com evidência** | Snapshot vMix (`SnapshotInput`) capturado no início de cada spot — depende da Fase 3 (Outputs/Recording) |
+| **Alerta de campanha quase vencendo** | Notificação quando restam menos de X dias e ainda há spots pendentes |
 
 ### Média prioridade — Geral
 
 | Item | Descrição |
 |------|-----------|
-| **TCP/TALLY bridge** | Fase 1 do PLANOGPT (pendente deliberada) — conexão TCP na porta 8099 do vMix para eventos em tempo real, `SUBSCRIBE TALLY`, fallback para HTTP |
+| **TCP/TALLY bridge** | Fase 1 do PLANOGPT (pendente deliberada) — porta 8099, `SUBSCRIBE TALLY`, fallback HTTP |
+| **Painel de saídas e gravação** | Fase 3 do PLANOGPT — Recording, Streaming, Outputs 2-4, clean feed, MultiCorder |
 | **Importação CSV** | Carregar itens a partir de planilha |
 | **Múltiplos blocos no mesmo horário** | Potencial conflito de scheduledTime |
-| **Resetar programação do dia** | Botão para regerar do zero (descartando edições manuais) |
-| **Colar em bloco específico** | BlockPickerModal para o "Colar" (hoje sempre cola abaixo do item clicado) |
+| **Resetar programação do dia** | Botão para regerar do zero descartando edições manuais |
 
 ### Baixa prioridade
 
 | Item | Descrição |
 |------|-----------|
-| **Grafismos e títulos vMix** | Fase 2 do PLANOGPT — `SetText`, `SetImage`, `SetTextVisible`, Data Sources, templates prontos |
-| **Painel de saídas e gravação** | Fase 3 do PLANOGPT — controle de Recording, Streaming, Outputs 2-4, clean feed, MultiCorder |
 | **Musical Pro** | Fase 5 do PLANOGPT — biblioteca musical com tags, scanner, simulador de grade |
 | **Modo On Air simplificado** | Fase 6 do PLANOGPT — tela com agora/próximo/5 próximos, botões grandes, command palette |
+| **GC com relógio em tempo real** | Template "Hora certa" que atualiza a cada minuto enquanto ativo |
 | **Licenciamento** | Proteção por CNPJ/chave de ativação |
 | **Sincronização em rede** | Múltiplos operadores editando simultaneamente |
-| **Suporte nativo MIDI/HID** | Hoje via mapeamento de teclas em software externo |
 
 ### Problemas conhecidos e limitações
 
 | Problema | Impacto | Workaround |
 |----------|---------|------------|
+| GC musical exige sufixo `.Text` no nome do campo GT | Campo não muda no vMix se o operador não incluir `.Text` | Botão "Testar GC" mostra o erro do vMix — usar `NomeDoCampo.Text` |
 | Rotativo não bloqueia duplicata se cliente já está no template manual | Spot pode aparecer duas vezes no mesmo bloco | Não adicionar manualmente cliente que já tem campanha rotativa |
 | Campanha expirada continua visível no bloco no AdBreaks | Visual confuso — o item aparece mas não é veiculado | Gate no motor garante que não veicula; visual é cosmético |
 | Distribuição aleatória pode mudar entre cliques | Cada clique no botão "Distribuir" faz novo shuffle | Confirmar na primeira tentativa |
 | `preloadMinutes` afeta apenas o preloader de 20s, não o scheduler de 1s | Bloco pode entrar na fila até 20s depois do preloadMinutes | Margem desprezível na prática |
+| Data Sources serve apenas `127.0.0.1` | vMix na mesma máquina funciona; máquinas diferentes na rede não acessam | Previsto para a Fase 7 (multiestação) |

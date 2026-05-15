@@ -244,6 +244,17 @@ Entregas:
 
 Valor: o operador passa a montar uma programacao que tambem alimenta tarjas, lower thirds, bugs e clocks no vMix.
 
+Status de implantacao em 2026-05-15:
+
+- Painel "Grafismos" criado em `src/components/Grafismos/GrafismosPanel.tsx` com 4 abas: GC Automático, Meus Títulos, Templates e Data Sources.
+- **GC Automático**: configuracoes movidas do modal de Configuracoes para o novo painel. Dispara `SetText` para um input GT do vMix apos delay configuravel (padrao 5s). Parse do titulo do arquivo no formato `ARTISTA - MUSICA`. Dois modos: dinamico (linha 1 = artista, linha 2 = musica) e fixo (linha 2 = texto estatico). Ativacao de overlay por canal (1-4) com esconder automatico. Botao "Testar GC agora" que exibe o retorno real do vMix. Nota: API HTTP do vMix exige sufixo `.Text` no nome do campo GT (ex: `Artist.Text`). Guard: nunca dispara em itens com `adBreakId` (blocos comerciais).
+- **Cadastro de inputs de titulo** (`GrafismoTitleInput`): nome do input no vMix + lista de campos com nome e rotulo. Campos cadastrados aparecem como dropdown ao criar templates.
+- **Templates** (`GrafismoTemplate`): CRUD completo com botao "Disparar" manual. Mapeamento campo → fonte: `now_artist`, `now_song`, `now_title`, `next_artist`, `next_song`, `next_title`, `time`, `station`, `static`. Canal de overlay e duracao de esconder configuravel por template.
+- **Data Sources**: servidor HTTP local no processo Electron (Node `http.createServer`), porta configuravel (padrao 7070). Endpoints: `/vtmaster/now-next`, `/vtmaster/schedule`, `/vtmaster/log-today`. CORS habilitado para acesso local do vMix. Botoes para copiar URLs com feedback visual. Push automatico de estado via `useEffect` no AppContext. IPC handlers: `datasources-update`, `datasources-start`, `datasources-stop`, `datasources-status`. Metodos adicionados no `SpotMasterAPI` e `preload.ts`.
+- Novos tipos persistidos: `grafismoTitleInputs` e `grafismoTemplates` (incluidos no `BACKUP_KEYS`). `dataSourcesEnabled` e `dataSourcesPort` em `AppSettings`.
+
+Pendencias desta fase: acoes `SetImage`, `SetCountdown`, `StartCountdown`, `TitleBeginAnimation` e `SetTextVisibleOn/Off` ainda nao implementadas como acoes de template (apenas `SetText` via Templates e GC); templates pre-construidos ("Agora no ar" etc.) nao existem como presets — o operador cria seus proprios; "Hora certa" nao atualiza em tempo real enquanto ativo (dispara uma vez); Data Sources serve apenas `127.0.0.1` — acesso de outras maquinas na rede previsto para a Fase 7.
+
 ### Fase 3 - Saida, gravacao, streaming e clean feed
 
 Objetivo: transformar o VTMaster no painel de controle operacional da exibicao.
@@ -317,6 +328,31 @@ Entregas:
   - GUID do input usado;
   - status real do vMix no momento.
 
+Status de implantacao em 2026-05-14:
+
+- Tres novos tipos persistidos: `Segment`, `ProgramWindow` e `Campaign` em `src/types/index.ts`.
+- Painel `src/components/Campaigns/CampaignsPanel.tsx` com 3 abas: Campanhas, Segmentos e Programas/Faixas.
+- Cadastro completo de campanhas: cliente, nome, modalidade, data inicial/final, quantidade contratada, spots por dia, dias da semana, segmento, faixas de horario elegiveis, prioridade e status.
+- Duas modalidades implementadas:
+  - Padrao: botao "Distribuir" insere o cliente nos blocos elegiveis com shuffle aleatorio limitado por `spotsPerDay`.
+  - Rotativo: posicao calculada de forma stateless por `daysElapsed % totalBlocks`, sem acao do operador.
+- Gate de campanha em `expandBlockItems` (AppContext.tsx): se `bi.campaignId` definido, valida se campanha esta ativa e dentro das datas antes de incluir o item. Campanha expirada ou pausada e silenciosamente ignorada.
+- `CommercialBlockItem`, `PlaylistItem` e `PlayLog` ganharam campo `campaignId?` para rastreabilidade completa ate o log de veiculacao.
+- Detecao visual de conflito de segmento no painel de campanhas: alerta quando dois clientes do mesmo segmento estao no mesmo bloco.
+- Badge de expiracao proxima (7 dias) e indicador de campanha rotativa com icone e cor roxa.
+- LogPanel: coluna Campanha e filtro por campanha no historico de veiculacao.
+- ReportsPanel: novo tipo "Relatorio por Campanha" com painel de progresso (contratados/veiculados/restantes/%).
+- Novas chaves em `BACKUP_KEYS`: `campaigns`, `segments`, `programWindows` (total 16 chaves).
+- i18n atualizado em `src/i18n/pt.ts` e `en.ts` para todos os novos termos.
+
+Complemento em 2026-05-15:
+
+- Bloqueio automatico de concorrentes na distribuicao implementado no `DistributeModal`: ao clicar "Distribuir", blocos que ja contem um cliente do mesmo segmento sao separados em lista "bloqueados por concorrencia de segmento" e excluidos da selecao automaticamente. O modal exibe os blocos bloqueados com o nome do concorrente e o icone de proibido. Se todos os blocos ficarem bloqueados, o modal exibe mensagem especifica sem permitir confirmar.
+- Renovacao assistida implementada: botao "Renovar" aparece em campanhas expiradas, concluidas ou com mais de 90% de execucao. Abre modal com periodo anterior visivel, campos de novo inicio/fim pre-preenchidos (inicio = dia seguinte ao fim anterior, duracao preservada), opcao de marcar a anterior como Concluida e cria nova campanha com os mesmos parametros.
+- Relatorio financeiro exportavel em CSV implementado no `ReportsPanel`: botao "Exportar CSV" ao lado do "Gerar PDF". No tipo "Campanha" sem campanha selecionada exporta resumo com uma linha por campanha (Contratado/Veiculado/Falhas/Restante/% Conclusao). Com campanha selecionada exporta log detalhado daquela campanha. Arquivo abre corretamente no Excel e Planilhas (BOM UTF-8, separador ponto-e-virgula).
+
+Pendencia deliberada: snapshot de evidencia (captura de tela do Output no inicio do spot) depende da Fase 3 do PLANOGPT (Outputs/Recording/Streaming) e nao foi implementado.
+
 ### Fase 5 - Musical Pro
 
 Objetivo: tornar o modo musical comparavel a automacao de radio, mas com saida de video.
@@ -352,6 +388,16 @@ Entregas:
   - mostrar repeticoes e conflitos;
   - recalcular bloco sem alterar programacao salva.
 
+Status de implantacao em 2026-05-14:
+
+- AutoProg implementado em versao anterior ao PLANOGPT: `src/utils/autoprog.ts` com motor de geracao de blocos musicais por estilos, sequencias, cooldown de artista e alvo por quantidade ou duracao.
+- Tipos persistidos: `MusicStyle`, `MusicSequence`, `AutoBlocoAssignment` em `src/types/index.ts`.
+- Painel AutoProg acessivel pela navegacao lateral com CRUD de estilos, sequencias e atribuicao por dia/bloco.
+- `generateMusicBlockEngine` usa `getDuration(filePath)` para respeitar `targetMode: 'duration'`.
+- Duracoes lidas pelo AutoProg alimentam `mediaDurationCache` persistido.
+
+Pendencias desta fase: biblioteca musical com metadados editaveis (artista, album, ano, energia, idioma, BPM, tags) ainda nao existe — atualmente o AutoProg usa apenas estilos e sequencias de pastas/arquivos sem metadados ricos; scanner de reconciliacao (novos/removidos/renomeados/duplicados) nao implementado; simulador de grade inteira nao implementado.
+
 ### Fase 6 - Experiencia do operador
 
 Objetivo: reduzir clique, ansiedade e erro.
@@ -382,6 +428,21 @@ Entregas:
   - filtrar;
   - acionar preview sem adicionar na grade;
   - bloquear inputs criticos.
+
+Status de implantacao em 2026-05-14:
+
+- Botao "Stop Next" implementado na toolbar da Programacao (Fase 12/v5.0.0): termina o item atual e para a sequencia; estado armado com animacao pulse ambar; cancela com segundo clique ou stop manual. Ref `stopAfterCurrentRef` em `AppContext.tsx`.
+- Cockpit operacional da aba Programacao implementado (Interface 2): bloco atual, proximo bloco/item, resumo do dia e acoes principais em destaque visual.
+- Selecao visual de item: clicar no card o seleciona com borda e fundo accent; segundo clique deseleciona.
+- Arrastar itens entre blocos diferentes: `scheduledTime` do item atualizado para o bloco de destino no drop.
+- Copiar / Colar no menu de contexto: "Copiar item" e "Colar abaixo" com heranca de `scheduledTime` do bloco de destino.
+- `BlockPickerModal`: lista de blocos para selecao quando nenhum item esta selecionado ao adicionar item.
+- `VmixInputPanel` com prop `onAddInput` para uso na Programacao (insere abaixo do item selecionado).
+- Painel lateral de inputs vMix (`VmixInputPanel`) disponivel na Programacao e na Playlist.
+- Disparo global por teclado, gamepad e MIDI ja implementados desde Fase 3 (anterior ao PLANOGPT).
+- Design system base em producao: `Button`, `Modal`, `Field`, `SegmentedControl`, `Badge` e `PageHeader` nos fluxos principais.
+
+Pendencias desta fase: Modo "On Air" simplificado (tela dedicada com agora/proximo/5 proximos/botoes grandes) nao implementado; command palette nao implementado; previa de midia (player interno/thumbnail/waveform) nao implementada; atalhos configuraveis por acao (alem do disparo global) nao implementados; VmixInputPanel ainda nao agrupa por tipo nem mostra PGM/PVW em tempo real.
 
 ### Fase 7 - Produto multiestacao e continuidade
 

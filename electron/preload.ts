@@ -95,6 +95,16 @@ contextBridge.exposeInMainWorld('spotmaster', {
   openExternal: (url: string) =>
     ipcRenderer.invoke('open-external', url),
 
+  // Data Sources — local HTTP server for vMix integration
+  updateDataSources: (snapshot: unknown) =>
+    ipcRenderer.invoke('datasources-update', snapshot),
+  startDataSourcesServer: (port: number) =>
+    ipcRenderer.invoke('datasources-start', port),
+  stopDataSourcesServer: () =>
+    ipcRenderer.invoke('datasources-stop'),
+  getDataSourcesStatus: () =>
+    ipcRenderer.invoke('datasources-status'),
+
   // Disparo — global trigger shortcut (works even when app is minimized)
   registerTrigger: (key: string) =>
     ipcRenderer.invoke('register-trigger', key),

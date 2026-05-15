@@ -28,6 +28,8 @@ import type {
   Campaign,
   Segment,
   ProgramWindow,
+  GrafismoTitleInput,
+  GrafismoTemplate,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
@@ -61,6 +63,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   triggerKey: null,
   autoplayComerciais: false,
   preloadMinutes: 5,
+  gcMusicEnabled: false,
+  gcMusicDelaySeconds: 5,
+  gcMusicInputName: '',
+  gcMusicLine1Field: 'Artist.Text',
+  gcMusicLine2Field: 'Title.Text',
+  gcMusicDynamic: true,
+  dataSourcesEnabled: false,
+  dataSourcesPort: 7070,
 }
 
 interface AppState {
@@ -88,6 +98,8 @@ interface AppState {
   musicStyles: MusicStyle[]
   musicSequences: MusicSequence[]
   autoBlocoAssignments: AutoBlocoAssignment[]
+  grafismoTitleInputs: GrafismoTitleInput[]
+  grafismoTemplates: GrafismoTemplate[]
 }
 
 const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
@@ -125,6 +137,8 @@ const initialState: AppState = {
   musicStyles: [],
   musicSequences: [],
   autoBlocoAssignments: [],
+  grafismoTitleInputs: [],
+  grafismoTemplates: [],
 }
 
 type Action =
@@ -183,6 +197,12 @@ type Action =
   | { type: 'DELETE_MUSIC_SEQUENCE';       payload: string }
   | { type: 'SET_AUTO_BLOCO_ASSIGNMENT';   payload: AutoBlocoAssignment }
   | { type: 'DELETE_AUTO_BLOCO_ASSIGNMENT'; payload: string }
+  | { type: 'ADD_GRAFISMO_TITLE_INPUT';    payload: GrafismoTitleInput }
+  | { type: 'UPDATE_GRAFISMO_TITLE_INPUT'; payload: GrafismoTitleInput }
+  | { type: 'DELETE_GRAFISMO_TITLE_INPUT'; payload: string }
+  | { type: 'ADD_GRAFISMO_TEMPLATE';       payload: GrafismoTemplate }
+  | { type: 'UPDATE_GRAFISMO_TEMPLATE';    payload: GrafismoTemplate }
+  | { type: 'DELETE_GRAFISMO_TEMPLATE';    payload: string }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -379,6 +399,18 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'DELETE_AUTO_BLOCO_ASSIGNMENT':
       return { ...state, autoBlocoAssignments: state.autoBlocoAssignments.filter(a => a.id !== action.payload) }
+    case 'ADD_GRAFISMO_TITLE_INPUT':
+      return { ...state, grafismoTitleInputs: [...state.grafismoTitleInputs, action.payload] }
+    case 'UPDATE_GRAFISMO_TITLE_INPUT':
+      return { ...state, grafismoTitleInputs: state.grafismoTitleInputs.map(i => i.id === action.payload.id ? action.payload : i) }
+    case 'DELETE_GRAFISMO_TITLE_INPUT':
+      return { ...state, grafismoTitleInputs: state.grafismoTitleInputs.filter(i => i.id !== action.payload) }
+    case 'ADD_GRAFISMO_TEMPLATE':
+      return { ...state, grafismoTemplates: [...state.grafismoTemplates, action.payload] }
+    case 'UPDATE_GRAFISMO_TEMPLATE':
+      return { ...state, grafismoTemplates: state.grafismoTemplates.map(t => t.id === action.payload.id ? action.payload : t) }
+    case 'DELETE_GRAFISMO_TEMPLATE':
+      return { ...state, grafismoTemplates: state.grafismoTemplates.filter(t => t.id !== action.payload) }
     default:
       return state
   }
@@ -500,7 +532,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const daysBetween = (start: string, end: string): number =>
       Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 86400000)
 
-    const ordered = [...(block.items ?? [])].sort((a, b) => a.order - b.order)
+    const byOrder = [...(block.items ?? [])].sort((a, b) => a.order - b.order)
+
+    const spotSlots = byOrder
+      .map((it, i) => (it.type === 'spot_client' ? i : -1))
+      .filter(i => i >= 0)
+
+    const sortedSpots = byOrder
+      .filter(it => it.type === 'spot_client')
+      .sort((a, b) => {
+        const ca = a.campaignId ? (campaigns ?? []).find(c => c.id === a.campaignId) : null
+        const cb = b.campaignId ? (campaigns ?? []).find(c => c.id === b.campaignId) : null
+        const pa = ca?.blockPosition ?? 0
+        const pb = cb?.blockPosition ?? 0
+        if (pa !== pb) return pa - pb
+        const pra = ca?.priority ?? 2
+        const prb = cb?.priority ?? 2
+        if (pra !== prb) return pra - prb
+        return a.order - b.order
+      })
+
+    const ordered = [...byOrder]
+    spotSlots.forEach((slotIdx, rank) => { ordered[slotIdx] = sortedSpots[rank] })
 
     for (const bi of ordered) {
       if (bi.type === 'spot_client') {
@@ -1407,6 +1460,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // ── GC Musical automático ─────────────────────────────────────────────────
+    // Dispara SetText no input de título do vMix após um delay configurável.
+    // Nunca dispara em itens de blocos comerciais (adBreakId presente).
+    {
+      const gc = stateRef.current.settings
+      if (
+        gc.gcMusicEnabled &&
+        gc.gcMusicInputName &&
+        !item.adBreakId &&
+        item.type !== 'vmix_action' &&
+        item.type !== 'pause' &&
+        item.filePath &&
+        !abortRef.current
+      ) {
+        const delayMs = (gc.gcMusicDelaySeconds ?? 5) * 1000
+        setTimeout(async () => {
+          if (abortRef.current) return
+          const s = stateRef.current.settings
+          const rawTitle = item.title ?? ''
+          const sep = rawTitle.indexOf(' - ')
+          const artist = sep >= 0 ? rawTitle.slice(0, sep).trim() : rawTitle.trim()
+          const song   = sep >= 0 ? rawTitle.slice(sep + 3).trim() : ''
+          const line1  = artist
+          const line2  = s.gcMusicDynamic ? song : (s.gcMusicStaticLine2 ?? '')
+          const inp    = s.gcMusicInputName
+          if (!inp) return
+          const gcMeta = { source: 'gc-musical' as const, risk: 'low' as const }
+          // validate:false porque valor vazio ('') é intencional para limpar o campo
+          await executeVmixCommand('SetText', { input: inp, selectedName: s.gcMusicLine1Field || 'Artist', value: line1 || ' ', meta: gcMeta, validate: false })
+          await executeVmixCommand('SetText', { input: inp, selectedName: s.gcMusicLine2Field || 'Title',  value: line2 || ' ', meta: gcMeta, validate: false })
+          const ch = s.gcMusicOverlay ?? 0
+          if (ch > 0) {
+            await executeVmixCommand(`OverlayInput${ch}In`, { input: inp, meta: gcMeta })
+            const hide = s.gcMusicHideDuration ?? 0
+            if (hide > 0) {
+              setTimeout(async () => {
+                if (abortRef.current) return
+                await executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta })
+              }, hide * 1000)
+            }
+          }
+        }, delayMs)
+      }
+    }
+
     dispatch({
       type: 'ADD_LOG',
       payload: {
@@ -2285,7 +2383,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const [settingsRaw, playlistRaw, clientsRaw, logRaw,
                blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw,
                musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw, vmixCommandLogRaw,
-               campaignsRaw, segmentsRaw, programWindowsRaw] =
+               campaignsRaw, segmentsRaw, programWindowsRaw,
+               grafismoInputsRaw, grafismoTemplatesRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -2306,6 +2405,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('campaigns'),
             window.spotmaster.loadData('segments'),
             window.spotmaster.loadData('programWindows'),
+            window.spotmaster.loadData('grafismoTitleInputs'),
+            window.spotmaster.loadData('grafismoTemplates'),
           ])
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -2340,9 +2441,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             musicStyles:          (musicStylesRaw as MusicStyle[])          ?? [],
             musicSequences:       (musicSequencesRaw as MusicSequence[])    ?? [],
             autoBlocoAssignments: (autoBlocoRaw as AutoBlocoAssignment[])   ?? [],
-            campaigns:            (campaignsRaw as Campaign[])              ?? [],
-            segments:             (segmentsRaw as Segment[])                ?? [],
-            programWindows:       (programWindowsRaw as ProgramWindow[])    ?? [],
+            campaigns:            (campaignsRaw as Campaign[])                     ?? [],
+            segments:             (segmentsRaw as Segment[])                       ?? [],
+            programWindows:       (programWindowsRaw as ProgramWindow[])           ?? [],
+            grafismoTitleInputs:  (grafismoInputsRaw as GrafismoTitleInput[])      ?? [],
+            grafismoTemplates:    (grafismoTemplatesRaw as GrafismoTemplate[])     ?? [],
           },
         })
       } catch {
@@ -2457,6 +2560,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.isLoading) saveToStorage('autoBlocoAssignments', state.autoBlocoAssignments)
   }, [state.autoBlocoAssignments, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('grafismoTitleInputs', state.grafismoTitleInputs)
+  }, [state.grafismoTitleInputs, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('grafismoTemplates', state.grafismoTemplates)
+  }, [state.grafismoTemplates, state.isLoading, saveToStorage])
+
+  // ── Data Sources push — envia snapshot de estado ao servidor HTTP local ──────
+  useEffect(() => {
+    if (state.isLoading || !state.settings.dataSourcesEnabled) return
+    const todayStr = today()
+    const schedule = stateRef.current.dateSchedules[todayStr] ?? []
+    const playingIdx = schedule.findIndex(i => i.status === 'playing')
+    const playingPlaylist = stateRef.current.playlist.find(i => i.status === 'playing')
+    const nowItem = playingIdx >= 0 ? schedule[playingIdx] : playingPlaylist ?? null
+    const nextItem = playingIdx >= 0
+      ? schedule.find((i, idx) => idx > playingIdx && i.status === 'pending') ?? null
+      : null
+    const parseTitle = (title: string) => {
+      const sep = title.indexOf(' - ')
+      return { artist: sep >= 0 ? title.slice(0, sep).trim() : title.trim(), song: sep >= 0 ? title.slice(sep + 3).trim() : '' }
+    }
+    const itemSnap = (item: PlaylistItem | null) => item ? {
+      title: item.title, type: item.type, duration: item.duration,
+      scheduledTime: item.scheduledTime, clientName: item.clientName,
+      ...parseTitle(item.title),
+    } : null
+    const snapshot = {
+      nowPlaying: itemSnap(nowItem),
+      nextItem: itemSnap(nextItem),
+      schedule: schedule.map(i => ({ scheduledTime: i.scheduledTime, title: i.title, type: i.type, status: i.status, clientName: i.clientName, duration: i.duration })),
+      log: stateRef.current.playLog.filter(l => l.date === todayStr).map(l => ({ actualTime: l.actualTime, title: l.title, clientName: l.clientName, status: l.status, duration: l.duration })),
+    }
+    window.spotmaster?.updateDataSources(snapshot)
+  }, [state.playlist, state.dateSchedules, state.playLog, state.settings.dataSourcesEnabled, state.isLoading])
 
   // ── Auto-load today's schedule on startup ───────────────────────────────────
   // If today's date has no schedule stored, generate from the weekly template.

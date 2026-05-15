@@ -1,4 +1,5 @@
-﻿import { useState, useEffect } from 'react'
+﻿import { useState, useEffect, useRef } from 'react'
+import { today } from './utils/time'
 import {
   CalendarDays,
   ClipboardList,
@@ -10,6 +11,7 @@ import {
   Tv,
   Users,
   Megaphone,
+  MonitorPlay,
 } from 'lucide-react'
 import { useApp } from './store/AppContext'
 import Toolbar from './components/Toolbar/Toolbar'
@@ -31,11 +33,12 @@ import { Field } from './components/ui/Field'
 import type { PlaylistItem } from './types'
 import AutoProgPanel from './components/AutoProg/AutoProgPanel'
 import CampaignsPanel from './components/Campaigns/CampaignsPanel'
+import GrafismosPanel from './components/Grafismos/GrafismosPanel'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
-type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'campaigns' | 'log' | 'reports' | 'autoprog'
-const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'campaigns', 'log', 'reports', 'autoprog']
+type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'campaigns' | 'grafismos' | 'log' | 'reports' | 'autoprog'
+const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'campaigns', 'grafismos', 'log', 'reports', 'autoprog']
 
 function isPanel(value: string): value is Panel {
   return PANELS.includes(value as Panel)
@@ -93,11 +96,22 @@ export default function App() {
   const [defaultItemMode, setDefaultItemMode] = useState<'media' | 'vmix_action'>('media')
   const [scheduleEditItem, setScheduleEditItem] = useState<PlaylistItem | null>(null)
   // Persists the selected date across Programação tab navigation
-  const [scheduleDate, setScheduleDate] = useState(() => {
-    // Use the useApp today(), but defer to avoid stale closure on module load
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })
+  const [scheduleDate, setScheduleDate] = useState(today)
+
+  // Auto-advance to the next day at midnight.
+  // Only advances if the operator is viewing "today or the past" — future dates chosen
+  // manually by the operator are preserved.
+  const scheduleDateRef = useRef(scheduleDate)
+  scheduleDateRef.current = scheduleDate
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentDay = today()
+      if (scheduleDateRef.current < currentDay) {
+        setScheduleDate(currentDay)
+      }
+    }, 30_000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
@@ -110,6 +124,7 @@ export default function App() {
     { id: 'adbreaks' as Panel,    label: t.nav.adBreaks, icon: CalendarDays },
     { id: 'clients' as Panel,     label: t.nav.clients, icon: Users },
     { id: 'campaigns' as Panel,   label: t.nav.campaigns, icon: Megaphone },
+    { id: 'grafismos' as Panel,   label: t.nav.grafismos, icon: MonitorPlay },
     { id: 'log' as Panel,         label: t.nav.log, icon: ClipboardList },
     { id: 'reports' as Panel,     label: t.nav.reports, icon: FileBarChart },
     { id: 'autoprog' as Panel,    label: 'AutoProg', icon: Music2 },
@@ -187,6 +202,7 @@ export default function App() {
           {activePanel === 'adbreaks' && <AdBreaksPanel />}
           {activePanel === 'clients' && <ClientsPanel />}
           {activePanel === 'campaigns' && <CampaignsPanel />}
+          {activePanel === 'grafismos' && <GrafismosPanel />}
           {activePanel === 'log' && <LogPanel />}
           {activePanel === 'reports' && <ReportsPanel />}
           {activePanel === 'autoprog' && <AutoProgPanel />}
