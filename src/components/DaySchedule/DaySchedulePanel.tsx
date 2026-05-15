@@ -3,20 +3,21 @@ import {
   Activity, AlertTriangle, ShieldCheck, Square, ListVideo, SkipForward, StopCircle, CheckCircle,
   Trash2, RefreshCw, CalendarDays,
   FolderOpen, Plus, Crosshair, Music, DollarSign, Tv,
-  Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical,
+  Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical, Search,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
 import type { PlaylistItem, ProgramSlot, VmixActionItem, VmixCommandLog, VmixInput, VmixStatus } from '../../types'
 import { formatDuration, today } from '../../utils/time'
 import { runSchedulePreflight, type PreflightSeverity, type PreflightSummary } from '../../utils/preflight'
+import { VMIX_ACTION_COMMANDS } from '../../utils/vmixCommandCatalog'
 import {
   detectMediaType,
   mediaDurationCacheKey,
   readMediaDuration,
   readMediaDurationBatch,
 } from '../../utils/mediaDuration'
-import { spotTypeForVmix } from '../../utils/vmixInputs'
+import { INPUT_TYPE_LABELS, parseVmixInputs, spotTypeForVmix } from '../../utils/vmixInputs'
 import VmixInputPanel from '../Playlist/VmixInputPanel'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
@@ -24,12 +25,6 @@ import { Field, FieldRow } from '../ui/Field'
 import Modal from '../ui/Modal'
 import './DaySchedulePanel.css'
 import '../Playlist/ContextMenu.css'
-
-const VMIX_FUNCTIONS = [
-  'AudioOff','AudioOn','SetVolume','Fade',
-  'OverlayInput1','OverlayInput1Out','OverlayInput2','OverlayInput2Out',
-  'StartRecording','StopRecording','Cut','Merge',
-]
 
 function nowSeconds(): number {
   const d = new Date()
@@ -217,7 +212,7 @@ function VmixActionModal({ onInsert, onClose }: {
       <div className="ui-field-hint">Use isso para inserir comandos rápidos do vMix sem sair da programação.</div>
       <Field label="Função vMix">
         <select className="ui-select" value={fn} onChange={e => setFn(e.target.value)}>
-          {VMIX_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+          {VMIX_ACTION_COMMANDS.map(f => <option key={f.functionName} value={f.functionName}>{f.label}</option>)}
         </select>
       </Field>
       <FieldRow>
@@ -239,34 +234,144 @@ function VmixActionModal({ onInsert, onClose }: {
 
 // ── vMix Input mini-modal ─────────────────────────────────────────────────────
 
+type VmixInputInsert = {
+  inputName: string
+  title: string
+  duration: number
+  vmixType?: string
+}
+
 function VmixInputModal({ onInsert, onClose }: {
-  onInsert: (inputName: string, duration: number) => void
+  onInsert: (input: VmixInputInsert) => void
   onClose: () => void
 }) {
+  const { state } = useApp()
   const [inputName, setInputName] = useState('')
   const [duration, setDuration]   = useState(10)
-  const inputRef = useRef<HTMLInputElement>(null)
-  useEffect(() => { inputRef.current?.focus() }, [])
+  const [inputs, setInputs] = useState<VmixInput[]>(() => state.vmixStatus.inputs ?? [])
+  const [filter, setFilter] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [selectedNumber, setSelectedNumber] = useState('')
+
+  const refreshInputs = useCallback(async () => {
+    if (!window.spotmaster) return
+    setLoading(true)
+    try {
+      const result = await window.spotmaster.vmixRequest({})
+      if (result.success && result.data) setInputs(parseVmixInputs(result.data))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if ((state.vmixStatus.inputs?.length ?? 0) > 0) return
+    const timer = window.setTimeout(() => {
+      void refreshInputs()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [state.vmixStatus.inputs?.length, refreshInputs])
+
+  const filteredInputs = useMemo(() => {
+    const term = filter.trim().toLowerCase()
+    if (!term) return inputs
+    return inputs.filter(inp =>
+      inp.number.includes(term) ||
+      inp.title.toLowerCase().includes(term) ||
+      (INPUT_TYPE_LABELS[inp.type] ?? inp.type).toLowerCase().includes(term)
+    )
+  }, [filter, inputs])
+
+  const chooseInput = (inp: VmixInput) => {
+    setSelectedNumber(inp.number)
+    setInputName(inp.number)
+    if (inp.duration > 0) setDuration(Math.max(1, Math.round(inp.duration / 1000)))
+  }
+
+  const insertInput = (inp: VmixInput) => {
+    onInsert({
+      inputName: inp.number,
+      title: inp.title || `Input ${inp.number}`,
+      duration: inp.duration > 0 ? Math.round(inp.duration / 1000) : duration,
+      vmixType: inp.type,
+    })
+    onClose()
+  }
+
+  const insertSelected = () => {
+    const selected = inputs.find(inp => inp.number === selectedNumber)
+    if (selected) {
+      insertInput(selected)
+      return
+    }
+
+    const manual = inputName.trim()
+    if (!manual) return
+    onInsert({ inputName: manual, title: manual, duration })
+    onClose()
+  }
+
   return (
     <Modal
       title="Inserir Input vMix"
       onClose={onClose}
-      maxWidth={440}
+      maxWidth={620}
+      bodyStyle={{ maxHeight: 520, overflowY: 'auto' }}
       actions={
         <>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" disabled={!inputName.trim()} onClick={() => { onInsert(inputName, duration); onClose() }}>
+          <Button variant="primary" disabled={!inputName.trim()} onClick={insertSelected}>
             Adicionar
           </Button>
         </>
       }
     >
-      <div className="ui-field-hint">Ideal para câmera, NDI, grafismo ou qualquer input já existente no vMix.</div>
+      <div className="ui-field-hint">Selecione um input aberto no vMix. O item sera salvo usando o numero do input.</div>
+      <div className="day-vmix-input-toolbar">
+        <div className="day-vmix-input-search">
+          <Search size={13} />
+          <input
+            autoFocus
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder="Filtrar por numero, nome ou tipo..."
+          />
+        </div>
+        <button className="day-schedule-btn" onClick={() => { void refreshInputs() }} disabled={loading} title="Atualizar inputs do vMix">
+          <RefreshCw size={13} className={loading ? 'spin' : ''} />
+          Atualizar
+        </button>
+      </div>
+
+      <div className="day-vmix-input-list">
+        {loading && inputs.length === 0 && (
+          <div className="day-vmix-input-empty">Carregando inputs do vMix...</div>
+        )}
+        {!loading && filteredInputs.length === 0 && (
+          <div className="day-vmix-input-empty">
+            {inputs.length === 0 ? 'Nenhum input encontrado. Verifique a conexao com o vMix.' : 'Nenhum input corresponde ao filtro.'}
+          </div>
+        )}
+        {filteredInputs.map(inp => (
+          <button
+            key={`${inp.number}-${inp.key || inp.title}`}
+            className={`day-vmix-input-row${selectedNumber === inp.number ? ' selected' : ''}`}
+            onClick={() => chooseInput(inp)}
+            onDoubleClick={() => insertInput(inp)}
+            title={`Selecionar input ${inp.number}`}
+          >
+            <span className="day-vmix-input-number">#{inp.number}</span>
+            <span className="day-vmix-input-name">{inp.title || `Input ${inp.number}`}</span>
+            <span className="day-vmix-input-type">{INPUT_TYPE_LABELS[inp.type] ?? (inp.type || 'Input')}</span>
+            {inp.state && <span className="day-vmix-input-state">{inp.state}</span>}
+          </button>
+        ))}
+      </div>
       <FieldRow>
-        <Field label="Nome ou nº do input" className="settings-grow-2">
-          <input ref={inputRef} className="ui-input" value={inputName} onChange={e => setInputName(e.target.value)} placeholder="ex: Camera1" />
+        <Field label="Input selecionado / manual" className="settings-grow-2" hint="Voce ainda pode digitar numero, nome ou GUID se precisar.">
+          <input className="ui-input" value={inputName} onChange={e => { setInputName(e.target.value); setSelectedNumber('') }} placeholder="ex: 3 ou Camera1" />
         </Field>
-        <Field label="Duração (s)">
+        <Field label="Duracao (s)">
           <input
             className="ui-input"
             type="number"
@@ -332,7 +437,7 @@ function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }:
         Escolha o tipo de item que você quer inserir. O novo item entra no bloco selecionado sem quebrar a ordem da programação.
       </div>
       <div className="day-add-choice-list">
-        <button ref={ref} className="day-add-choice-card" onClick={() => { onClose(); onFile() }}>
+        <button ref={ref} className="day-add-choice-card" onClick={onFile}>
           <div className="day-add-choice-icon">
             <FolderOpen size={18} />
           </div>
@@ -342,7 +447,7 @@ function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }:
           </div>
           <Badge>Mais comum</Badge>
         </button>
-        <button className="day-add-choice-card day-add-choice-card--purple" onClick={() => { onClose(); onVmixAction() }}>
+        <button className="day-add-choice-card day-add-choice-card--purple" onClick={onVmixAction}>
           <div className="day-add-choice-icon">
             <Zap size={18} />
           </div>
@@ -351,7 +456,7 @@ function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }:
             <span>Corte, fade, volume, overlay e comandos rápidos</span>
           </div>
         </button>
-        <button className="day-add-choice-card" onClick={() => { onClose(); onVmixInput() }}>
+        <button className="day-add-choice-card" onClick={onVmixInput}>
           <div className="day-add-choice-icon">
             <MonitorPlay size={18} />
           </div>
@@ -1600,9 +1705,13 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
       {/* ── vMix Input modal ── */}
       {vmixInputFor && (
         <VmixInputModal
-          onInsert={(name, dur) => insertAfterItem(vmixInputFor, {
-            title: name, type: 'vinheta', status: 'pending',
-            scheduledTime: vmixInputFor.scheduledTime, duration: dur, inputName: name,
+          onInsert={input => insertAfterItem(vmixInputFor, {
+            title: input.title,
+            type: input.vmixType ? spotTypeForVmix(input.vmixType) : 'vinheta',
+            status: 'pending',
+            scheduledTime: vmixInputFor.scheduledTime,
+            duration: input.duration,
+            inputName: input.inputName,
           })}
           onClose={() => setVmixInputFor(null)}
         />
@@ -1648,9 +1757,13 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
       {addGroupModal?.mode === 'vmix_input' && (
         <VmixInputModal
           key={`vmix-input-${addGroupModal.group.time}`}
-          onInsert={(name, dur) => insertItemAtGroupEnd(addGroupModal.group, {
-            title: name, type: 'vinheta', status: 'pending',
-            scheduledTime: addGroupModal.group.time + ':00', duration: dur, inputName: name,
+          onInsert={input => insertItemAtGroupEnd(addGroupModal.group, {
+            title: input.title,
+            type: input.vmixType ? spotTypeForVmix(input.vmixType) : 'vinheta',
+            status: 'pending',
+            scheduledTime: addGroupModal.group.time + ':00',
+            duration: input.duration,
+            inputName: input.inputName,
           })}
           onClose={() => setAddGroupModal(null)}
         />

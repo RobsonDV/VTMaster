@@ -40,6 +40,9 @@ const BACKUP_KEYS = [
   'deletedScheduleSlots',
   'mediaDurationCache',
   'vmixCommandLog',
+  'campaigns',
+  'segments',
+  'programWindows',
 ]
 
 type UpdateStatus = {
@@ -57,7 +60,28 @@ type VmixCommandLog = {
   params: Record<string, string>
   success: boolean
   latencyMs: number
+  category?: string
+  risk?: string
+  itemId?: string
+  itemTitle?: string
+  scheduleDate?: string
+  scheduledTime?: string
+  queue?: string
+  attempt?: number
+  response?: string
   error?: string
+}
+
+type VmixCommandMeta = {
+  source?: string
+  category?: string
+  risk?: string
+  itemId?: string
+  itemTitle?: string
+  scheduleDate?: string
+  scheduledTime?: string
+  queue?: string
+  attempt?: number
 }
 
 function sendUpdateStatus(status: UpdateStatus): void {
@@ -175,6 +199,29 @@ function appendVmixCommandLog(log: VmixCommandLog): void {
   const list = Array.isArray(current) ? current as VmixCommandLog[] : []
   const next = [...list, log].slice(-2000)
   saveData('vmixCommandLog', next)
+}
+
+function cleanMetaValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, 300) : undefined
+}
+
+function sanitizeVmixCommandMeta(meta: unknown): VmixCommandMeta {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return {}
+  const raw = meta as Record<string, unknown>
+  const attemptRaw = Number(raw.attempt)
+  return {
+    source: cleanMetaValue(raw.source),
+    category: cleanMetaValue(raw.category),
+    risk: cleanMetaValue(raw.risk),
+    itemId: cleanMetaValue(raw.itemId),
+    itemTitle: cleanMetaValue(raw.itemTitle),
+    scheduleDate: cleanMetaValue(raw.scheduleDate),
+    scheduledTime: cleanMetaValue(raw.scheduledTime),
+    queue: cleanMetaValue(raw.queue),
+    attempt: Number.isFinite(attemptRaw) && attemptRaw > 0 ? Math.round(attemptRaw) : undefined,
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -669,18 +716,28 @@ ipcMain.handle('scan-music-folder', async (_event, folderPath: string, includeSu
 })
 
 // vMix HTTP request
-ipcMain.handle('vmix-request', async (_event, params: Record<string, string>) => {
+ipcMain.handle('vmix-request', async (_event, params: Record<string, string>, meta?: unknown) => {
   const startedAt = Date.now()
+  const commandMeta = sanitizeVmixCommandMeta(meta)
   const result = await makeVmixRequest(params)
   if (params.Function) {
     const log: VmixCommandLog = {
       id: randomUUID(),
       at: new Date().toISOString(),
-      source: 'vmix-request',
+      source: commandMeta.source ?? 'vmix-request',
       functionName: params.Function,
       params,
       success: result.success,
       latencyMs: Date.now() - startedAt,
+      ...(commandMeta.category ? { category: commandMeta.category } : {}),
+      ...(commandMeta.risk ? { risk: commandMeta.risk } : {}),
+      ...(commandMeta.itemId ? { itemId: commandMeta.itemId } : {}),
+      ...(commandMeta.itemTitle ? { itemTitle: commandMeta.itemTitle } : {}),
+      ...(commandMeta.scheduleDate ? { scheduleDate: commandMeta.scheduleDate } : {}),
+      ...(commandMeta.scheduledTime ? { scheduledTime: commandMeta.scheduledTime } : {}),
+      ...(commandMeta.queue ? { queue: commandMeta.queue } : {}),
+      ...(commandMeta.attempt ? { attempt: commandMeta.attempt } : {}),
+      ...(result.data ? { response: result.data.slice(0, 500) } : {}),
       ...(result.error ? { error: result.error } : {}),
     }
     try { appendVmixCommandLog(log) } catch { /* non-critical */ }

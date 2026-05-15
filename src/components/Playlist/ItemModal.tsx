@@ -8,6 +8,7 @@ import { Field, FieldRow } from '../ui/Field'
 import Modal from '../ui/Modal'
 import SegmentedControl from '../ui/SegmentedControl'
 import { detectMediaType, readMediaDuration } from '../../utils/mediaDuration'
+import { VMIX_ACTION_COMMANDS } from '../../utils/vmixCommandCatalog'
 import './ItemModal.css'
 
 interface ItemModalProps {
@@ -19,14 +20,13 @@ interface ItemModalProps {
 
 const SPOT_TYPES: SpotType[] = ['spot', 'vinheta', 'programa', 'bumper', 'outros']
 
-const VMIX_FUNCTIONS = [
-  { value: 'AudioOff', label: 'Desligar Audio', hasInput: true, hasValue: false, valuePlaceholder: '' },
-  { value: 'AudioOn', label: 'Ligar Audio', hasInput: true, hasValue: false, valuePlaceholder: '' },
-  { value: 'SetVolume', label: 'Ajustar Volume', hasInput: true, hasValue: true, valuePlaceholder: '0 - 100 (%)' },
-  { value: 'Fade', label: 'Fade (transicao)', hasInput: false, hasValue: true, valuePlaceholder: 'Duracao em ms (ex: 1000)' },
-  { value: 'OverlayInput1', label: 'Overlay 1 - Abrir', hasInput: true, hasValue: false, valuePlaceholder: '' },
-  { value: 'OverlayInput1Out', label: 'Overlay 1 - Fechar', hasInput: false, hasValue: false, valuePlaceholder: '' },
-] as const
+const VMIX_FUNCTIONS = VMIX_ACTION_COMMANDS.map(def => ({
+  value: def.functionName,
+  label: def.label,
+  hasInput: !!def.requiresInput,
+  hasValue: !!def.requiresValue,
+  valuePlaceholder: def.valueLabel ?? '',
+}))
 
 type MediaType = ReturnType<typeof detectMediaType>
 

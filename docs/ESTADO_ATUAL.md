@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **14/05/2026** — Versão **5.1.6** — Fases 1–12 + melhorias de interface + correção AutoProg/durações + auto-update
+> Atualizado em **14/05/2026** — Versão **5.1.6** — Fases 1–13 + Comercial Pro completo + correção crítica do Autoplay Comercial
 
 ---
 
@@ -23,7 +23,9 @@
 15. [Integração vMix](#15-integração-vmix)
 16. [Build e preload.cjs](#16-build-e-preloadcjs)
 17. [Funcionalidades — checklist v3.3](#17-funcionalidades--checklist-v33)
-18. [Backlog](#18-backlog)
+18. [Comercial Pro — Fase 13](#18-comercial-pro--fase-13)
+19. [Correção crítica: Autoplay Comercial](#19-correção-crítica-autoplay-comercial)
+20. [Backlog](#20-backlog)
 
 ---
 
@@ -647,6 +649,7 @@ interface PlaylistItem {
   title: string
   clientId?: string
   clientName?: string
+  campaignId?: string        // Campaign.id — propagado automaticamente pelo expandBlockItems
   duration: number           // segundos (0 para vmix_action e pause)
   scheduledTime?: string     // HH:MM:SS
   inputName?: string
@@ -657,6 +660,7 @@ interface PlaylistItem {
   notes?: string
   adBreakId?: string         // referência ao CommercialBlock
   vmixAction?: VmixActionItem
+  manuallyAdded?: boolean    // true quando adicionado via UI (não veio da grade)
 }
 ```
 
@@ -680,6 +684,94 @@ interface ProgramSlot {
 type WeeklyProgramGrid = Record<number, ProgramSlot[]>  // 0=Dom...6=Sáb
 ```
 
+### CommercialBlockItem — atualizado em Fase 13
+
+```typescript
+interface CommercialBlockItem {
+  id: string
+  order: number
+  type: 'spot_client' | 'vmix_action' | 'vmix_input'
+  title?: string
+  // spot_client:
+  clientId?: string
+  spotsCount?: number
+  campaignId?: string   // ← NOVO: Campaign.id quando inserido por distribuição automática
+                        // O motor de playout valida se a campanha ainda é válida antes de veicular.
+                        // Campanha expirada/pausada → item silenciosamente ignorado no expandBlockItems.
+  // vmix_action:
+  vmixAction?: VmixActionItem
+  // vmix_input:
+  inputName?: string
+  duration?: number
+}
+```
+
+### PlayLog — atualizado em Fase 13
+
+```typescript
+interface PlayLog {
+  id: string
+  date: string              // YYYY-MM-DD
+  itemId: string
+  title: string
+  clientId?: string
+  clientName?: string
+  campaignId?: string       // ← NOVO: propagado do PlaylistItem — permite relatório por campanha
+  scheduledTime?: string
+  actualTime: string
+  duration: number
+  status: 'aired' | 'skipped' | 'error'
+  inputName?: string
+  notes?: string
+}
+```
+
+### Tipos do Comercial Pro (Fase 13)
+
+```typescript
+// ─── Segmentos de mercado ─────────────────────────────────────────────
+interface Segment {
+  id: string
+  name: string              // Ex: "Automóvel", "Banco", "Saúde"
+  description?: string
+  createdAt: string
+}
+
+// ─── Faixas de programação ────────────────────────────────────────────
+interface ProgramWindow {
+  id: string
+  name: string              // Ex: "Jornal das 12h"
+  daysOfWeek: number[]      // 0=Dom...6=Sáb
+  timeFrom: string          // HH:MM
+  timeTo: string            // HH:MM
+  notes?: string
+  createdAt: string
+}
+
+// ─── Campanhas comerciais ─────────────────────────────────────────────
+type CampaignModality = 'standard' | 'rotativo'
+type CampaignStatus   = 'active' | 'paused' | 'expired' | 'completed'
+type CampaignPriority = 1 | 2 | 3  // 1=alta, 2=média, 3=baixa
+
+interface Campaign {
+  id: string
+  clientId: string
+  name: string
+  modality: CampaignModality
+  startDate: string           // YYYY-MM-DD
+  endDate: string             // YYYY-MM-DD
+  totalSpots: number          // quantidade contratada
+  spotsPerDay?: number        // limite diário (0 ou undefined = sem limite)
+  daysOfWeek?: number[]       // dias permitidos (undefined = todos)
+  segmentId?: string          // Segment.id — para regra de concorrentes
+  programWindowIds?: string[] // ProgramWindow.id[] — janelas elegíveis (vazio = todos)
+  priority: CampaignPriority
+  status: CampaignStatus
+  notes?: string
+  createdAt: string
+}
+```
+
 ### AppSettings
 
 ```typescript
@@ -694,7 +786,7 @@ interface AppSettings {
   triggerEnabled: boolean
   triggerKey: string | null
   autoplayComerciais: boolean   // blocos comerciais disparam automaticamente
-  preloadMinutes: number        // minutos antes para pré-carregar (padrão: 5)
+  preloadMinutes: number        // minutos antes para pré-carregar (padrão: 5) — agora USADO
 }
 ```
 
@@ -736,20 +828,28 @@ interface SpotMasterAPI {
 
 ```typescript
 interface AppState {
-  playlist:           PlaylistItem[]
-  dateSchedules:      Record<string, PlaylistItem[]>  // YYYY-MM-DD → programação do dia
-  weeklyGrid:         WeeklyProgramGrid               // template semanal Dom-Sáb
-  clients:            Client[]
-  clientSpots:        ClientSpot[]
-  commercialBlocks:   CommercialBlock[]
-  spotRotation:       SpotRotation
-  playLog:            PlayLog[]
-  settings:           AppSettings
-  vmixStatus:         VmixStatus
-  activePanel:        string
-  isLoading:          boolean
-  isSequencePlaying:  boolean
-  activeItemProgress: { inputNum, position, duration } | null
+  playlist:             PlaylistItem[]
+  dateSchedules:        Record<string, PlaylistItem[]>  // YYYY-MM-DD → programação do dia
+  weeklyGrid:           WeeklyProgramGrid               // template semanal Dom-Sáb
+  clients:              Client[]
+  clientSpots:          ClientSpot[]
+  commercialBlocks:     CommercialBlock[]
+  spotRotation:         SpotRotation
+  campaigns:            Campaign[]        // ← Fase 13
+  segments:             Segment[]         // ← Fase 13
+  programWindows:       ProgramWindow[]   // ← Fase 13
+  playLog:              PlayLog[]
+  settings:             AppSettings
+  vmixStatus:           VmixStatus
+  vmixCommandLog:       VmixCommandLog[]
+  activePanel:          string
+  isLoading:            boolean
+  isSequencePlaying:    boolean
+  deletedScheduleSlots: Record<string, DeletedScheduleSlot[]>
+  mediaDurationCache:   Record<string, number>
+  musicStyles:          MusicStyle[]
+  musicSequences:       MusicSequence[]
+  autoBlocoAssignments: AutoBlocoAssignment[]
 }
 ```
 
@@ -772,18 +872,42 @@ interface AppContextValue {
 }
 ```
 
+### Refs de controle — completos
+
+```typescript
+activeInputRef            // GUID do input atualmente no ar
+preloadedInputRef         // { guid, filePath } do próximo input já carregado
+spotmasterGuidsRef        // Set<string> — todos GUIDs desta sessão (para cleanup)
+abortRef                  // true quando stopPlayback() foi chamado
+scheduleInterruptRef      // true quando abort veio do scheduler (retoma)
+scheduleInterruptTimeRef  // HH:MM:SS do último trigger do scheduler de programas
+commInterruptTimeRef      // HH:MM:SS do scheduler de comerciais (SEPARADO — Fase 13 fix)
+disparoInterruptRef       // true quando abort veio do Disparo (retoma)
+activeQueueRef            // 'playlist' | 'schedule'
+sessionStartRef           // HH:MM:SS de quando o app abriu (anti-stale)
+schedulerFiringRef        // mutex entre os dois schedulers (evita execução simultânea)
+minOrderRef               // high-water mark — comercial avança sem marcar musicais como skipped
+stopAfterCurrentRef       // quando true: para após o item atual (Stop Next)
+lastFastPosRef            // posição por input — evita regressão na barra de progresso
+```
+
 ### useEffects críticos em AppContext
 
 | useEffect | Deps | O que faz |
 |-----------|------|-----------|
-| Midnight watcher + preloader | `[state.isLoading, ...]` | Detecta virada de dia, pré-carrega blocos |
-| Autoplay scheduler geral | `[state.isLoading, ...]` | Verifica a cada 1s itens gerais com scheduledTime vencido |
-| Autoplay scheduler comercial | `[state.isLoading, ...]` | Verifica a cada 1s blocos com adBreakId vencidos |
-| stateRef sync | `[]` | `stateRef.current = state` após cada render |
-| Trigger keyboard | `[triggerEnabled, triggerKey, ...]` | Registra/cancela globalShortcut |
-| Fast status listener | `[]` | Atualiza barra de progresso via fast polling |
+| stateRef sync | `[state]` | `stateRef.current = state` após cada render |
 | Auto-load today | `[isLoading]` | Gera grade do dia se não existe ao iniciar |
-| **Auto-sync comerciais** | `[commercialBlocks]` | Re-sincroniza grade quando blocos são alterados ← v3.1 |
+| Midnight watcher | `[isLoading, ...]` | Detecta virada de dia e gera próximo dia |
+| Auto-sync comerciais | `[commercialBlocks]` | Re-sincroniza grade quando blocos são alterados (v3.1) |
+| Autoplay scheduler geral | `[isLoading, startSequence, startSchedule]` | A cada 1s: itens sem adBreakId com scheduledTime vencido |
+| Autoplay scheduler comercial | `[isLoading, startSchedule]` | A cada 1s: itens com adBreakId vencidos em dateSchedules |
+| **Preloader de blocos** | `[isLoading, expandBlockItems, dispatch]` | A cada 20s: lê commercialBlocks direto, injeta em dateSchedules na janela de preloadMinutes ← Fase 13 fix |
+| Trigger keyboard | `[triggerEnabled, triggerKey, disparo]` | Registra/cancela globalShortcut |
+| MIDI listener | `[triggerEnabled, triggerKey, disparo]` | Web MIDI API |
+| Fast status listener | `[]` | Barra de progresso via fast polling vMix |
+| vMix status listener | `[]` | Status normal vMix |
+| vMix command log listener | `[]` | Log técnico de comandos |
+| Update status listener | `[]` | Auto-update via electron-updater |
 
 ---
 
@@ -801,8 +925,17 @@ Todos os dados em `%APPDATA%\SpotMaster\` (Windows):
 | `clientSpots` | Spots por anunciante |
 | `spotRotation` | Índices de rodízio round-robin |
 | `clients` | Anunciantes cadastrados |
-| `playLog` | Histórico de veiculação |
+| `playLog` | Histórico de veiculação com `campaignId` por spot |
 | `activePanel` | Último painel ativo |
+| `campaigns` | Campanhas do Comercial Pro ← Fase 13 |
+| `segments` | Segmentos de mercado ← Fase 13 |
+| `programWindows` | Faixas de programação ← Fase 13 |
+| `vmixCommandLog` | Log técnico de comandos vMix |
+| `deletedScheduleSlots` | Deleções intencionais (impede re-geração) |
+| `mediaDurationCache` | Cache de durações por filePath |
+| `musicStyles` | Estilos musicais do AutoProg |
+| `musicSequences` | Sequências musicais do AutoProg |
+| `autoBlocoAssignments` | Atribuições AutoProg por dia/bloco |
 
 **Migração automática:** blocos no formato antigo (`slots[]`) são convertidos para `items[]` no `LOAD_ALL`.
 
@@ -1036,6 +1169,234 @@ O script de conversão:
 - [x] **`setStopAfterCurrent`** exposta via Context e consumida por `DaySchedulePanel`
 - [x] **`stopAfterCurrentRef` e `minOrderRef`** resetados em `stopPlayback()` e no cleanup de `runSequence`
 
+---
+
+## 18. Comercial Pro — Fase 13
+
+> Implementado em **14/05/2026**. Versão **5.1.6**. Esta é a fase de maior impacto comercial do produto — transforma o VTMaster de um sistema de blocos simples em um sistema completo de gerenciamento de contratos de publicidade.
+
+### Motivação
+
+Antes da Fase 13, o VTMaster tinha:
+- Cadastro de anunciantes e spots
+- Blocos comerciais com round-robin
+- Relatório diário e por anunciante
+
+Faltava:
+- Controle de **contrato** (início, fim, quantidade contratada)
+- **Distribuição automática** de clientes nos blocos certos
+- **Regras de concorrência** (segmentos de mercado)
+- **Faixas de programação** para definir onde o comercial pode veicular
+- **Modalidade Rotativo** (cliente percorre todos os blocos progressivamente)
+- Relatório e log por campanha
+
+### O que foi construído
+
+#### 18.1. Novos tipos de dados
+
+Três novos modelos persistidos:
+
+| Tipo | Propósito |
+|------|-----------|
+| `Segment` | Categoria de mercado (Automóvel, Banco, Saúde…). Impede concorrentes no mesmo bloco. |
+| `ProgramWindow` | Faixa de programação com nome, dias da semana e horário. Define onde uma campanha pode veicular. |
+| `Campaign` | Contrato comercial: cliente, modalidade, datas, quantidade, segmento e programas elegíveis. |
+
+`CommercialBlockItem` ganhou campo `campaignId?` — marca itens inseridos por distribuição automática.
+
+`PlaylistItem` e `PlayLog` ganharam `campaignId?` — rastrea o spot da campanha até o log de veiculação.
+
+#### 18.2. Painel "Comercial Pro" — 3 abas
+
+**Aba Campanhas:**
+- Lista de campanhas com barra de progresso (veiculados/contratados/%)
+- Filtro por status (ativa/pausada/expirada/concluída) e por anunciante
+- Alerta visual de conflito de segmento nos blocos
+- Badge de expiração próxima (≤ 7 dias)
+- Modalidade Rotativo indicada com ícone e cor roxa
+- Botão **Distribuir** (campanhas padrão ativas) — abre modal de confirmação
+
+**Aba Segmentos:**
+- CRUD de categorias de mercado (nome + descrição)
+- Usados como regra de concorrência: dois clientes do mesmo segmento não entram no mesmo bloco
+
+**Aba Programas / Faixas:**
+- CRUD de janelas horárias (nome + dias da semana + HH:MM–HH:MM)
+- Exemplo: "Jornal das 12h" → Seg-Sex 12:00–13:00
+- Selecionadas na campanha para restringir em quais blocos o cliente pode veicular
+
+#### 18.3. Modalidade Padrão vs. Rotativo
+
+| | Padrão | Rotativo |
+|--|--------|----------|
+| Distribuição | Botão "Distribuir" → insere cliente nos blocos elegíveis | Automática, calculada por data — sem ação do operador |
+| Blocos elegíveis | Programas selecionados (ou todos se vazio) | Todos os blocos habilitados |
+| Spots por dia | `spotsPerDay` limita quantos blocos recebem o cliente | Sempre 1 bloco por dia |
+| Lógica | Randomização justa quando blocos > limite | `daysElapsed % totalBlocks` |
+| Segmento | Respeitado | Ignorado (modalidade especial) |
+| Template | Inserido no CommercialBlock.items com `campaignId` | Injetado dinamicamente pelo motor no momento da expansão |
+
+**Rotativo — como a posição é calculada:**
+```
+daysElapsed = daysBetween(campaign.startDate, today)
+targetIndex = daysElapsed % totalEnabledBlocks
+targetBlock = allEnabledBlocks.sortByTime()[targetIndex]
+```
+Stateless e determinístico: qualquer dia pode ser recalculado sem guardar estado.
+
+#### 18.4. Gate de campanha no motor de playout (`expandBlockItems`)
+
+Esta é a peça mais importante da Fase 13. O `expandBlockItems` agora valida cada item antes de incluí-lo na playlist:
+
+```
+Para cada CommercialBlockItem do tipo spot_client:
+  → Se item.campaignId está definido:
+      → Busca a campanha pelo id
+      → Se campanha não existe, ou status ≠ 'active', ou hoje < startDate, ou hoje > endDate:
+          → SKIP — item não entra na playlist
+  → Se item.campaignId não está definido (inserido manualmente):
+      → Comportamento normal (sem gate)
+```
+
+**Consequência prática:** o operador cadastra a campanha, distribui nos blocos uma vez, e o sistema cuida sozinho de parar de veicular quando a campanha expirar. Não precisa remover manualmente do bloco ao término do contrato.
+
+**Renovação:** editar a campanha e estender `endDate` → spots voltam ao ar no próximo dia.
+
+#### 18.5. Distribuição automática (modalidade Padrão)
+
+```
+1. Operador clica "Distribuir" na campanha
+2. Modal mostra blocos elegíveis com base em:
+   - programWindowIds → blocos cujo scheduledTime cai dentro do horário dos programas
+   - Se programWindowIds vazio → todos os blocos habilitados
+3. Remove blocos onde o cliente já está (sem duplicar)
+4. Se blocos elegíveis > spotsPerDay → shuffle aleatório, pega os primeiros N
+5. Operador vê a lista e confirma
+6. Sistema insere CommercialBlockItem { clientId, campaignId, spotsCount: 1 } em cada bloco alvo
+7. Salva commercialBlocks no storage
+```
+
+**Regra de concorrência:** futuro — a detecção visual já está no painel (alerta de conflito), mas o bloqueio automático na distribuição ainda não está implementado (ver backlog).
+
+#### 18.6. Visual no painel de Blocos Comerciais
+
+Itens inseridos por campanha mostram ícone 🔊 (Megaphone) em roxo e label "campanha" em vez de "spots". O operador identifica imediatamente o que é automático vs. manual.
+
+#### 18.7. Log e Relatórios por campanha
+
+- **Log de Veiculação:** nova coluna "Campanha" + filtro por campanha no header. CSV exportado inclui a coluna.
+- **Relatórios PDF:** novo tipo "Relatório por Campanha" com painel de progresso (contratados / veiculados / restantes / % conclusão). O PDF inclui linhas de resumo do contrato antes da tabela de spots.
+
+#### 18.8. Persistência
+
+Três novas chaves em `BACKUP_KEYS` (`electron/main.ts`):
+- `'campaigns'`
+- `'segments'`
+- `'programWindows'`
+
+Incluídas em todos os backups automáticos e na carga inicial (`LOAD_ALL`).
+
+---
+
+## 19. Correção crítica: Autoplay Comercial
+
+> Implementado em **14/05/2026**. Bug relatado pelo operador: blocos comerciais não disparavam automaticamente no horário configurado — era necessário acionar manualmente.
+
+### Diagnóstico — 3 bugs encontrados
+
+#### Bug 1 — Gap arquitetural (causa principal)
+
+O scheduler de `autoplayComerciais` lia **`dateSchedules[today()]`** — itens já expandidos da Programação do Dia. Se o operador não gerou a programação do dia, `dateSchedules` estava vazio e o scheduler não encontrava nada.
+
+Os blocos em `commercialBlocks` existiam, estavam habilitados e com horário correto, mas **nenhum código os movia para a fila automaticamente**. O `preloadMinutes` estava nas configurações mas nunca era lido por nenhum trecho de código.
+
+#### Bug 2 — `scheduleInterruptTimeRef` compartilhado entre schedulers
+
+O scheduler de `autoPlay` (programas) e o scheduler de `autoplayComerciais` compartilhavam o mesmo `scheduleInterruptTimeRef`. Quando ambos tinham itens no mesmo horário (ex: programa e comercial ambos às `12:00:00`), o primeiro scheduler a rodar definia o ref com `'12:00:00'` e o segundo scheduler verificava `scheduleInterruptTimeRef.current === triggerTime` e retornava sem fazer nada. O comercial era silenciosamente bloqueado.
+
+#### Bug 3 — `sessionStartRef` muito restritivo
+
+O check `triggerTime < sessionStartRef.current` ignorava qualquer bloco cujo horário fosse anterior à abertura do app. Se o operador abria o app às `09:02` e o bloco estava às `09:00`, o comercial nunca disparava — sequer dentro de uma janela de minutos.
+
+### Correções aplicadas
+
+#### Correção 1 — Scheduler de pré-carregamento (fix principal)
+
+Novo `useEffect` rodando a cada **20 segundos** que lê `commercialBlocks` diretamente:
+
+```
+Para cada bloco habilitado e com scheduledTime configurado:
+  → Se block.lastLoadedDate === today → skip (já carregado)
+  → Se dia da semana não compatível → skip
+  → Calcula janela: [scheduledTime - preloadMinutes, scheduledTime + 10min grace]
+  → Se currentTime fora da janela → skip
+  → Verifica se bloco já tem itens pending em dateSchedules → skip se sim (evita duplicata)
+  → expandBlockItems() → gera os itens
+  → Se items.length === 0 (bloco vazio) → skip silencioso
+  → dispatch SET_DATE_SCHEDULE + SET_SPOT_ROTATION + MARK_BLOCK_LOADED
+  → saveData para persistir imediatamente
+  → log no console: "[SpotMaster] Bloco comercial pré-carregado: ..."
+```
+
+**Resultado:** o `autoplayComerciais` agora funciona **sem precisar gerar a Programação do Dia**. O `preloadMinutes` das configurações finalmente tem efeito.
+
+**Blocos vazios:** se o bloco não tiver spots cadastrados, `expandBlockItems` retorna array vazio e o preloader faz `continue` silenciosamente. Nada dispara, nenhum erro. Quando o operador cadastrar spots antes do horário, na próxima varredura (≤ 20s) o bloco será carregado corretamente.
+
+#### Correção 2 — `commInterruptTimeRef` separado
+
+Criada nova ref `commInterruptTimeRef` exclusiva para o scheduler de comerciais:
+
+```typescript
+const commInterruptTimeRef = useRef<string>('')
+```
+
+O scheduler de programas continua usando `scheduleInterruptTimeRef`. O scheduler de comerciais passa a usar `commInterruptTimeRef`. Os dois não interferem mais entre si, mesmo que um programa e um comercial tenham o mesmo horário.
+
+Resets adicionados em todos os pontos onde `scheduleInterruptTimeRef` era resetado:
+- Fim de sequência (`runSequence` cleanup)
+- `stopPlayback()`
+- Reset inline no `runSequence` quando `scheduledDue.length === 0`
+
+#### Correção 3 — Grace window de 10 minutos
+
+A verificação de `sessionStartRef` foi ajustada de rejeição total para rejeição com margem:
+
+```typescript
+// Antes (muito restritivo):
+if (triggerTime < sessionStartRef.current) return
+
+// Depois (10 minutos de grace):
+const graceSec = 10 * 60
+if (triggerSec < sessionSec - graceSec) return
+```
+
+Blocos que passaram até 10 minutos antes da abertura do app ainda são disparados. Blocos muito antigos (> 10 min) continuam sendo ignorados corretamente.
+
+### Comportamento consolidado do Autoplay Comercial
+
+| Situação | O que acontece |
+|----------|----------------|
+| App aberto, bloco no horário certo | Preloader detecta em até 20s → scheduler dispara na hora exata |
+| App aberto após o horário (até 10 min) | Grace window → ainda dispara |
+| App aberto após o horário (> 10 min) | Ignora — bloco vencido |
+| Bloco vazio (sem spots) | Preloader verifica, retorna vazio, silêncio total |
+| Campanha expirada no bloco | Motor ignora o item mesmo com bloco na fila |
+| Programação do Dia gerada manualmente | Funciona como antes (dateSchedules já tem os itens) |
+| Programação do Dia NÃO gerada | Funciona — preloader injeta direto em dateSchedules |
+| Programa e comercial no mesmo horário | Sem conflito — cada scheduler usa seu próprio ref |
+| Sequência tocando em modo Playlist | Comercial não interrompe (by design — Playlist é manual) |
+
+### O que o operador precisa configurar
+
+1. **Configurações → Autoplay Comerc. → ON** (botão na toolbar da aba Programação)
+2. Blocos comerciais habilitados com horário definido
+3. Clientes e spots cadastrados nos blocos
+4. `preloadMinutes` nas configurações (padrão: 5 min — controla quanto antes o bloco é carregado)
+
+Não é necessário: gerar Programação do Dia, estar na aba Programação, ou fazer qualquer ação manual.
+
+---
+
 ### Correção atual — AutoProg e tempos (14/05/2026)
 
 O problema antigo de `Promise.allSettled` disparando todas as leituras em paralelo **não existe mais no código fonte atual**. A leitura de duração está limitada por pool em `readMediaDurationBatch`.
@@ -1071,20 +1432,32 @@ Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato f
 
 ---
 
-## 18. Backlog
+## 20. Backlog
 
 ### Alta prioridade
 
 | Item | Descrição |
 |------|-----------|
-| **Cleanup ao excluir anunciante** | clientSpots ficam órfãos ao deletar o cliente |
+| **Regra de concorrência na distribuição** | A detecção visual de conflito de segmento já existe no painel, mas o bloqueio automático ao distribuir ainda não está implementado — dois clientes do mesmo segmento podem ser colocados no mesmo bloco se o operador não prestar atenção |
+| **Cleanup ao excluir anunciante** | `clientSpots` ficam órfãos ao deletar o cliente — já corrigido para campanhas (DELETE_CLIENT remove campaigns), mas os spots não são limpos das referências em `commercialBlocks.items` |
 | **Prévia de mídia** | Pré-visualizar clipe antes de adicionar à programação |
 | **Edição inline de título/duração** | Editar diretamente na linha do card sem abrir modal |
 
-### Média prioridade
+### Média prioridade — Comercial Pro
 
 | Item | Descrição |
 |------|-----------|
+| **Regra de separação mínima** | Não veicular dois spots do mesmo cliente em intervalos muito próximos no mesmo dia |
+| **Comprovante por campanha com evidência** | Snapshot vMix (`SnapshotInput`) capturado no início de cada spot da campanha — depende da Fase 3 do PLANOGPT (Outputs/Recording) |
+| **Relatório financeiro de campanha** | Saldo contratado × veiculado × falhas, exportável para planilha |
+| **Renovação assistida** | Botão "Renovar campanha" que duplica a campanha com novo período e zera o contador |
+| **Alerta de campanha quase vencendo** | Notificação na interface quando restam menos de X dias e ainda há spots pendentes |
+
+### Média prioridade — Geral
+
+| Item | Descrição |
+|------|-----------|
+| **TCP/TALLY bridge** | Fase 1 do PLANOGPT (pendente deliberada) — conexão TCP na porta 8099 do vMix para eventos em tempo real, `SUBSCRIBE TALLY`, fallback para HTTP |
 | **Importação CSV** | Carregar itens a partir de planilha |
 | **Múltiplos blocos no mesmo horário** | Potencial conflito de scheduledTime |
 | **Resetar programação do dia** | Botão para regerar do zero (descartando edições manuais) |
@@ -1094,6 +1467,19 @@ Limite conhecido: se um arquivo estiver corrompido, inacessível ou em formato f
 
 | Item | Descrição |
 |------|-----------|
+| **Grafismos e títulos vMix** | Fase 2 do PLANOGPT — `SetText`, `SetImage`, `SetTextVisible`, Data Sources, templates prontos |
+| **Painel de saídas e gravação** | Fase 3 do PLANOGPT — controle de Recording, Streaming, Outputs 2-4, clean feed, MultiCorder |
+| **Musical Pro** | Fase 5 do PLANOGPT — biblioteca musical com tags, scanner, simulador de grade |
+| **Modo On Air simplificado** | Fase 6 do PLANOGPT — tela com agora/próximo/5 próximos, botões grandes, command palette |
 | **Licenciamento** | Proteção por CNPJ/chave de ativação |
 | **Sincronização em rede** | Múltiplos operadores editando simultaneamente |
 | **Suporte nativo MIDI/HID** | Hoje via mapeamento de teclas em software externo |
+
+### Problemas conhecidos e limitações
+
+| Problema | Impacto | Workaround |
+|----------|---------|------------|
+| Rotativo não bloqueia duplicata se cliente já está no template manual | Spot pode aparecer duas vezes no mesmo bloco | Não adicionar manualmente cliente que já tem campanha rotativa |
+| Campanha expirada continua visível no bloco no AdBreaks | Visual confuso — o item aparece mas não é veiculado | Gate no motor garante que não veicula; visual é cosmético |
+| Distribuição aleatória pode mudar entre cliques | Cada clique no botão "Distribuir" faz novo shuffle | Confirmar na primeira tentativa |
+| `preloadMinutes` afeta apenas o preloader de 20s, não o scheduler de 1s | Bloco pode entrar na fila até 20s depois do preloadMinutes | Margem desprezível na prática |

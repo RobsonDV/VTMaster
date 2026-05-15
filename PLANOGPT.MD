@@ -185,6 +185,29 @@ Entregas:
 
 Resultado esperado: qualquer funcionalidade futura do vMix entra por uma base confiavel, com log e validacao.
 
+Status de implantacao em 2026-05-14:
+
+- Catalogo tipado de comandos criado em `src/utils/vmixCommandCatalog.ts`, com categoria, risco operacional, parametros obrigatorios e retry.
+- Servico central criado em `src/utils/vmixCommandService.ts`, com `executeVmixCommand`, `executeVmixAction` e `requestVmixXml`.
+- `vmix_action` evoluido para aceitar `duration`, `selectedName`, `selectedIndex` e `mix` sem quebrar os dados existentes.
+- Preflight passou a validar acoes usando o catalogo central de comandos.
+- Telas de acao vMix em Playlist, Programacao do Dia e Blocos Comerciais passaram a usar o catalogo compartilhado.
+- IPC `vmix-request` passou a aceitar metadata operacional.
+- Log `vmixCommandLog` passou a registrar origem, categoria, risco, item, roteiro, horario, fila, tentativa e resposta resumida.
+- Fluxo critico do playout foi migrado para o servico central:
+  - `AddInput`;
+  - `SetPosition`;
+  - `PreviewInput`;
+  - `PlayInput`;
+  - `Cut`;
+  - `Pause`;
+  - `RemoveInput`;
+  - acoes vMix inseridas no roteiro.
+- Comandos retryable agora passam pela politica de retry do servico.
+- Consulta XML de status usada pelo motor foi isolada em `requestVmixXml`.
+
+Pendencia deliberada desta fase: TCP/TALLY ainda deve entrar como uma subfase propria, porque exige teste com vMix real aberto na porta TCP para validar reconexao, framing de mensagens e fallback sem afetar operacao ao vivo.
+
 ### Fase 2 - Grafismos, titulos e Data Sources
 
 Objetivo: fazer o VTMaster "falar no video", nao apenas tocar midia.

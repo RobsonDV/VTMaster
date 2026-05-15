@@ -26,6 +26,7 @@ function SequenceModal({
     initial?.items ?? [],
   )
   const [noSameArtistWindow, setNoSameArtistWindow] = useState(initial?.noSameArtistWindow ?? 3)
+  const [maxSameDayArtistPlays, setMaxSameDayArtistPlays] = useState(initial?.maxSameDayArtistPlays ?? 2)
   const [fallback, setFallback] = useState<MusicSequence['fallback']>(
     initial?.fallback ?? 'ignore_cooldown',
   )
@@ -64,6 +65,7 @@ function SequenceModal({
       name: name.trim(),
       items,
       noSameArtistWindow,
+      maxSameDayArtistPlays: maxSameDayArtistPlays > 0 ? maxSameDayArtistPlays : undefined,
       fallback,
       targetMode,
       targetValue,
@@ -175,7 +177,27 @@ function SequenceModal({
                 onChange={e => setNoSameArtistWindow(Math.max(0, parseInt(e.target.value) || 0))}
                 style={{ width: 60, textAlign: 'center' }}
               />
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>músicas (0 = desabilitado)</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>músicas consecutivas (0 = desabilitado)</span>
+            </div>
+          </Field>
+        </FieldRow>
+
+        <FieldRow>
+          <Field label="Máximo por artista no dia">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={20}
+                value={maxSameDayArtistPlays}
+                onChange={e => setMaxSameDayArtistPlays(Math.max(0, parseInt(e.target.value) || 0))}
+                style={{ width: 60, textAlign: 'center' }}
+              />
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>veiculações/artista/dia (0 = sem limite)</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Limita quantas músicas do mesmo artista podem tocar em todo o dia, somando todos os blocos.
             </div>
           </Field>
         </FieldRow>
@@ -376,7 +398,8 @@ export default function SequencesTab() {
                 </div>
                 <div className="ap-card-meta" style={{ marginTop: 2 }}>
                   {seq.targetMode === 'count' ? `${seq.targetValue} músicas` : `${seq.targetValue} min`}
-                  {seq.noSameArtistWindow > 0 && ` · Artista único por ${seq.noSameArtistWindow} músicas`}
+                  {seq.noSameArtistWindow > 0 && ` · Janela artista: ${seq.noSameArtistWindow} músicas`}
+                  {(seq.maxSameDayArtistPlays ?? 0) > 0 && ` · Máx ${seq.maxSameDayArtistPlays}/artista/dia`}
                 </div>
               </div>
               <div className="ap-card-actions">

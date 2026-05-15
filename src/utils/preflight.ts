@@ -9,6 +9,10 @@ import type {
   VmixStatus,
 } from '../types'
 import { formatDuration, today } from './time'
+import {
+  getVmixCommandDefinition,
+  validateVmixAction as validateCatalogVmixAction,
+} from './vmixCommandCatalog'
 
 export type PreflightSeverity = 'error' | 'warning' | 'info'
 
@@ -39,33 +43,6 @@ export interface SchedulePreflightInput {
   vmixStatus: VmixStatus
   settings: AppSettings
   fileExists?: (filePaths: string[]) => Promise<Record<string, boolean>>
-}
-
-type VmixFunctionRule = {
-  input?: boolean
-  value?: boolean
-  valueName?: string
-}
-
-const VMIX_FUNCTION_RULES: Record<string, VmixFunctionRule> = {
-  AudioOff: { input: true },
-  AudioOn: { input: true },
-  SetVolume: { input: true, value: true, valueName: 'volume' },
-  Fade: { value: true, valueName: 'tempo de fade' },
-  OverlayInput1: { input: true },
-  OverlayInput2: { input: true },
-  OverlayInput3: { input: true },
-  OverlayInput4: { input: true },
-  OverlayInput1Out: {},
-  OverlayInput2Out: {},
-  OverlayInput3Out: {},
-  OverlayInput4Out: {},
-  StartRecording: {},
-  StopRecording: {},
-  StartStreaming: {},
-  StopStreaming: {},
-  Cut: {},
-  Merge: {},
 }
 
 function norm(value: string | number | undefined | null): string {
@@ -109,8 +86,8 @@ function validateVmixAction(
     return
   }
 
-  const rule = VMIX_FUNCTION_RULES[action.function]
-  if (!rule) {
+  const definition = getVmixCommandDefinition(action.function)
+  if (definition.category === 'unknown') {
     add({
       id: `${sourceId}:vmix-action-unknown`,
       severity: 'warning',
@@ -119,21 +96,12 @@ function validateVmixAction(
     })
   }
 
-  if (rule?.input && !action.input?.trim()) {
+  for (const issue of validateCatalogVmixAction(action)) {
     add({
-      id: `${sourceId}:vmix-action-input`,
+      id: `${sourceId}:vmix-action-${issue.field}`,
       severity: 'error',
-      title: `${action.function} sem input`,
-      detail: `${label} precisa informar o input do vMix.`,
-    })
-  }
-
-  if (rule?.value && (action.value == null || String(action.value).trim() === '')) {
-    add({
-      id: `${sourceId}:vmix-action-value`,
-      severity: 'error',
-      title: `${action.function} sem valor`,
-      detail: `${label} precisa informar ${rule.valueName ?? 'valor'}.`,
+      title: issue.message,
+      detail: `${label} precisa ser corrigido antes de ir ao ar.`,
     })
   }
 

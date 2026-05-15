@@ -113,9 +113,43 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
   }
   if (expandedSeq.length === 0) return []
 
+  // ── Mapa título → artista (para cruzar com o playLog) ─────────────────────
+  const titleToArtist = new Map<string, string>()
+  for (const pool of styleCandidates.values()) {
+    for (const c of pool) {
+      if (c.artist) {
+        titleToArtist.set(c.noExt, c.artist)
+        titleToArtist.set(c.file.filename, c.artist)
+      }
+    }
+  }
+
+  // ── Veiculações de hoje (para janela cross-bloco e limite diário) ──────────
+  const todayPlayed = playLog
+    .filter(l => l.date === date && l.status === 'aired')
+    .sort((a, b) => a.actualTime.localeCompare(b.actualTime))
+
+  // Contagem de veiculações por artista HOJE (histórico + o que ainda vai ser gerado)
+  const artistCountToday = new Map<string, number>()
+  const dailyLimit = sequence.maxSameDayArtistPlays ?? 0
+  for (const log of todayPlayed) {
+    const artist = titleToArtist.get(log.title)
+    if (artist) artistCountToday.set(artist, (artistCountToday.get(artist) ?? 0) + 1)
+  }
+
   const result: GeneratedMusicItem[] = []
   const usedPaths = new Set<string>()
+
+  // Janela de artista pré-populada com o histórico de hoje (memória cross-bloco)
+  // Isso impede que um artista que já tocou em um bloco anterior no dia
+  // toque novamente no início do próximo bloco.
   const usedArtistsWindow: string[] = []
+  if (sequence.noSameArtistWindow > 0) {
+    for (const log of todayPlayed) {
+      const artist = titleToArtist.get(log.title)
+      if (artist) usedArtistsWindow.push(artist)
+    }
+  }
 
   const countMode = sequence.targetMode === 'count'
   const targetCount = countMode ? Math.max(1, sequence.targetValue) : Number.POSITIVE_INFINITY
@@ -157,13 +191,26 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
       // ignore_cooldown ou alert: usa eligible completo (pode incluir arquivos em cooldown)
     }
 
-    // 3. Filtro de janela de artista
-    if (sequence.noSameArtistWindow > 0 && eligible.length > 1) {
+    // 3. Filtro de janela de artista (sem o bug do eligible.length > 1)
+    // Aplica mesmo com 1 candidato: se não houver alternativa, o guard
+    // "if (withoutSame.length > 0)" mantém eligible inalterado (aceita o artista).
+    if (sequence.noSameArtistWindow > 0) {
       const recent = new Set(
         usedArtistsWindow.slice(-sequence.noSameArtistWindow).filter(Boolean)
       )
       const withoutSame = eligible.filter(c => !c.artist || !recent.has(c.artist))
       if (withoutSame.length > 0) eligible = withoutSame
+    }
+
+    // 4. Limite diário por artista — exclui artistas que já atingiram o teto do dia
+    // Isso atua como um filtro DURO: artista que já tocou N vezes hoje não entra mais,
+    // independente da janela de N músicas. Protege contra repetição cross-bloco.
+    if (dailyLimit > 0) {
+      const withoutOverLimit = eligible.filter(c => {
+        if (!c.artist) return true
+        return (artistCountToday.get(c.artist) ?? 0) < dailyLimit
+      })
+      if (withoutOverLimit.length > 0) eligible = withoutOverLimit
     }
 
     if (eligible.length === 0) continue
@@ -186,8 +233,12 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
     usedPaths.add(chosen.file.filePath)
     if (chosen.artist) {
       usedArtistsWindow.push(chosen.artist)
-      // Mantém apenas o necessário para a janela
-      if (usedArtistsWindow.length > sequence.noSameArtistWindow * 2 + 10) {
+      // Atualiza o contador diário para bloquear artistas que atingem o teto
+      if (dailyLimit > 0) {
+        artistCountToday.set(chosen.artist, (artistCountToday.get(chosen.artist) ?? 0) + 1)
+      }
+      // Mantém a janela em tamanho razoável para não crescer indefinidamente
+      if (usedArtistsWindow.length > sequence.noSameArtistWindow * 3 + 30) {
         usedArtistsWindow.shift()
       }
     }

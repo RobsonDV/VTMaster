@@ -12,6 +12,10 @@ export interface VmixActionItem {
   function: string    // 'AudioOff' | 'AudioOn' | 'SetVolume' | 'Fade' | 'OverlayInput1' | 'OverlayInput1Out' | ...
   input?: string      // GUID, nome ou número do input vMix (quando necessário)
   value?: string      // Para SetVolume (0–100), Fade (duração em ms), etc.
+  duration?: string
+  selectedName?: string
+  selectedIndex?: string
+  mix?: string
 }
 export type Theme = 'dark' | 'light'
 export type Language = 'pt' | 'en'
@@ -38,6 +42,7 @@ export interface PlaylistItem {
   title: string
   clientId?: string
   clientName?: string
+  campaignId?: string       // Campaign.id — quando o spot pertence a uma campanha
   duration: number          // seconds (0 for vmix_action)
   scheduledTime?: string    // HH:MM:SS
   inputName?: string        // vMix input name/number
@@ -90,6 +95,7 @@ export interface CommercialBlockItem {
   // spot_client
   clientId?: string
   spotsCount?: number      // quantos spots do cliente (round-robin)
+  campaignId?: string      // Campaign.id — se inserido por distribuição automática
   // vmix_action
   vmixAction?: VmixActionItem
   // vmix_input
@@ -144,6 +150,56 @@ export interface SpotRotation {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Commercial Pro — Segmentos e Programas
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Segmento de mercado — usado para evitar concorrentes no mesmo bloco */
+export interface Segment {
+  id: string
+  name: string
+  description?: string
+  createdAt: string
+}
+
+/** Faixa de programação — define janelas horárias em que campanhas podem veicular */
+export interface ProgramWindow {
+  id: string
+  name: string
+  daysOfWeek: number[]      // 0=Dom…6=Sáb
+  timeFrom: string          // HH:MM
+  timeTo: string            // HH:MM
+  notes?: string
+  createdAt: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commercial Campaigns (Comercial Pro)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CampaignStatus = 'active' | 'paused' | 'expired' | 'completed'
+export type CampaignPriority = 1 | 2 | 3  // 1=alta, 2=média, 3=baixa
+export type CampaignModality = 'standard' | 'rotativo'
+
+/** Campanha comercial — contrato de veiculação de um anunciante */
+export interface Campaign {
+  id: string
+  clientId: string
+  name: string
+  modality: CampaignModality   // 'standard' | 'rotativo'
+  startDate: string            // YYYY-MM-DD
+  endDate: string              // YYYY-MM-DD
+  totalSpots: number           // quantidade contratada
+  spotsPerDay?: number         // limite diário (0 ou undefined = sem limite)
+  daysOfWeek?: number[]        // dias permitidos (undefined = todos)
+  segmentId?: string           // Segment.id — para regra de concorrentes
+  programWindowIds?: string[]  // ProgramWindow.id[] — janelas elegíveis (vazio = todos os blocos)
+  priority: CampaignPriority
+  status: CampaignStatus
+  notes?: string
+  createdAt: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Play Log Entry (proof of airing)
 // ─────────────────────────────────────────────────────────────────────────────
 export interface PlayLog {
@@ -153,6 +209,7 @@ export interface PlayLog {
   title: string
   clientId?: string
   clientName?: string
+  campaignId?: string       // Campaign.id — quando o spot pertence a uma campanha
   scheduledTime?: string    // HH:MM:SS
   actualTime: string        // HH:MM:SS — real air time
   duration: number          // seconds
@@ -217,6 +274,50 @@ export interface VmixCommandLog {
   params: Record<string, string>
   success: boolean
   latencyMs: number
+  category?: VmixCommandCategory
+  risk?: VmixCommandRisk
+  itemId?: string
+  itemTitle?: string
+  scheduleDate?: string
+  scheduledTime?: string
+  queue?: 'playlist' | 'schedule' | 'manual' | 'system'
+  attempt?: number
+  response?: string
+  error?: string
+}
+
+export type VmixCommandCategory =
+  | 'status'
+  | 'input'
+  | 'playback'
+  | 'transition'
+  | 'audio'
+  | 'overlay'
+  | 'recording'
+  | 'streaming'
+  | 'output'
+  | 'title'
+  | 'browser'
+  | 'script'
+  | 'unknown'
+
+export type VmixCommandRisk = 'low' | 'medium' | 'high'
+
+export interface VmixCommandMeta {
+  source?: string
+  category?: VmixCommandCategory
+  risk?: VmixCommandRisk
+  itemId?: string
+  itemTitle?: string
+  scheduleDate?: string
+  scheduledTime?: string
+  queue?: 'playlist' | 'schedule' | 'manual' | 'system'
+  attempt?: number
+}
+
+export interface VmixRequestResult {
+  success: boolean
+  data?: string
   error?: string
 }
 
@@ -265,6 +366,7 @@ export interface MusicSequence {
   name: string
   items: MusicSequenceItem[]
   noSameArtistWindow: number    // não repetir artista nas últimas N músicas (0 = desabilitado)
+  maxSameDayArtistPlays?: number  // máximo de veiculações por artista no mesmo dia (0 ou undefined = sem limite)
   fallback: 'ignore_cooldown' | 'skip' | 'alert'
   targetMode: 'count' | 'duration'
   targetValue: number           // N músicas ou N minutos
@@ -307,7 +409,7 @@ export interface SpotMasterAPI {
   browseVideoFile: () => Promise<string | null>
   browseFolder: () => Promise<string | null>
   scanMusicFolder: (folderPath: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string; subfolder: string }>>
-  vmixRequest: (params: Record<string, string>) => Promise<{ success: boolean; data?: string; error?: string }>
+  vmixRequest: (params: Record<string, string>, meta?: VmixCommandMeta) => Promise<VmixRequestResult>
   vmixStartPolling: (host: string, port: number) => Promise<boolean>
   vmixStopPolling: () => Promise<boolean>
   onVmixStatus: (callback: (status: VmixStatus) => void) => void

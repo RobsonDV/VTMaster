@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **5.1.6** — Atualizado em **14/05/2026** com release de teste para validar atualização automática
+> Versão **5.1.6** — Atualizado em **14/05/2026** — Comercial Pro (Fase 13) + correção crítica do Autoplay Comercial
 
 ---
 
@@ -102,3 +102,5 @@
 | Correção AutoProg — v5.1.4 | 14/05/2026 | `Promise.allSettled` não é mais o fluxo atual; leitura de duração usa `readMediaDurationBatch` com pool, cache persistido e fallback nativo Electron para MP4/MOV/M4V/M4A/3GP quando o Chromium não lê metadata. |
 | Auto-update — v5.1.5 | 14/05/2026 | App instalado passa a consultar GitHub Releases via `electron-updater`; Configurações ganhou botão "Verificar atualização"; releases devem publicar `Setup.exe`, `.blockmap` e `latest.yml`. |
 | Teste auto-update — v5.1.6 | 14/05/2026 | Release pequena para validar se instalações 5.1.5 detectam, baixam e instalam uma nova versão via GitHub Releases. |
+| **Fase 13 — Comercial Pro** | 14/05/2026 | Campaign, Segment, ProgramWindow — sistema completo de contratos comerciais com distribuição automática, modalidade Rotativo, gate de campanha no motor de playout, relatório por campanha, log com campaignId. |
+| **Fix: Autoplay Comercial** | 14/05/2026 | 3 bugs corrigidos: preloader de 20s lê commercialBlocks direto (sem precisar gerar Programação do Dia), commInterruptTimeRef separado do scheduleInterruptTimeRef, grace window de 10 min para app aberto após o horário. |

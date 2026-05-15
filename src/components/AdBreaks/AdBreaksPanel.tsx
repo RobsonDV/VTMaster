@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import {
   Plus, Trash2, Clock, ToggleLeft, ToggleRight,
-  RefreshCw, ChevronUp, ChevronDown, Zap, Monitor, User, ChevronDown as ExpandIcon,
+  RefreshCw, ChevronUp, ChevronDown, Zap, Monitor, User, ChevronDown as ExpandIcon, Megaphone,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { CommercialBlock, CommercialBlockItem, Client } from '../../types'
 import { formatDuration } from '../../utils/time'
+import { VMIX_ACTION_COMMANDS } from '../../utils/vmixCommandCatalog'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import PageHeader from '../ui/PageHeader'
@@ -13,14 +14,6 @@ import './AdBreaksPanel.css'
 
 const ALL_DAYS   = [0, 1, 2, 3, 4, 5, 6]
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
-
-const VMIX_FUNCTIONS = [
-  'AudioOff', 'AudioOn', 'SetVolume', 'Fade',
-  'OverlayInput1', 'OverlayInput1Out',
-  'OverlayInput2', 'OverlayInput2Out',
-  'StartRecording', 'StopRecording',
-  'Cut', 'Merge',
-]
 
 // ─── Block Item Row (inline editor) ──────────────────────────────────────────
 function BlockItemRow({
@@ -56,6 +49,11 @@ function BlockItemRow({
 
       {item.type === 'spot_client' && (
         <>
+          {item.campaignId && (
+            <span title="Inserido por campanha automática" style={{ color: '#7c3aed', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+              <Megaphone size={12} />
+            </span>
+          )}
           <select
             value={item.clientId ?? ''}
             onChange={e => onUpdate({ ...item, clientId: e.target.value })}
@@ -64,12 +62,16 @@ function BlockItemRow({
             <option value="">Selecionar anunciante...</option>
             {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <input
-            type="number" value={item.spotsCount ?? 1} min={1} max={20}
-            onChange={e => onUpdate({ ...item, spotsCount: Math.max(1, parseInt(e.target.value) || 1) })}
-            style={{ width: 46, padding: '3px 5px', fontSize: '0.8rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', textAlign: 'center' }}
-          />
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', flexShrink: 0 }}>spots</span>
+          {!item.campaignId && (
+            <input
+              type="number" value={item.spotsCount ?? 1} min={1} max={20}
+              onChange={e => onUpdate({ ...item, spotsCount: Math.max(1, parseInt(e.target.value) || 1) })}
+              style={{ width: 46, padding: '3px 5px', fontSize: '0.8rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', textAlign: 'center' }}
+            />
+          )}
+          <span style={{ fontSize: '0.75rem', color: item.campaignId ? '#7c3aed' : 'var(--text-secondary)', flexShrink: 0 }}>
+            {item.campaignId ? 'campanha' : 'spots'}
+          </span>
         </>
       )}
 
@@ -80,7 +82,7 @@ function BlockItemRow({
             onChange={e => onUpdate({ ...item, vmixAction: { ...item.vmixAction, function: e.target.value } })}
             style={{ padding: '3px 6px', fontSize: '0.8rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)' }}
           >
-            {VMIX_FUNCTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+            {VMIX_ACTION_COMMANDS.map(f => <option key={f.functionName} value={f.functionName}>{f.label}</option>)}
           </select>
           <input
             value={item.vmixAction?.input ?? ''}

@@ -9,6 +9,7 @@ import {
   Settings,
   Tv,
   Users,
+  Megaphone,
 } from 'lucide-react'
 import { useApp } from './store/AppContext'
 import Toolbar from './components/Toolbar/Toolbar'
@@ -29,11 +30,12 @@ import Modal from './components/ui/Modal'
 import { Field } from './components/ui/Field'
 import type { PlaylistItem } from './types'
 import AutoProgPanel from './components/AutoProg/AutoProgPanel'
+import CampaignsPanel from './components/Campaigns/CampaignsPanel'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
-type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'log' | 'reports' | 'autoprog'
-const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'log', 'reports', 'autoprog']
+type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'campaigns' | 'log' | 'reports' | 'autoprog'
+const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'campaigns', 'log', 'reports', 'autoprog']
 
 function isPanel(value: string): value is Panel {
   return PANELS.includes(value as Panel)
@@ -107,6 +109,7 @@ export default function App() {
     { id: 'grade' as Panel,       label: t.nav.grade, icon: LayoutGrid },
     { id: 'adbreaks' as Panel,    label: t.nav.adBreaks, icon: CalendarDays },
     { id: 'clients' as Panel,     label: t.nav.clients, icon: Users },
+    { id: 'campaigns' as Panel,   label: t.nav.campaigns, icon: Megaphone },
     { id: 'log' as Panel,         label: t.nav.log, icon: ClipboardList },
     { id: 'reports' as Panel,     label: t.nav.reports, icon: FileBarChart },
     { id: 'autoprog' as Panel,    label: 'AutoProg', icon: Music2 },
@@ -183,6 +186,7 @@ export default function App() {
           {activePanel === 'grade' && <GradePanel onNavigate={handleSetPanel} />}
           {activePanel === 'adbreaks' && <AdBreaksPanel />}
           {activePanel === 'clients' && <ClientsPanel />}
+          {activePanel === 'campaigns' && <CampaignsPanel />}
           {activePanel === 'log' && <LogPanel />}
           {activePanel === 'reports' && <ReportsPanel />}
           {activePanel === 'autoprog' && <AutoProgPanel />}

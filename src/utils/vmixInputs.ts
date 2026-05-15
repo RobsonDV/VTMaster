@@ -27,10 +27,11 @@ export function spotTypeForVmix(type: string): SpotType {
 
 export function parseVmixInputs(xml: string): VmixInput[] {
   const inputs: VmixInput[] = []
-  const regex = /<input\s([^>]*)>([^<]*)<\/input>/gi
+  const regex = /<input\b([^>/]*)(?:\/>|>([\s\S]*?)<\/input>)/gi
   let m
   while ((m = regex.exec(xml)) !== null) {
     const attrs = m[1]
+    const innerText = (m[2] ?? '').trim()
     const get = (attr: string) => {
       const r = attrs.match(new RegExp(`${attr}="([^"]*)"`, 'i'))
       return r ? r[1] : ''
@@ -41,7 +42,7 @@ export function parseVmixInputs(xml: string): VmixInput[] {
       number: num,
       key: get('key'),
       type: get('type'),
-      title: m[2].trim() || get('title') || get('shortTitle') || `Input ${num}`,
+      title: innerText || get('title') || get('shortTitle') || `Input ${num}`,
       shortTitle: get('shortTitle'),
       state: get('state'),
       duration: parseInt(get('duration') || '0'),

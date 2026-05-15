@@ -54,8 +54,8 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.invoke('scan-music-folder', folderPath, includeSubfolders),
 
   // vMix integration
-  vmixRequest: (params: Record<string, string>) =>
-    ipcRenderer.invoke('vmix-request', params),
+  vmixRequest: (params: Record<string, string>, meta?: unknown) =>
+    ipcRenderer.invoke('vmix-request', params, meta),
   vmixStartPolling: (host: string, port: number) =>
     ipcRenderer.invoke('vmix-start-polling', host, port),
   vmixStopPolling: () =>

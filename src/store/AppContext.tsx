@@ -14,6 +14,7 @@ import type {
   AppSettings,
   VmixStatus,
   VmixCommandLog,
+  VmixCommandMeta,
   ClientSpot,
   CommercialBlock,
   CommercialBlockItem,
@@ -24,6 +25,9 @@ import type {
   MusicSequence,
   AutoBlocoAssignment,
   DeletedScheduleSlot,
+  Campaign,
+  Segment,
+  ProgramWindow,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
@@ -36,6 +40,7 @@ import {
   readMediaDuration,
   readMediaDurationBatch,
 } from '../utils/mediaDuration'
+import { executeVmixAction, executeVmixCommand, requestVmixXml } from '../utils/vmixCommandService'
 
 /** Signature usada para casar item deletado com item potencialmente regerado pela grade.
  *  Igual para o mesmo slot independentemente de id (id muda a cada geração). */
@@ -66,6 +71,9 @@ interface AppState {
    *  de re-adicionar o mesmo slot no merge. Limpo no virar do dia ou no Replace mode. */
   deletedScheduleSlots: Record<string, DeletedScheduleSlot[]>
   clients: Client[]
+  campaigns: Campaign[]
+  segments: Segment[]
+  programWindows: ProgramWindow[]
   playLog: PlayLog[]
   settings: AppSettings
   vmixStatus: VmixStatus
@@ -100,6 +108,9 @@ const initialState: AppState = {
   mediaDurationCache: {},
   deletedScheduleSlots: {},
   clients: [],
+  campaigns: [],
+  segments: [],
+  programWindows: [],
   playLog: [],
   settings: DEFAULT_SETTINGS,
   vmixStatus: { connected: false },
@@ -133,6 +144,15 @@ type Action =
   | { type: 'ADD_CLIENT'; payload: Client }
   | { type: 'UPDATE_CLIENT'; payload: Client }
   | { type: 'DELETE_CLIENT'; payload: string }
+  | { type: 'ADD_CAMPAIGN';    payload: Campaign }
+  | { type: 'UPDATE_CAMPAIGN'; payload: Campaign }
+  | { type: 'DELETE_CAMPAIGN'; payload: string }
+  | { type: 'ADD_SEGMENT';    payload: Segment }
+  | { type: 'UPDATE_SEGMENT'; payload: Segment }
+  | { type: 'DELETE_SEGMENT'; payload: string }
+  | { type: 'ADD_PROGRAM_WINDOW';    payload: ProgramWindow }
+  | { type: 'UPDATE_PROGRAM_WINDOW'; payload: ProgramWindow }
+  | { type: 'DELETE_PROGRAM_WINDOW'; payload: string }
   | { type: 'ADD_LOG'; payload: PlayLog }
   | { type: 'SET_LOG'; payload: PlayLog[] }
   | { type: 'SET_SEQUENCE_PLAYING'; payload: boolean }
@@ -218,7 +238,26 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         clients: state.clients.filter((c) => c.id !== action.payload),
         clientSpots: state.clientSpots.filter((s) => s.clientId !== action.payload),
+        campaigns: state.campaigns.filter((camp) => camp.clientId !== action.payload),
       }
+    case 'ADD_CAMPAIGN':
+      return { ...state, campaigns: [...state.campaigns, action.payload] }
+    case 'UPDATE_CAMPAIGN':
+      return { ...state, campaigns: state.campaigns.map(c => c.id === action.payload.id ? action.payload : c) }
+    case 'DELETE_CAMPAIGN':
+      return { ...state, campaigns: state.campaigns.filter(c => c.id !== action.payload) }
+    case 'ADD_SEGMENT':
+      return { ...state, segments: [...state.segments, action.payload] }
+    case 'UPDATE_SEGMENT':
+      return { ...state, segments: state.segments.map(s => s.id === action.payload.id ? action.payload : s) }
+    case 'DELETE_SEGMENT':
+      return { ...state, segments: state.segments.filter(s => s.id !== action.payload) }
+    case 'ADD_PROGRAM_WINDOW':
+      return { ...state, programWindows: [...state.programWindows, action.payload] }
+    case 'UPDATE_PROGRAM_WINDOW':
+      return { ...state, programWindows: state.programWindows.map(p => p.id === action.payload.id ? action.payload : p) }
+    case 'DELETE_PROGRAM_WINDOW':
+      return { ...state, programWindows: state.programWindows.filter(p => p.id !== action.payload) }
     case 'ADD_LOG': {
       const next = [...state.playLog, action.payload]
       return { ...state, playLog: next.length > 10000 ? next.slice(-10000) : next }
@@ -392,6 +431,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Holds the scheduledTime (HH:MM:SS) that triggered the current interrupt.
   // Prevents the scheduler from re-triggering for the same block while it plays.
   const scheduleInterruptTimeRef = useRef<string>('')
+  // Ref exclusivo do scheduler de comerciais — evita que o scheduler de autoPlay (programas)
+  // bloqueie o disparo de comerciais quando ambos têm itens no mesmo horário.
+  const commInterruptTimeRef = useRef<string>('')
   // Tracks last fast-poll position per input — guards progress bar against regression on audio end
   const lastFastPosRef = useRef<Record<string, number>>({})
   // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
@@ -448,10 +490,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     startOrder: number,
     rotation: SpotRotation,
   ): [PlaylistItem[], SpotRotation] => {
-    const { clientSpots, clients } = stateRef.current
+    const { clientSpots, clients, campaigns, commercialBlocks } = stateRef.current
     const newRotation = { ...rotation }
     const items: PlaylistItem[] = []
     let offset = 0
+    const todayStr = new Date().toISOString().slice(0, 10)
+
+    // Helper: days between two YYYY-MM-DD strings (endDate - startDate)
+    const daysBetween = (start: string, end: string): number =>
+      Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 86400000)
 
     const ordered = [...(block.items ?? [])].sort((a, b) => a.order - b.order)
 
@@ -461,7 +508,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const spotsCount = bi.spotsCount ?? 1
         const spots = clientSpots.filter(s => s.clientId === clientId)
         if (spots.length === 0) continue
+
+        // Se o item tem campaignId, valida se a campanha ainda está ativa
+        if (bi.campaignId) {
+          const camp = (campaigns ?? []).find(c => c.id === bi.campaignId)
+          // Campanha inexistente, expirada, pausada ou concluída → não veicula
+          if (!camp || camp.status !== 'active' || camp.endDate < todayStr || camp.startDate > todayStr) continue
+        }
+
         const base = newRotation[clientId] ?? 0
+
+        // Encontra campanha ativa para este cliente (para propagar campaignId no log)
+        const activeCampaign = (campaigns ?? []).find(camp =>
+          camp.clientId === clientId &&
+          camp.status === 'active' &&
+          camp.startDate <= todayStr &&
+          camp.endDate >= todayStr
+        )
+
         for (let i = 0; i < spotsCount; i++) {
           const spot = spots[(base + i) % spots.length]
           items.push({
@@ -470,6 +534,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             title: spot.title,
             clientId: spot.clientId,
             clientName: clients.find(c => c.id === spot.clientId)?.name ?? '',
+            campaignId: bi.campaignId ?? activeCampaign?.id,
             duration: Math.max(spot.duration || 0, 5),
             filePath: spot.filePath,
             mediaType: spot.mediaType,
@@ -510,8 +575,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // ── Rotativo injection ──────────────────────────────────────────────────
+    // For each active rotativo campaign, compute which block it targets today
+    // (daysElapsed % totalBlocks). If this block is the target → inject client.
+    const allEnabledBlocks = [...(commercialBlocks ?? [])]
+      .filter(b => b.enabled)
+      .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime))
+
+    if (allEnabledBlocks.length > 0) {
+      const rotativoCampaigns = (campaigns ?? []).filter(c =>
+        c.modality === 'rotativo' &&
+        c.status === 'active' &&
+        c.startDate <= todayStr &&
+        c.endDate >= todayStr
+      )
+
+      for (const rCamp of rotativoCampaigns) {
+        const elapsed = daysBetween(rCamp.startDate, todayStr)
+        const targetIndex = Math.max(0, elapsed) % allEnabledBlocks.length
+        const targetBlock = allEnabledBlocks[targetIndex]
+        if (targetBlock.id !== block.id) continue
+
+        // Avoid duplicating if already in template
+        const alreadyInTemplate = (block.items ?? []).some(
+          bi => bi.type === 'spot_client' && bi.clientId === rCamp.clientId
+        )
+        if (alreadyInTemplate) continue
+
+        const spots = clientSpots.filter(s => s.clientId === rCamp.clientId)
+        if (spots.length === 0) continue
+
+        const base = newRotation[rCamp.clientId] ?? 0
+        const spot = spots[base % spots.length]
+        items.push({
+          id: crypto.randomUUID(),
+          order: startOrder + offset,
+          title: spot.title,
+          clientId: spot.clientId,
+          clientName: clients.find(c => c.id === rCamp.clientId)?.name ?? '',
+          campaignId: rCamp.id,
+          duration: Math.max(spot.duration || 0, 5),
+          filePath: spot.filePath,
+          mediaType: spot.mediaType,
+          type: 'spot' as const,
+          status: 'pending' as const,
+          adBreakId: block.id,
+          scheduledTime: block.scheduledTime,
+        })
+        offset++
+        newRotation[rCamp.clientId] = (base + 1) % spots.length
+      }
+    }
+
     return [items, newRotation]
-  }, [])  
+  }, [])
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
   // Expands a block's items and appends them to the playlist tail.
@@ -931,10 +1048,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
+  const vmixMetaForItem = useCallback((item: PlaylistItem, source = 'playout'): VmixCommandMeta => {
+    const queue = activeQueueRef.current
+    return {
+      source,
+      queue: queue === 'playlist' || queue === 'schedule' ? queue : 'system',
+      itemId: item.id,
+      itemTitle: item.title,
+      scheduledTime: item.scheduledTime,
+      scheduleDate: queue === 'schedule' ? today() : undefined,
+    }
+  }, [])
+
   // Returns the highest input number currently registered in vMix
   const getMaxInputNum = useCallback(async (): Promise<number> => {
     if (!window.spotmaster) return 0
-    const st = await window.spotmaster.vmixRequest({})
+    const st = await requestVmixXml()
     if (!st.success || !st.data) return 0
     const matches = [...st.data.matchAll(/<input\b[^>]*\bnumber="(\d+)"/gi)]
     return matches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0)
@@ -947,7 +1076,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     for (let attempt = 0; attempt < 50; attempt++) {
       await sleep(200)
       if (!window.spotmaster) return null
-      const st = await window.spotmaster.vmixRequest({})
+      const st = await requestVmixXml()
       if (st.success && st.data) {
         // Match abertura da tag input — não exige </input>, então funciona em ambos os formatos.
         const tags = [...st.data.matchAll(/<input\b([^>]*?)\/?>/gi)]
@@ -972,7 +1101,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!window.spotmaster) return false
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
-      const st = await window.spotmaster.vmixRequest({})
+      const st = await requestVmixXml()
       if (st.success && st.data) {
         // Procura a tag input com o key dado e extrai state
         const escaped = guid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -997,7 +1126,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const escaped = guid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(`<input\\b[^>]*\\bkey="${escaped}"[^>]*\\bstate="([^"]*)"[^>]*\\bposition="(\\d+)"`, 'i')
     while (Date.now() - start < timeoutMs) {
-      const st = await window.spotmaster.vmixRequest({})
+      const st = await requestVmixXml()
       if (st.success && st.data) {
         const m = st.data.match(re)
         if (m) {
@@ -1013,7 +1142,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Loads a file as a new input in vMix.
   // Returns the input's GUID (stable — never changes when vMix renumbers).
-  const loadNewInput = useCallback(async (filePath: string): Promise<string | null> => {
+  const loadNewInput = useCallback(async (filePath: string, meta?: VmixCommandMeta): Promise<string | null> => {
     if (!window.spotmaster) return null
     const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
     const isImage = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
@@ -1021,7 +1150,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const vmixType = isImage ? 'Image' : isAudio ? 'AudioFile' : 'Video'
 
     const prevMax = await getMaxInputNum()
-    await window.spotmaster.vmixRequest({ Function: 'AddInput', Value: `${vmixType}|${filePath}` })
+    await executeVmixCommand('AddInput', {
+      value: `${vmixType}|${filePath}`,
+      meta: { source: 'load-input', ...meta },
+    })
     const guid = await pollForNewInput(prevMax)  // returns GUID
     if (!guid) return null
     spotmasterGuidsRef.current.add(guid)  // register so we can clean up later
@@ -1034,7 +1166,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Fallback: dá mais tempo absoluto pra arquivos lentos antes de desistir
         await sleep(1000)
       }
-      await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: guid, Value: '0' })
+      await executeVmixCommand('SetPosition', {
+        input: guid,
+        value: '0',
+        meta: { source: 'load-input', ...meta },
+      })
     }
     return guid
   }, [getMaxInputNum, pollForNewInput, waitForInputReady])  
@@ -1047,7 +1183,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!toRemove || !window.spotmaster) return
     setTimeout(async () => {
       if (window.spotmaster) {
-        await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: toRemove })
+        await executeVmixCommand('RemoveInput', {
+          input: toRemove,
+          meta: { source: 'cleanup-input', queue: 'system' },
+        })
       }
     }, delayMs)
   }, [])  
@@ -1074,10 +1213,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Não entra no loop de wall-clock nem afeta o input ativo no ar.
     if (item.type === 'vmix_action' && item.vmixAction) {
       const { function: fn, input, value } = item.vmixAction
-      const params: Record<string, string> = { Function: fn }
-      if (input) params.Input = input
-      if (value !== undefined && value !== '') params.Value = value
-      await window.spotmaster.vmixRequest(params)
+      const commandResult = await executeVmixAction(item.vmixAction, vmixMetaForItem(item, 'vmix-action-item'))
+      if (!commandResult.success) {
+        dispatch({
+          type: 'ADD_LOG',
+          payload: {
+            id: crypto.randomUUID(),
+            date: new Date().toISOString().slice(0, 10),
+            itemId: item.id,
+            title: item.title,
+            actualTime,
+            duration: 0,
+            status: 'error',
+            notes: `vMix: ${fn} falhou - ${commandResult.error ?? 'erro desconhecido'}`,
+          } as PlayLog,
+        })
+        updateQueueItem({ ...item, status: 'error' })
+        return
+      }
       await sleep(150)
       dispatch({
         type: 'ADD_LOG',
@@ -1112,6 +1265,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           title: item.title,
           clientId: item.clientId,
           clientName: item.clientName,
+          campaignId: item.campaignId,
           scheduledTime: item.scheduledTime,
           actualTime,
           duration: 0,
@@ -1124,6 +1278,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     if (vmixStatus.connected) {
+      const itemMeta = vmixMetaForItem(item, 'playout')
       if (item.filePath) {
         // Use a preloaded GUID if available for this exact file (eliminates gap between items).
         // Otherwise fall back to loading now (same behaviour as before this feature).
@@ -1140,9 +1295,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             console.warn(`[SpotMaster] discarding stale preload: "${cached.filePath}"`)
             const staleGuid = cached.guid
             preloadedInputRef.current = null
-            window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: staleGuid })
+            executeVmixCommand('RemoveInput', {
+              input: staleGuid,
+              meta: { ...itemMeta, source: 'discard-stale-preload' },
+            })
           }
-          guid = await loadNewInput(item.filePath)
+          guid = await loadNewInput(item.filePath, itemMeta)
         }
 
         if (guid) {
@@ -1156,18 +1314,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
             //   3) PlayInput     → só agora o clip começa a reproduzir
             // Enviar PlayInput ANTES de o input estar no Program faz o vMix descartá-lo
             // silenciosamente em algumas versões — sintoma: "input vai pra play e não roda".
-            await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: guid })
+            await executeVmixCommand('PreviewInput', { input: guid, meta: itemMeta })
             await sleep(150)
-            await window.spotmaster.vmixRequest({ Function: 'Cut' })
+            await executeVmixCommand('Cut', { meta: itemMeta })
             await sleep(150)
             if (!isImg) {
-              await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
+              await executeVmixCommand('PlayInput', { input: guid, meta: itemMeta })
               await sleep(200)
               // Verifica se o input realmente saiu de Paused. Se não, manda um 2º PlayInput.
               // Isso cobre o caso raro de vMix descartar o primeiro logo após o Cut.
               const ok = await waitForInputPlaying(guid, 1200)
               if (!ok) {
-                await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: guid })
+                await executeVmixCommand('PlayInput', {
+                  input: guid,
+                  meta: { ...itemMeta, source: 'playout-retry' },
+                })
               }
             }
 
@@ -1178,7 +1339,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (prevGuid) {
               setTimeout(async () => {
                 if (window.spotmaster) {
-                  await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
+                  await executeVmixCommand('RemoveInput', {
+                    input: prevGuid,
+                    meta: { ...itemMeta, source: 'remove-previous-input' },
+                  })
                 }
               }, 5000)
             }
@@ -1200,6 +1364,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               title: item.title,
               clientId: item.clientId,
               clientName: item.clientName,
+              campaignId: item.campaignId,
               scheduledTime: item.scheduledTime,
               actualTime,
               duration: 0,
@@ -1222,18 +1387,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (prevGuid) {
           setTimeout(async () => {
             if (window.spotmaster) {
-              await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
+              await executeVmixCommand('RemoveInput', {
+                input: prevGuid,
+                meta: { ...itemMeta, source: 'remove-previous-input' },
+              })
             }
           }, 5000)
         }
         // Clear the ref — this input is permanent and must NEVER be auto-removed.
         activeInputRef.current = ''
 
-        await window.spotmaster.vmixRequest({ Function: 'SetPosition', Input: item.inputName, Value: '0' })
-        await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: item.inputName })
-        await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: item.inputName })
+        await executeVmixCommand('SetPosition', { input: item.inputName, value: '0', meta: itemMeta })
+        await executeVmixCommand('PlayInput', { input: item.inputName, meta: itemMeta })
+        await executeVmixCommand('PreviewInput', { input: item.inputName, meta: itemMeta })
         await sleep(100)
-        await window.spotmaster.vmixRequest({ Function: 'Cut' })
+        await executeVmixCommand('Cut', { meta: itemMeta })
         onAirInput = item.inputName
         // activeInputRef intentionally left as '' — permanent inputs are not owned by SpotMaster
       }
@@ -1248,6 +1416,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         title: item.title,
         clientId: item.clientId,
         clientName: item.clientName,
+        campaignId: item.campaignId,
         scheduledTime: item.scheduledTime,
         actualTime,
         duration: item.duration,
@@ -1264,7 +1433,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (durationSec <= 0 && onAirInput && window.spotmaster) {
         // vMix already buffered the input (we slept 1s in loadNewInput).
         // Re-read the XML to get the real duration.
-        const st = await window.spotmaster.vmixRequest({})
+        const st = await requestVmixXml()
         if (st.success && st.data) {
           const tags = [...st.data.matchAll(/<input\s([^>]*)>/gi)]
           for (const tag of tags) {
@@ -1310,11 +1479,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             preloadTriggered = true
             const fpToLoad = nextFilePath
             console.log(`[SpotMaster] preloading next: "${fpToLoad}" (${(remaining / 1000).toFixed(1)}s remaining)`)
-            loadNewInput(fpToLoad).then(preGuid => {
+            loadNewInput(fpToLoad, {
+              source: 'preload-next-input',
+              queue: activeQueueRef.current === 'schedule' ? 'schedule' : 'playlist',
+            }).then(preGuid => {
               if (!preGuid) return
               if (abortRef.current) {
                 // Playback was stopped while we were loading — discard immediately
-                window.spotmaster?.vmixRequest({ Function: 'RemoveInput', Input: preGuid })
+                executeVmixCommand('RemoveInput', {
+                  input: preGuid,
+                  meta: { source: 'discard-aborted-preload', queue: 'system' },
+                })
               } else {
                 preloadedInputRef.current = { guid: preGuid, filePath: fpToLoad }
               }
@@ -1333,7 +1508,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
       updateQueueItem({ ...fresh, status: 'done' })
     }
-  }, [dispatch, loadNewInput, waitForInputPlaying])  
+  }, [dispatch, loadNewInput, waitForInputPlaying, vmixMetaForItem])
 
   // ── runSequence ─────────────────────────────────────────────────────────────
   // Infinite while-loop that reads the LIVE playlist on every iteration.
@@ -1405,6 +1580,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         scheduleInterruptTimeRef.current !== ''
       ) {
         scheduleInterruptTimeRef.current = ''
+        commInterruptTimeRef.current = ''
         // Don't break — fall through and pick the next pending item by order
       }
 
@@ -1454,6 +1630,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             title: next.title,
             clientId: next.clientId,
             clientName: next.clientName,
+            campaignId: next.campaignId,
             scheduledTime: next.scheduledTime,
             actualTime: now(),
             duration: 0,
@@ -1474,6 +1651,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Sequence fully ended — clean up
     scheduleInterruptTimeRef.current = ''
+    commInterruptTimeRef.current = ''
     minOrderRef.current = -1
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     setPlaybackProgress(null)
@@ -1483,7 +1661,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (unusedPreload) {
       preloadedInputRef.current = null
       if (window.spotmaster) {
-        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: unusedPreload.guid })
+        executeVmixCommand('RemoveInput', {
+          input: unusedPreload.guid,
+          meta: { source: 'discard-unused-preload', queue: 'system' },
+        })
       }
     }
 
@@ -1500,7 +1681,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const allGuids = [...spotmasterGuidsRef.current]
       spotmasterGuidsRef.current.clear()
       for (const g of allGuids) {
-        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: g })
+        executeVmixCommand('RemoveInput', {
+          input: g,
+          meta: { source: 'sequence-full-sweep', queue: 'system' },
+        })
       }
     }
 
@@ -1640,7 +1824,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Pause vMix input if possible (media files support Pause)
     if (window.spotmaster && activeInput) {
-      window.spotmaster.vmixRequest({ Function: 'Pause', Input: activeInput }).catch(() => {})
+      executeVmixCommand('Pause', {
+        input: activeInput,
+        meta: { source: 'pause-schedule', queue: 'schedule' },
+      }).catch(() => {})
     }
 
     // Stop the sequence engine
@@ -1691,6 +1878,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     abortRef.current = true
     scheduleInterruptRef.current = false
     scheduleInterruptTimeRef.current = ''
+    commInterruptTimeRef.current = ''
     minOrderRef.current = -1
     stopAfterCurrentRef.current = false
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
@@ -1701,7 +1889,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const pre = preloadedInputRef.current
       if (pre) {
         preloadedInputRef.current = null
-        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: pre.guid })
+        executeVmixCommand('RemoveInput', {
+          input: pre.guid,
+          meta: { source: 'stop-discard-preload', queue: 'system' },
+        })
       }
       cleanupInputs(0)
       // Full sweep: remove every GUID loaded by SpotMaster this session.
@@ -1709,7 +1900,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const allGuids = [...spotmasterGuidsRef.current]
       spotmasterGuidsRef.current.clear()
       for (const g of allGuids) {
-        window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: g })
+        executeVmixCommand('RemoveInput', {
+          input: g,
+          meta: { source: 'stop-full-sweep', queue: 'system' },
+        })
       }
     }
     getQueue()
@@ -1739,7 +1933,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const nextGuid = await loadNewInput(nextPending.filePath)
+    const nextMeta = vmixMetaForItem(nextPending, 'manual-next')
+    const nextGuid = await loadNewInput(nextPending.filePath, nextMeta)
     if (!nextGuid) {
       disparoInterruptRef.current = true
       abortRef.current = true
@@ -1752,19 +1947,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Start playing the new input in preview — current media stays on Program
     if (!isImg && !isAudio) {
-      await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: nextGuid })
+      await executeVmixCommand('PlayInput', { input: nextGuid, meta: nextMeta })
     }
 
     // 3-second crossfade window — current audio/video continues
     await sleep(3000)
 
     // Cut to new input
-    await window.spotmaster.vmixRequest({ Function: 'PreviewInput', Input: nextGuid })
+    await executeVmixCommand('PreviewInput', { input: nextGuid, meta: nextMeta })
     await sleep(100)
-    await window.spotmaster.vmixRequest({ Function: 'Cut' })
+    await executeVmixCommand('Cut', { meta: nextMeta })
     if (isAudio) {
       await sleep(500)
-      await window.spotmaster.vmixRequest({ Function: 'PlayInput', Input: nextGuid })
+      await executeVmixCommand('PlayInput', { input: nextGuid, meta: nextMeta })
     }
 
     // Remove previous input after 5s grace
@@ -1772,7 +1967,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prevGuid) {
       setTimeout(async () => {
         if (window.spotmaster) {
-          await window.spotmaster.vmixRequest({ Function: 'RemoveInput', Input: prevGuid })
+          await executeVmixCommand('RemoveInput', {
+            input: prevGuid,
+            meta: { ...nextMeta, source: 'manual-next-remove-previous' },
+          })
         }
       }, 5000)
     }
@@ -1784,7 +1982,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Interrupt current playItem wait loop; runSequence keeps running
     disparoInterruptRef.current = true
     abortRef.current = true
-  }, [loadNewInput])  
+  }, [loadNewInput, vmixMetaForItem])
 
   // ── setStopAfterCurrent ─────────────────────────────────────────────────────
   // Arms the "Stop Next" feature: runSequence will break after the current item
@@ -1985,14 +2183,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
         )
         if (scheduledDue.length === 0) return
         const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
-        if (scheduleInterruptTimeRef.current === triggerTime) return
-        if (triggerTime < sessionStartRef.current) return  // não dispara blocos vencidos antes do startup
+        if (commInterruptTimeRef.current === triggerTime) return
+        // Permite disparar blocos recentes (até 10 min após horário) mesmo se sessionStart os bloquearia
+        const sessionStart = sessionStartRef.current
+        const graceSec = 10 * 60  // 10 minutos de grace após startup
+        const [tH, tM, tS] = triggerTime.split(':').map(Number)
+        const [sH, sM, sS] = sessionStart.split(':').map(Number)
+        const triggerSec = tH * 3600 + tM * 60 + (tS ?? 0)
+        const sessionSec = sH * 3600 + sM * 60 + (sS ?? 0)
+        if (triggerSec < sessionSec - graceSec) return  // bloco muito antigo, ignorar
         if (!stateRef.current.isSequencePlaying) {
-          scheduleInterruptTimeRef.current = triggerTime
+          commInterruptTimeRef.current = triggerTime
           startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
         } else {
           // Já está tocando a Programação — interrompe para saltar ao bloco devido
-          scheduleInterruptTimeRef.current = triggerTime
+          commInterruptTimeRef.current = triggerTime
           scheduleInterruptRef.current = true
           abortRef.current = true
         }
@@ -2001,7 +2206,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule])  
+  }, [state.isLoading, startSchedule])
+
+  // ── Scheduler: Pré-carregamento de blocos comerciais ──────────────────────
+  // Lê commercialBlocks diretamente (sem depender de Programação do Dia) e
+  // injeta os blocos em dateSchedules dentro da janela de preloadMinutes.
+  // Resolve o caso em que o usuário não gerou a programação do dia mas tem
+  // autoplayComerciais ligado — os blocos agora aparecem automaticamente na fila.
+  // Roda a cada 20s para não sobrecarregar. O disparo real continua no scheduler de 1s.
+  useEffect(() => {
+    if (state.isLoading) return
+    const interval = setInterval(() => {
+      if (!stateRef.current.settings.autoplayComerciais) return
+
+      const todayStr = today()
+      const todayDow = new Date().getDay()
+      const currentTime = now()
+      const preloadMin = stateRef.current.settings.preloadMinutes ?? 5
+      const { commercialBlocks, dateSchedules, spotRotation } = stateRef.current
+      const todaySchedule = dateSchedules[todayStr] ?? []
+
+      const [cH, cM, cS] = currentTime.split(':').map(Number)
+      const currentSec = cH * 3600 + cM * 60 + (cS ?? 0)
+
+      for (const block of commercialBlocks) {
+        if (!block.enabled || !block.scheduledTime) continue
+        if (block.lastLoadedDate === todayStr) continue
+        if (block.daysOfWeek && !block.daysOfWeek.includes(todayDow)) continue
+
+        // Janela de pré-carregamento: [scheduledTime - preloadMin, scheduledTime + 10min grace]
+        const [bH, bM, bS] = block.scheduledTime.split(':').map(Number)
+        const blockSec = bH * 3600 + bM * 60 + (bS ?? 0)
+        const windowStart = blockSec - preloadMin * 60
+        const windowEnd   = blockSec + 600  // +10 min grace para app aberto depois do horário
+
+        if (currentSec < windowStart || currentSec > windowEnd) continue
+
+        // Não duplicar: verificar se itens do bloco já estão na programação como pending
+        const alreadyPending = todaySchedule.some(
+          i => i.adBreakId === block.id && i.status === 'pending'
+        )
+        if (alreadyPending) continue
+
+        // Expandir e injetar na programação do dia
+        const maxOrder = todaySchedule.length > 0
+          ? Math.max(...todaySchedule.map(i => i.order))
+          : 0
+        const [items, newRotation] = expandBlockItems(block, maxOrder + 1, spotRotation)
+        if (items.length === 0) continue
+
+        const newSchedule = [...todaySchedule, ...items]
+        dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: newSchedule } })
+        dispatch({ type: 'SET_SPOT_ROTATION', payload: newRotation })
+        dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: todayStr } })
+
+        // Persiste imediatamente para sobreviver reload
+        if (window.spotmaster) {
+          window.spotmaster.saveData('dateSchedules',
+            { ...stateRef.current.dateSchedules, [todayStr]: newSchedule }
+          )
+          window.spotmaster.saveData('spotRotation', newRotation)
+        }
+
+        console.log(`[SpotMaster] Bloco comercial pré-carregado: "${block.name}" (${block.scheduledTime})`)
+      }
+    }, 20000)
+    return () => clearInterval(interval)
+  }, [state.isLoading, expandBlockItems, dispatch])
 
   // ── Load all data on startup ───────────────────────────────────────────────
   useEffect(() => {
@@ -2013,7 +2284,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const [settingsRaw, playlistRaw, clientsRaw, logRaw,
                blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw,
-               musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw, vmixCommandLogRaw] =
+               musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw, vmixCommandLogRaw,
+               campaignsRaw, segmentsRaw, programWindowsRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -2031,6 +2303,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('deletedScheduleSlots'),
             window.spotmaster.loadData('mediaDurationCache'),
             window.spotmaster.loadData('vmixCommandLog'),
+            window.spotmaster.loadData('campaigns'),
+            window.spotmaster.loadData('segments'),
+            window.spotmaster.loadData('programWindows'),
           ])
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -2065,6 +2340,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             musicStyles:          (musicStylesRaw as MusicStyle[])          ?? [],
             musicSequences:       (musicSequencesRaw as MusicSequence[])    ?? [],
             autoBlocoAssignments: (autoBlocoRaw as AutoBlocoAssignment[])   ?? [],
+            campaigns:            (campaignsRaw as Campaign[])              ?? [],
+            segments:             (segmentsRaw as Segment[])                ?? [],
+            programWindows:       (programWindowsRaw as ProgramWindow[])    ?? [],
           },
         })
       } catch {
