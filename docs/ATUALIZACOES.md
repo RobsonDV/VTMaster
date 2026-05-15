@@ -227,6 +227,50 @@ Verifique:
 
 Comportamento esperado. Auto-update é suportado no app instalado via NSIS/Setup.
 
+### sha512 checksum mismatch — erro ao instalar a atualização
+
+**Causa:** o `Setup.exe` no GitHub e o `latest.yml` foram gerados em **builds separados**. Cada build gera um binário ligeiramente diferente (timestamp, hash de recursos), então os hashes SHA512 nunca vão coincidir entre dois builds.
+
+Isso acontece quando:
+1. `npm run release:github` é executado mas o upload automático falha (sem `GH_TOKEN`);
+2. Os arquivos são enviados ao GitHub via `gh release create` — esse é o **Build 1**;
+3. `npm run build:dist` é executado novamente para gerar um `latest.yml` novo — esse é o **Build 2**;
+4. O `latest.yml` do Build 2 é enviado ao GitHub;
+5. Resultado: `Setup.exe` (Build 1) ≠ hash no `latest.yml` (Build 2).
+
+**Regra de ouro: todos os arquivos de um release devem vir de um único `build:dist`.**
+
+**Como corrigir depois que aconteceu:**
+
+```bash
+# Identificar qual build gerou o latest.yml atual (pelo size no latest.yml)
+cat release\latest.yml   # anote o size
+
+# Verificar se o Setup.exe local bate com esse size
+ls -l release\VTMaster-x.y.z-Setup.exe
+
+# Se bater: o latest.yml está correto, precisa substituir só os assets do GitHub
+gh release delete-asset vx.y.z "VTMaster-x.y.z-Setup.exe" --yes
+gh release delete-asset vx.y.z "VTMaster-x.y.z-Setup.exe.blockmap" --yes
+gh release upload vx.y.z release\VTMaster-x.y.z-Setup.exe release\VTMaster-x.y.z-Setup.exe.blockmap
+
+# Se não bater: fazer build limpo e substituir tudo
+npm run build:dist
+gh release delete-asset vx.y.z "VTMaster-x.y.z-Setup.exe" --yes
+gh release delete-asset vx.y.z "VTMaster-x.y.z-Setup.exe.blockmap" --yes
+gh release delete-asset vx.y.z latest.yml --yes
+gh release upload vx.y.z release\VTMaster-x.y.z-Setup.exe release\VTMaster-x.y.z-Setup.exe.blockmap release\latest.yml
+```
+
+**Como prevenir:**
+
+Seguir sempre o fluxo do item 3 deste documento:
+1. `npm run build:dist` → gera todos os artefatos em um único build
+2. `gh release create` → envia **todos** os arquivos desse mesmo build de uma vez
+3. **Nunca** rodar um segundo build para o mesmo release
+
+Se o `npm run release:github` for usado (com `GH_TOKEN` configurado), ele faz tudo em um único build automaticamente e não tem esse problema.
+
 ### Quero testar sem esperar a checagem automática
 
 Use **Configurações → Atualizações → Verificar atualização**.
