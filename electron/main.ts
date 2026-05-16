@@ -541,6 +541,20 @@ ipcMain.handle('load-data', (_event, key: string) => {
   return loadData(key)
 })
 
+ipcMain.handle('save-playback-snapshot', (_event, snapshot: unknown) => {
+  saveData('lastPlaybackSnapshot', snapshot)
+  return true
+})
+
+ipcMain.handle('load-playback-snapshot', () => {
+  try { return loadData('lastPlaybackSnapshot') ?? null } catch { return null }
+})
+
+ipcMain.handle('clear-playback-snapshot', () => {
+  saveData('lastPlaybackSnapshot', null)
+  return true
+})
+
 ipcMain.handle('create-backup', (_event, reason?: string) => {
   try {
     return { success: true, path: createDataBackup(reason || 'manual') }

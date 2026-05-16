@@ -128,4 +128,12 @@ contextBridge.exposeInMainWorld('spotmaster', {
   removeTriggerListener: () => {
     ipcRenderer.removeAllListeners('trigger-fired')
   },
+
+  // Session resume — persiste o item em reprodução para retomar após restart
+  savePlaybackSnapshot: (snapshot: unknown) =>
+    ipcRenderer.invoke('save-playback-snapshot', snapshot),
+  loadPlaybackSnapshot: () =>
+    ipcRenderer.invoke('load-playback-snapshot'),
+  clearPlaybackSnapshot: () =>
+    ipcRenderer.invoke('clear-playback-snapshot'),
 })

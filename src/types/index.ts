@@ -277,6 +277,31 @@ export interface VideoStyle {
 // ─────────────────────────────────────────────────────────────────────────────
 // AudioPro — Estilos de Áudio com Placeholder Visual
 // ─────────────────────────────────────────────────────────────────────────────
+// Session Resume — snapshot do item em reprodução para retomar após restart
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PlaybackSnapshot {
+  itemId: string
+  queue: 'playlist' | 'schedule'
+  scheduleDate?: string      // YYYY-MM-DD quando queue='schedule'
+  inputGuid?: string         // GUID do input no vMix
+  inputName?: string         // nome do item para exibição
+  startedAt: string          // ISO timestamp
+  totalDuration: number      // duração total em segundos
+  filePath?: string
+}
+
+export interface ResumeCandidate {
+  itemId: string
+  queue: 'playlist' | 'schedule'
+  scheduleDate?: string
+  inputGuid: string
+  elapsedSeconds: number
+  remainingSeconds: number
+  inputTitle: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type AudioStylePlaceholderType = 'none' | 'image' | 'vmix_input'
 
@@ -674,6 +699,10 @@ export interface SpotMasterAPI {
   getDataSourcesStatus: () => Promise<{ running: boolean }>
   // Banco de Mídia — vídeos
   scanVideoFolder: (folderPath: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string }>>
+  // Session resume
+  savePlaybackSnapshot: (snapshot: PlaybackSnapshot) => Promise<boolean>
+  loadPlaybackSnapshot: () => Promise<PlaybackSnapshot | null>
+  clearPlaybackSnapshot: () => Promise<boolean>
 }
 
 declare global {

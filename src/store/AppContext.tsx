@@ -37,6 +37,8 @@ import type {
   VideoStyle,
   AudioStyle,
   VmixOutputProfile,
+  PlaybackSnapshot,
+  ResumeCandidate,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
@@ -563,6 +565,9 @@ interface AppContextValue {
   triggerAudioLayer: (layerId: string, opts?: { mode?: AudioLayerMode }) => Promise<void>
   stopAudioLayer: (layerId: string) => Promise<void>
   audioLayerActive: Record<string, boolean>
+  resumeCandidate: ResumeCandidate | null
+  resumeFromSnapshot: () => Promise<void>
+  ignoreResume: () => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -577,6 +582,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state })
+
+  // ── Session resume state ──────────────────────────────────────────────────
+  const [resumeCandidate, setResumeCandidate] = useState<ResumeCandidate | null>(null)
+  const resumeDetectedRef = useRef(false)  // garante que a detecção roda apenas uma vez
 
   // ── AudioPro runtime state (not persisted) ────────────────────────────────
   // Tracks which audio layers are currently playing (used by AudioControlTab)
@@ -1773,6 +1782,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } as PlayLog,
     })
 
+    // ── Session snapshot — persiste para retomada após restart ───────────────
+    if (onAirInput && window.spotmaster?.savePlaybackSnapshot) {
+      window.spotmaster.savePlaybackSnapshot({
+        itemId: item.id,
+        queue: activeQueueRef.current,
+        scheduleDate: activeQueueRef.current === 'schedule' ? today() : undefined,
+        inputGuid: onAirInput,
+        inputName: item.title,
+        startedAt: new Date().toISOString(),
+        totalDuration: item.duration,
+        filePath: item.filePath,
+      } satisfies PlaybackSnapshot)
+    }
+
     // ── Wait for the clip to finish ─────────────────────────────────────────
     // Use wall-clock for all timing. If item.duration is 0 or missing, try
     // to read the real duration from vMix (reported after the input buffers).
@@ -1846,6 +1869,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     setPlaybackProgress(null)
+    window.spotmaster?.clearPlaybackSnapshot?.()
 
     // Desativar placeholder visual de AudioStyle quando item termina
     if (item.mediaType === 'audio' && activeAudioPlaceholderRef.current) {
@@ -2156,6 +2180,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
     runSequence()
   }, [dispatch, runSequence])
 
+  // ── resumeFromSnapshot ───────────────────────────────────────────────────────
+  // Retoma o controle sobre um item que ainda está rodando no vMix após um restart.
+  // Não envia nenhum comando ao vMix — apenas reinicia o timer de countdown.
+  const resumeFromSnapshot = useCallback(async () => {
+    if (!resumeCandidate) return
+    const { itemId, queue, scheduleDate, inputGuid, remainingSeconds } = resumeCandidate
+
+    // Encontra o item
+    const todayStr = today()
+    const schedule = stateRef.current.dateSchedules[scheduleDate ?? todayStr] ?? []
+    const playlist = stateRef.current.playlist
+    const item = queue === 'schedule'
+      ? schedule.find(i => i.id === itemId)
+      : playlist.find(i => i.id === itemId)
+
+    if (!item) { setResumeCandidate(null); return }
+
+    // Atualiza a duração do item para o tempo restante (em segundos)
+    // para que playItem espere exatamente esse tempo sem re-enviar Cut ao vMix
+    const adjustedItem: PlaylistItem = { ...item, duration: Math.max(5, Math.round(remainingSeconds)), status: 'pending' }
+
+    if (queue === 'schedule' && (scheduleDate === todayStr || !scheduleDate)) {
+      // Configura activeInputRef para que o cleanup saiba qual input remover depois
+      activeInputRef.current = inputGuid
+      spotmasterGuidsRef.current.add(inputGuid)
+
+      // Sinaliza ao playItem que o input já está no ar (pula load + cut)
+      preloadedInputRef.current = { guid: inputGuid, filePath: item.filePath ?? '', alreadyOnAir: true }
+
+      setResumeCandidate(null)
+      window.spotmaster?.clearPlaybackSnapshot?.()
+
+      // Usa startScheduleFromItem mas antes ajusta a duração na grade
+      dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: todayStr, item: adjustedItem } })
+      await new Promise(r => setTimeout(r, 50))
+      startScheduleFromItem(itemId)
+    } else {
+      // Fila playlist ou data diferente — apenas desativa o banner
+      setResumeCandidate(null)
+      window.spotmaster?.clearPlaybackSnapshot?.()
+    }
+  }, [resumeCandidate, dispatch, startScheduleFromItem])
+
+  const ignoreResume = useCallback(() => {
+    if (!resumeCandidate) return
+    // Marca o item como done para não aparecer na sequência
+    const todayStr = today()
+    const { itemId, queue, scheduleDate } = resumeCandidate
+    const schedule = stateRef.current.dateSchedules[scheduleDate ?? todayStr] ?? []
+    const playlist = stateRef.current.playlist
+    const item = queue === 'schedule'
+      ? schedule.find(i => i.id === itemId)
+      : playlist.find(i => i.id === itemId)
+    if (item) {
+      if (queue === 'schedule') {
+        dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: scheduleDate ?? todayStr, item: { ...item, status: 'done' } } })
+      } else {
+        dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
+      }
+    }
+    setResumeCandidate(null)
+    window.spotmaster?.clearPlaybackSnapshot?.()
+  }, [resumeCandidate, dispatch])
+
   // Para a sequência e mantém o item atual como 'pending' para retomar depois.
   const pauseSchedule = useCallback(() => {
     if (!stateRef.current.isSequencePlaying) return
@@ -2232,6 +2320,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     setPlaybackProgress(null)
+    window.spotmaster?.clearPlaybackSnapshot?.()
     if (window.spotmaster) {
       await window.spotmaster.vmixStopFastPolling()
       // Discard any in-progress preload so it doesn't linger in vMix
@@ -2925,6 +3014,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { window.spotmaster?.removeVmixStatusListener() }
   }, [])
 
+  // ── Detecção de sessão anterior ao conectar no vMix ──────────────────────
+  useEffect(() => {
+    if (!state.vmixStatus.connected) return
+    if (resumeDetectedRef.current) return    // roda apenas na primeira conexão
+    if (state.isLoading) return
+    resumeDetectedRef.current = true
+
+    ;(async () => {
+      if (!window.spotmaster?.loadPlaybackSnapshot) return
+      const snapshot = await window.spotmaster.loadPlaybackSnapshot() as PlaybackSnapshot | null
+      if (!snapshot) return
+
+      // Rejeita snapshots com mais de 4 horas
+      const ageMs = Date.now() - new Date(snapshot.startedAt).getTime()
+      if (ageMs > 4 * 60 * 60 * 1000) {
+        window.spotmaster?.clearPlaybackSnapshot?.()
+        return
+      }
+
+      // Só retoma sessões do dia atual
+      const todayStr = today()
+      if (snapshot.scheduleDate && snapshot.scheduleDate !== todayStr) {
+        window.spotmaster?.clearPlaybackSnapshot?.()
+        return
+      }
+
+      // Encontra o item na fila
+      const { playlist, dateSchedules } = stateRef.current
+      let item: PlaylistItem | undefined
+      if (snapshot.queue === 'schedule') {
+        item = dateSchedules[snapshot.scheduleDate ?? todayStr]?.find(i => i.id === snapshot.itemId)
+      } else {
+        item = playlist.find(i => i.id === snapshot.itemId)
+      }
+
+      if (!item || item.status !== 'playing') {
+        window.spotmaster?.clearPlaybackSnapshot?.()
+        return
+      }
+
+      // Verifica se o input ainda está rodando no vMix
+      const vmixSt = stateRef.current.vmixStatus
+      const inp = vmixSt.inputs?.find(i =>
+        (snapshot.inputGuid && (i.key === snapshot.inputGuid || i.number === snapshot.inputGuid)) ||
+        (snapshot.inputName && i.title === snapshot.inputName)
+      )
+      if (!inp || inp.state !== 'Running') {
+        // Item terminou enquanto app estava fechado — marca como done silenciosamente
+        if (item) {
+          if (snapshot.queue === 'schedule') {
+            dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: snapshot.scheduleDate ?? todayStr, item: { ...item, status: 'done' } } })
+          } else {
+            dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
+          }
+        }
+        window.spotmaster?.clearPlaybackSnapshot?.()
+        return
+      }
+
+      const elapsedSeconds = Math.round(inp.position / 1000)
+      const remainingSeconds = Math.max(0, snapshot.totalDuration - elapsedSeconds)
+      if (remainingSeconds <= 5) {
+        // Menos de 5s restantes — não vale a pena retomar
+        window.spotmaster?.clearPlaybackSnapshot?.()
+        return
+      }
+
+      setResumeCandidate({
+        itemId: item.id,
+        queue: snapshot.queue,
+        scheduleDate: snapshot.scheduleDate,
+        inputGuid: snapshot.inputGuid ?? inp.key ?? inp.number ?? '',
+        elapsedSeconds,
+        remainingSeconds,
+        inputTitle: item.title,
+      })
+    })()
+  }, [state.vmixStatus.connected, state.isLoading])
+
   useEffect(() => {
     if (!window.spotmaster?.onVmixCommandLog) return
     window.spotmaster.onVmixCommandLog((log) => {
@@ -3096,7 +3264,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume }}>
       {children}
     </AppContext.Provider>
   )

@@ -668,7 +668,7 @@ interface Props {
 }
 
 export default function DaySchedulePanel({ selectedDate, onDateChange, onSelectedItemChange }: Props) {
-  const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent } = useApp()
+  const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, resumeCandidate, resumeFromSnapshot, ignoreResume } = useApp()
   const { dateSchedules } = state
   const activeItemProgress = usePlaybackProgress()
 
@@ -1236,8 +1236,30 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
       ? 'Gerando…'
       : 'Gerar da Estrutura'
 
+  const fmtSec = (s: number) => {
+    const m = Math.floor(s / 60)
+    const sec = Math.round(s % 60)
+    return `${m}:${String(sec).padStart(2, '0')}`
+  }
+
   return (
     <div className="day-schedule-panel">
+      {resumeCandidate && (
+        <div className="resume-banner">
+          <span className="resume-banner-icon">⚡</span>
+          <span className="resume-banner-text">
+            Sessão anterior detectada —{' '}
+            <strong>{resumeCandidate.inputTitle}</strong>{' '}
+            ainda está no ar ({fmtSec(resumeCandidate.remainingSeconds)} restantes)
+          </span>
+          <button className="resume-banner-btn primary" onClick={() => resumeFromSnapshot()}>
+            Retomar controle
+          </button>
+          <button className="resume-banner-btn ghost" onClick={ignoreResume}>
+            Ignorar
+          </button>
+        </div>
+      )}
       <div className="schedule-cockpit">
         <div className="schedule-cockpit-top">
           <div>
