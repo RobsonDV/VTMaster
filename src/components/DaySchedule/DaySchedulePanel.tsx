@@ -753,6 +753,50 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     [sorted, weekSlots]
   )
 
+  // ── Horário estimado de entrada por item ───────────────────────────────────
+  // Âncora: item playing → now(); sem playing → horário do bloco.
+  // Recalcula quando qualquer status muda (sorted muda). Não atualiza em
+  // tempo real durante a reprodução — apenas ao mudar de item (play/done/next).
+  const estimatedAirTimes = useMemo(() => {
+    const map: Record<string, string> = {}
+    const toHHMM = (totalSec: number) => {
+      const s = Math.round(totalSec) % 86400
+      const h = Math.floor(s / 3600)
+      const m = Math.floor((s % 3600) / 60)
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    }
+
+    for (const group of groups) {
+      const items = group.items
+      const playingIdx = items.findIndex(i => i.status === 'playing')
+
+      let cursor: number
+      if (playingIdx >= 0) {
+        // Âncora: agora mesmo (capturado no momento em que o memo roda)
+        const now = new Date()
+        cursor = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
+        for (let i = playingIdx; i < items.length; i++) {
+          const item = items[i]
+          if (item.status !== 'done' && item.status !== 'skipped' && item.status !== 'error') {
+            map[item.id] = toHHMM(cursor)
+          }
+          cursor += Math.round(item.duration ?? 0)
+        }
+      } else {
+        // Sem item playing — usa horário do bloco como âncora
+        const [bh, bm] = (group.time || '00:00').split(':').map(Number)
+        cursor = (bh * 60 + bm) * 60
+        for (const item of items) {
+          if (item.status !== 'done' && item.status !== 'skipped' && item.status !== 'error') {
+            map[item.id] = toHHMM(cursor)
+          }
+          cursor += Math.round(item.duration ?? 0)
+        }
+      }
+    }
+    return map
+  }, [groups])
+
   // ── Context menu state ────────────────────────────────────────────────────
   const [ctxMenu, setCtxMenu]             = useState<CtxState | null>(null)
   const [vmixActionFor, setVmixActionFor] = useState<PlaylistItem | null>(null)
@@ -1738,8 +1782,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
                               <span className="bc-item-dot" />
                             )}
 
-                            <span className="bc-item-time" title={item.scheduledTime ? `Bloco: ${item.scheduledTime.slice(0,5)}` : ''}>
-                              {item.duration > 0 ? formatDuration(item.duration) : '—:—'}
+                            <span className="bc-item-time">
+                              {estimatedAirTimes[item.id] ?? '—:—'}
                             </span>
 
                             <span className="bc-item-num">{idx + 1}.</span>
@@ -1756,11 +1800,9 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
                               <span className="bc-item-badge bc-item-badge--prox">→ PROX</span>
                             )}
 
-                            {isPlaying && isToday && activeItemProgress && (
-                              <span className="bc-item-dur">
-                                {formatDuration(Math.round((activeItemProgress.duration - activeItemProgress.position) / 1000))}
-                              </span>
-                            )}
+                            <span className="bc-item-dur">
+                              {item.duration > 0 ? formatDuration(item.duration) : '—'}
+                            </span>
 
                             <div className="bc-item-actions">
                               {!hasFile && item.type !== 'vmix_action' && item.type !== 'pause' && (
