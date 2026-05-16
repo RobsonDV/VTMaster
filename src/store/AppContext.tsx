@@ -935,11 +935,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 })
                 if (generated.length > 0) {
                   generated.forEach(g => {
+                    // Tipo correto baseado no mediaType: vídeo → 'programa', áudio → 'spot'
                     programItems.push({
                       id: crypto.randomUUID(),
                       order: 0,
                       title: g.title,
-                      type: 'vinheta' as const,
+                      type: (g.mediaType === 'video' ? 'programa' : 'spot') as import('../types').SpotType,
                       status: 'pending' as const,
                       scheduledTime: slot.scheduledTime,
                       duration: g.duration ?? 0,
@@ -960,7 +961,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               id: crypto.randomUUID(),
               order: 0,
               title: slot.title,
-              type: 'vinheta' as const,
+              type: 'outros' as const,
               status: 'pending' as const,
               scheduledTime: slot.scheduledTime,
               duration: 0,
