@@ -11,11 +11,12 @@ export function now(): string {
   return `${h}:${m}:${s}`
 }
 
-/** Formats seconds as MM:SS or HH:MM:SS */
+/** Formats seconds as MM:SS or HH:MM:SS. Always rounds to the nearest second. */
 export function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
+  const total = Math.round(Math.max(0, seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
   if (h > 0) {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
   }

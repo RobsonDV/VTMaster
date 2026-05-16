@@ -1835,11 +1835,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       while (Date.now() - start < totalMs) {
         if (abortRef.current) break
         const elapsed = Date.now() - start
-        setPlaybackProgress({
-          inputNum: onAirInput || 'clock',
-          position: elapsed,
-          duration: totalMs,
-        })
+        // Só atualiza a barra pelo wall-clock quando não há input vMix ativo (ex: pausa).
+        // Quando há input, o fast-polling é a única fonte de progresso — evita oscilação.
+        if (!onAirInput) {
+          setPlaybackProgress({
+            inputNum: 'clock',
+            position: elapsed,
+            duration: totalMs,
+          })
+        }
         // ── Anticipatory preload ─────────────────────────────────────────────
         // Inicia o carregamento do próximo item 2s após o atual começar a tocar,
         // ou no máximo 3s antes do fim (o que vier primeiro). Assim vinhetas

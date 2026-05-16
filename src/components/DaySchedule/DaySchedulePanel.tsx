@@ -1738,8 +1738,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
                               <span className="bc-item-dot" />
                             )}
 
-                            <span className="bc-item-time">
-                              {item.scheduledTime?.slice(0, 5) ?? ''}
+                            <span className="bc-item-time" title={item.scheduledTime ? `Bloco: ${item.scheduledTime.slice(0,5)}` : ''}>
+                              {item.duration > 0 ? formatDuration(item.duration) : '—:—'}
                             </span>
 
                             <span className="bc-item-num">{idx + 1}.</span>
@@ -1756,9 +1756,11 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
                               <span className="bc-item-badge bc-item-badge--prox">→ PROX</span>
                             )}
 
-                            <span className="bc-item-dur">
-                              {item.duration > 0 ? formatDuration(item.duration) : '—'}
-                            </span>
+                            {isPlaying && isToday && activeItemProgress && (
+                              <span className="bc-item-dur">
+                                {formatDuration(Math.round((activeItemProgress.duration - activeItemProgress.position) / 1000))}
+                              </span>
+                            )}
 
                             <div className="bc-item-actions">
                               {!hasFile && item.type !== 'vmix_action' && item.type !== 'pause' && (
