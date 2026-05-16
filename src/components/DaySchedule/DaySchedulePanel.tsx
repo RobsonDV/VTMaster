@@ -753,6 +753,13 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     [sorted, weekSlots]
   )
 
+  // Tick a cada 2 minutos para recalcular horários estimados com base no now() real
+  const [airTimeTick, setAirTimeTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setAirTimeTick(t => t + 1), 2 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [])
+
   // ── Horário estimado de entrada por item ───────────────────────────────────
   // Todos os itens de todos os blocos recebem um horário estimado.
   // Âncora: se houver item playing → now(); senão → horário do bloco.
@@ -800,7 +807,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
       }
     }
     return map
-  }, [groups])
+  }, [groups, airTimeTick])
 
   // ── Context menu state ────────────────────────────────────────────────────
   const [ctxMenu, setCtxMenu]             = useState<CtxState | null>(null)

@@ -42,12 +42,25 @@ async function readNativeMediaDuration(filePath: string): Promise<number | null>
   }
 }
 
-/** Lê a duração (segundos arredondados) de UM arquivo. Retorna null em falha/timeout. */
-export function readMediaDuration(
+/** Lê a duração (segundos arredondados) de UM arquivo. Retorna null em falha/timeout.
+ *
+ *  Ordem de tentativas:
+ *  1. music-metadata (Node.js, lê headers binários — rápido, suporta 30+ formatos)
+ *  2. HTML5 <audio>/<video> element (Chromium, bom para vídeo)
+ *  3. readNativeMediaDuration (MP4 parser nativo como último recurso)
+ */
+export async function readMediaDuration(
   filePath: string,
   type: 'video' | 'audio',
   timeoutMs = 10_000,
 ): Promise<number | null> {
+  // ── 1. music-metadata via IPC (método primário) ───────────────────────────
+  try {
+    const mm = await window.spotmaster?.readMediaDurationMM?.(filePath)
+    if (typeof mm === 'number' && isFinite(mm) && mm > 0) return Math.round(mm)
+  } catch { /* continua para fallback */ }
+
+  // ── 2. HTML5 element (fallback para formatos não cobertos pelo music-metadata) ──
   return new Promise(resolve => {
     const el = document.createElement(
       type === 'audio' ? 'audio' : 'video',
@@ -67,6 +80,7 @@ export function readMediaDuration(
       cleanup()
 
       let finalDuration = duration
+      // ── 3. MP4 parser nativo como último recurso ─────────────────────────
       if ((!finalDuration || finalDuration <= 0) && tryNativeFallback) {
         finalDuration = await readNativeMediaDuration(filePath)
       }

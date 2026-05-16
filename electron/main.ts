@@ -579,6 +579,20 @@ ipcMain.handle('read-media-duration', (_event, filePath: string) => {
   return readNativeMediaDuration(filePath)
 })
 
+// Lê duração via music-metadata (Node.js, lê headers binários do arquivo).
+// Muito mais rápido e confiável que o elemento HTML5 para áudio e vídeo.
+// Suporta MP3, FLAC, WAV, OGG, AAC, M4A, MP4, MOV, AVI, WMA, OPUS, AIFF…
+ipcMain.handle('read-media-duration-mm', async (_event, filePath: string) => {
+  try {
+    const { parseFile } = await import('music-metadata')
+    const meta = await parseFile(filePath, { duration: true, skipCovers: true, includeChapters: false })
+    const dur = meta.format.duration
+    return (typeof dur === 'number' && isFinite(dur) && dur > 0) ? dur : null
+  } catch {
+    return null
+  }
+})
+
 // Get app version
 ipcMain.handle('get-version', () => {
   return app.getVersion()

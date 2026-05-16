@@ -129,6 +129,10 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.removeAllListeners('trigger-fired')
   },
 
+  // Lê duração via music-metadata no processo Node (mais rápido e confiável que HTML5)
+  readMediaDurationMM: (filePath: string) =>
+    ipcRenderer.invoke('read-media-duration-mm', filePath),
+
   // Session resume — persiste o item em reprodução para retomar após restart
   savePlaybackSnapshot: (snapshot: unknown) =>
     ipcRenderer.invoke('save-playback-snapshot', snapshot),

@@ -654,6 +654,7 @@ export interface SpotMasterAPI {
   createBackup: (reason?: string) => Promise<{ success: boolean; path?: string; error?: string }>
   fileExists: (filePaths: string[]) => Promise<Record<string, boolean>>
   readMediaDuration: (filePath: string) => Promise<number | null>
+  readMediaDurationMM: (filePath: string) => Promise<number | null>
   getVersion: () => Promise<string>
   checkForUpdates: () => Promise<UpdateStatus>
   installUpdate: () => Promise<boolean>
