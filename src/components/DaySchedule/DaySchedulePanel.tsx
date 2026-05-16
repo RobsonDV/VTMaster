@@ -754,43 +754,48 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   )
 
   // ── Horário estimado de entrada por item ───────────────────────────────────
-  // Âncora: item playing → now(); sem playing → horário do bloco.
-  // Recalcula quando qualquer status muda (sorted muda). Não atualiza em
-  // tempo real durante a reprodução — apenas ao mudar de item (play/done/next).
+  // Todos os itens de todos os blocos recebem um horário estimado.
+  // Âncora: se houver item playing → now(); senão → horário do bloco.
+  // Itens antes do playing são calculados para trás a partir de now().
+  // Recalcula ao mudar status (sorted muda). Não atualiza durante reprodução.
   const estimatedAirTimes = useMemo(() => {
     const map: Record<string, string> = {}
     const toHHMM = (totalSec: number) => {
-      const s = Math.round(totalSec) % 86400
+      const s = Math.round(Math.max(0, totalSec)) % 86400
       const h = Math.floor(s / 3600)
       const m = Math.floor((s % 3600) / 60)
       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
     }
+    const dur = (item: PlaylistItem) => Math.max(0, Math.round(item.duration ?? 0))
 
     for (const group of groups) {
       const items = group.items
       const playingIdx = items.findIndex(i => i.status === 'playing')
 
-      let cursor: number
       if (playingIdx >= 0) {
-        // Âncora: agora mesmo (capturado no momento em que o memo roda)
-        const now = new Date()
-        cursor = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
+        // Âncora = now() no momento em que o memo roda
+        const n = new Date()
+        const nowSec = n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds()
+
+        // Para frente: playing + todos após
+        let cursor = nowSec
         for (let i = playingIdx; i < items.length; i++) {
-          const item = items[i]
-          if (item.status !== 'done' && item.status !== 'skipped' && item.status !== 'error') {
-            map[item.id] = toHHMM(cursor)
-          }
-          cursor += Math.round(item.duration ?? 0)
+          map[items[i].id] = toHHMM(cursor)
+          cursor += dur(items[i])
+        }
+        // Para trás: itens antes do playing (VHTs, ações, etc.)
+        cursor = nowSec
+        for (let i = playingIdx - 1; i >= 0; i--) {
+          cursor -= dur(items[i])
+          map[items[i].id] = toHHMM(cursor)
         }
       } else {
-        // Sem item playing — usa horário do bloco como âncora
+        // Nenhum item tocando — âncora = horário do bloco
         const [bh, bm] = (group.time || '00:00').split(':').map(Number)
-        cursor = (bh * 60 + bm) * 60
+        let cursor = (bh * 60 + bm) * 60
         for (const item of items) {
-          if (item.status !== 'done' && item.status !== 'skipped' && item.status !== 'error') {
-            map[item.id] = toHHMM(cursor)
-          }
-          cursor += Math.round(item.duration ?? 0)
+          map[item.id] = toHHMM(cursor)
+          cursor += dur(item)
         }
       }
     }
