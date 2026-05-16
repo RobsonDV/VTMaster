@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut, powerSaveBlocker, Menu } from 'electron'
 import { createServer, type Server } from 'http'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
@@ -443,6 +443,8 @@ async function checkForAppUpdates(manual = false): Promise<UpdateStatus> {
 // Window creation
 // ─────────────────────────────────────────────────────────────────────────────
 function createWindow(): void {
+  Menu.setApplicationMenu(null)
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -450,6 +452,7 @@ function createWindow(): void {
     minHeight: 600,
     title: 'VTMaster',
     backgroundColor: '#0f0f1a',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
