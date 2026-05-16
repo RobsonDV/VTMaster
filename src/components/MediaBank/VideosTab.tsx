@@ -40,7 +40,20 @@ function FolderCard({
   onRemove?: () => void
 }) {
   return (
-    <div className="mb-folder-card" onClick={onOpen} title={source.folderPath}>
+    <div
+      className="mb-folder-card"
+      onClick={onOpen}
+      title={`${source.folderPath}\nArraste para inserir vídeo aleatório`}
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.effectAllowed = 'copy'
+        e.dataTransfer.setData('application/vtmaster-folder', JSON.stringify({
+          folderPath: source.folderPath,
+          label: source.label,
+          mediaType: 'video',
+        }))
+      }}
+    >
       {source.color && (
         <span className="mb-folder-card-dot" style={{ background: source.color }} />
       )}
@@ -143,8 +156,22 @@ function FolderBrowser({
         )}
 
         {!loading && filtered.map(file => (
-          <div key={file.filePath} className="mb-item">
-            <Film size={14} className="mb-item-icon" />
+          <div
+            key={file.filePath}
+            className="mb-item"
+            draggable
+            onDragStart={e => {
+              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.setData('application/vtmaster-media', JSON.stringify({
+                title: noExt(file.filename),
+                filePath: file.filePath,
+                mediaType: 'video',
+                itemType: 'programa',
+                duration: 0,
+              }))
+            }}
+          >
+            <Film size={14} className="mb-item-icon" style={{ cursor: 'grab' }} />
             <div className="mb-item-info">
               <div className="mb-item-name" title={file.filename}>{noExt(file.filename)}</div>
               <div className="mb-item-meta">{ext(file.filename)}</div>

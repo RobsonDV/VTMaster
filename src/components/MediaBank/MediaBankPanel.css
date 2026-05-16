@@ -36,6 +36,25 @@
   margin: 0;
 }
 
+.media-bank-pin {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+.media-bank-pin:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.media-bank-pin.active {
+  color: var(--accent);
+}
+
 .media-bank-close {
   background: none;
   border: none;
@@ -124,13 +143,78 @@
   border-radius: 6px;
   background: var(--bg-secondary);
   border: 1px solid transparent;
-  cursor: default;
+  cursor: grab;
   transition: background 0.12s, border-color 0.12s;
   min-width: 0;
 }
 .mb-item:hover {
   background: var(--bg-hover);
   border-color: var(--border);
+}
+.mb-item:active {
+  cursor: grabbing;
+}
+.mb-item[draggable='true']:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* ── Toggle Música / Vinheta ─────────────────────────────────────────────── */
+.mb-audio-type-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mb-type-btn {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.mb-type-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.mb-type-btn.active {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-secondary));
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.mb-type-btn.active.vinheta {
+  background: color-mix(in srgb, #f59e0b 15%, var(--bg-secondary));
+  color: #f59e0b;
+}
+
+/* Item em modo vinheta: destaque âmbar sutil */
+.mb-item.mb-item--vinheta {
+  border-color: color-mix(in srgb, #f59e0b 25%, transparent);
+  background: color-mix(in srgb, #f59e0b 5%, var(--bg-secondary));
+}
+
+/* Folder card: indicação visual de que é arrastável */
+.mb-folder-card[draggable='true']:hover::after {
+  content: '⠿ arrastar';
+  position: absolute;
+  bottom: 5px;
+  right: 7px;
+  font-size: 0.58rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  pointer-events: none;
 }
 
 .mb-item-icon {

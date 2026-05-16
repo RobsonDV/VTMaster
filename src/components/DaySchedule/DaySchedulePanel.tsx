@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Activity, AlertTriangle, ShieldCheck, Square, ListVideo, SkipForward, StopCircle, CheckCircle,
   Trash2, RefreshCw, CalendarDays,
-  FolderOpen, Plus, Crosshair, Music, DollarSign, Tv,
+  FolderOpen, Plus, Crosshair,
   Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical, Search,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
@@ -805,42 +805,98 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
 
   const handleDragOver = (e: React.DragEvent, item: PlaylistItem) => {
     e.preventDefault()
-    e.dataTransfer.dropEffect = e.dataTransfer.types.includes('application/vmix-input') ? 'copy' : 'move'
+    const isExternal = e.dataTransfer.types.includes('application/vmix-input')
+      || e.dataTransfer.types.includes('application/vtmaster-media')
+      || e.dataTransfer.types.includes('application/vtmaster-folder')
+    e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move'
     if (item.id !== dragId) setDragOverId(item.id)
   }
 
+  // Helper: insere um item externo (mídia ou pasta-aleatória) antes de targetItem
+  const insertExternalBefore = useCallback((
+    fields: Omit<PlaylistItem, 'id' | 'order'>,
+    targetItem: PlaylistItem,
+  ) => {
+    const newItem: PlaylistItem = {
+      id: crypto.randomUUID(),
+      order: targetItem.order - 0.5,
+      manuallyAdded: true,
+      scheduledTime: targetItem.scheduledTime,
+      ...fields,
+    }
+    const newSchedule = [...schedule, newItem]
+      .sort((a, b) => a.order - b.order)
+      .map((i, n) => ({ ...i, order: n + 1 }))
+    dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+  }, [dispatch, schedule, selectedDate])
+
   const handleDrop = (e: React.DragEvent, targetItem: PlaylistItem) => {
     e.preventDefault()
-    // vMix input drop from the side panel
+    setDragId(null)
+    setDragOverId(null)
+
+    // ── vMix input drop from the side panel ───────────────────────────────────
     const vmixRaw = e.dataTransfer.getData('application/vmix-input')
     if (vmixRaw) {
       try {
         const inp = JSON.parse(vmixRaw) as VmixInput
-        const newItem: PlaylistItem = {
-          id: crypto.randomUUID(),
-          order: targetItem.order - 0.5,
+        insertExternalBefore({
           title: inp.title || `Input ${inp.number}`,
           type: spotTypeForVmix(inp.type),
           duration: inp.duration > 0 ? Math.round(inp.duration / 1000) : 30,
           status: 'pending',
-          scheduledTime: targetItem.scheduledTime,
           inputName: inp.number,
-          manuallyAdded: true,
-        }
-        const newSchedule = [...schedule, newItem]
-          .sort((a, b) => a.order - b.order)
-          .map((i, n) => ({ ...i, order: n + 1 }))
-        dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
-      } catch { /* ignore bad JSON */ }
-      setDragId(null)
-      setDragOverId(null)
+        }, targetItem)
+      } catch { /* ignore */ }
       return
     }
-    // Internal reorder
-    if (!dragId || dragId === targetItem.id) { setDragId(null); setDragOverId(null); return }
+
+    // ── Arquivo de mídia individual (drag do Banco de Mídia) ──────────────────
+    const mediaRaw = e.dataTransfer.getData('application/vtmaster-media')
+    if (mediaRaw) {
+      try {
+        const p = JSON.parse(mediaRaw) as { title: string; filePath: string; mediaType: 'audio' | 'video'; itemType: string; duration: number }
+        insertExternalBefore({
+          title: p.title,
+          type: p.itemType as PlaylistItem['type'],
+          filePath: p.filePath,
+          mediaType: p.mediaType,
+          duration: p.duration,
+          status: 'pending',
+        }, targetItem)
+      } catch { /* ignore */ }
+      return
+    }
+
+    // ── Pasta → faixa aleatória ────────────────────────────────────────────────
+    const folderRaw = e.dataTransfer.getData('application/vtmaster-folder')
+    if (folderRaw && window.spotmaster) {
+      void (async () => {
+        try {
+          const { folderPath, mediaType } = JSON.parse(folderRaw) as { folderPath: string; label: string; mediaType: 'audio' | 'video' }
+          const results = mediaType === 'video'
+            ? await window.spotmaster.scanVideoFolder(folderPath, true)
+            : (await window.spotmaster.scanMusicFolder(folderPath, true)).map(r => ({ filePath: r.filePath, filename: r.filename }))
+          if (results.length === 0) return
+          const pick = results[Math.floor(Math.random() * results.length)]
+          const noExtName = pick.filename.replace(/\.[^.]+$/, '')
+          insertExternalBefore({
+            title: noExtName,
+            type: mediaType === 'video' ? 'programa' : 'spot',
+            filePath: pick.filePath,
+            mediaType,
+            duration: 0,
+            status: 'pending',
+          }, targetItem)
+        } catch { /* ignore */ }
+      })()
+      return
+    }
+
+    // ── Reordenação interna ───────────────────────────────────────────────────
+    if (!dragId || dragId === targetItem.id) return
     const dragItem = sorted.find(i => i.id === dragId)
-    if (!dragItem) { setDragId(null); setDragOverId(null); return }
-    // When dropped on a different block, update scheduledTime to match the target block
+    if (!dragItem) return
     const movedItem = dragItem.scheduledTime?.slice(0, 5) !== targetItem.scheduledTime?.slice(0, 5)
       ? { ...dragItem, scheduledTime: targetItem.scheduledTime, adBreakId: targetItem.adBreakId }
       : dragItem
@@ -851,8 +907,6 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
       type: 'REORDER_DATE_SCHEDULE',
       payload: { date: selectedDate, items: without.map((i, n) => ({ ...i, order: n + 1 })) },
     })
-    setDragId(null)
-    setDragOverId(null)
   }
 
   const handleDragEnd = () => { setDragId(null); setDragOverId(null) }
@@ -945,19 +999,28 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     state.settings,
   ])
 
+  // Inicia sempre do item selecionado (se houver) ou do próximo pendente por horário
   const handleStartScheduleWithPreflight = useCallback(async () => {
     const summary = await runPreflight('start')
     if (!summary) return
     if (summary.errorCount === 0 && summary.warningCount === 0) {
       setPreflightSummary(null)
-      startScheduleFromNow()
+      if (selectedItemId) {
+        startScheduleFromItem(selectedItemId)
+      } else {
+        startScheduleFromNow()
+      }
     }
-  }, [runPreflight, startScheduleFromNow])
+  }, [runPreflight, startScheduleFromNow, startScheduleFromItem, selectedItemId])
 
   const handleStartAfterPreflightWarning = useCallback(() => {
     setPreflightSummary(null)
-    startScheduleFromNow()
-  }, [startScheduleFromNow])
+    if (selectedItemId) {
+      startScheduleFromItem(selectedItemId)
+    } else {
+      startScheduleFromNow()
+    }
+  }, [startScheduleFromNow, startScheduleFromItem, selectedItemId])
 
   const handleReload = async () => {
     if (updatingSchedule) return
@@ -1252,7 +1315,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
                   className="day-schedule-btn play"
                   onClick={handleStartScheduleWithPreflight}
                   disabled={!hasPending || preflightRunning}
-                  title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
+                  title={!hasPending ? 'Nenhum item pendente' : selectedItemId ? 'Iniciar a partir do item selecionado' : 'Iniciar a partir do próximo item por horário'}
                 >
                   <ListVideo size={15} /> {t.schedule.playSchedule}
                 </button>
@@ -1499,121 +1562,216 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
               const groupPlaying = group.items.some(i => i.status === 'playing')
               const doneCount    = group.items.filter(i => i.status === 'done' || i.status === 'skipped').length
               const groupDur     = group.items.reduce((s, i) => s + (i.duration ?? 0), 0)
-              const statusLabel  = groupPlaying ? 'Ao vivo'
-                : groupDone     ? 'Concluído'
+
+              // ── Broadcast labels ──────────────────────────────────────────
+              const isAoAr = currentBlock?.time === group.time && state.isSequencePlaying
+              const isProx = !isAoAr && nextBlock?.time === group.time
+
+              const bcType = isMusical ? 'musical' : isCommercial ? 'comercial' : 'programa'
+              const sideLabel = isAoAr ? 'AO AR'
+                : isProx      ? 'PROX'
+                : isMusical   ? 'MUSICAL'
+                : isCommercial ? 'COMERC'
+                : 'PROG'
+
+              const statusBadge = isAoAr ? 'AO VIVO'
+                : isProx     ? 'PRÓXIMO'
+                : groupDone  ? 'OK'
                 : group.items.length > 0 ? `${doneCount}/${group.items.length}`
-                : 'Vazio'
-              const CardIcon = isMusical ? Music : isCommercial ? DollarSign : Tv
+                : ''
+
+              const bcBlockCls = [
+                'bc-block',
+                `bc-block--${bcType}`,
+                isAoAr      ? 'bc-block--ao-ar'  : '',
+                isProx      ? 'bc-block--prox'   : '',
+                groupDone && !groupPlaying ? 'bc-block--done' : '',
+              ].filter(Boolean).join(' ')
 
               return (
                 <div
                   key={group.time}
-                  className={`block-card ${cls}${currentBlock?.time === group.time ? ' current-block' : ''}${nextBlock?.time === group.time ? ' next-block' : ''}`}
+                  className={bcBlockCls}
                   data-block-time={group.time}
                 >
-                  {/* ── Card header ── */}
-                  <div className="block-card-header">
-                    <CardIcon size={14} />
-                    <span className="block-card-time">{group.time}</span>
-                    <span className="block-card-name">{group.slot?.title ?? group.time}</span>
-                    <span className="block-card-status">
-                      {statusLabel}{groupDur > 0 ? ` · ${formatDuration(groupDur)}` : ''}
-                    </span>
+                  {/* ── Marcador lateral ── */}
+                  <div className="bc-side">
+                    <span className="bc-side-label">{sideLabel}</span>
                   </div>
 
-                  {/* ── Items ── */}
-                  <div className="block-items-list">
-                    {group.items.map((item, idx) => {
-                      const hasFile = !!item.filePath || !!item.inputName
-                      const isDragging  = dragId === item.id
-                      const isDragOver  = dragOverId === item.id && dragId !== item.id
-                      const rowCls      = [
-                        'block-item-row',
-                        item.status === 'playing' ? 'playing'  : '',
-                        item.status === 'done'    ? 'done'     : '',
-                        item.status === 'skipped' ? 'skipped'  : '',
-                        isDragging  ? 'dragging'   : '',
-                        isDragOver  ? 'drag-over'  : '',
-                        item.id === selectedItemId ? 'selected' : '',
-                        item.mediaType === 'audio' && !item.adBreakId ? 'audio-item' : '',
-                      ].filter(Boolean).join(' ')
+                  {/* ── Corpo ── */}
+                  <div className="bc-body">
 
-                      return (
-                        <div
-                          key={item.id}
-                          className={rowCls}
-                          data-row-id={item.id}
-                          draggable
-                          onClick={() => setSelectedItemId(item.id === selectedItemId ? null : item.id)}
-                          onDragStart={e => handleDragStart(e, item)}
-                          onDragOver={e => handleDragOver(e, item)}
-                          onDrop={e => handleDrop(e, item)}
-                          onDragEnd={handleDragEnd}
-                          onDragLeave={() => setDragOverId(null)}
-                          onContextMenu={e => { handleContextMenu(e, item); setSelectedItemId(item.id) }}
+                    {/* ── Header ── */}
+                    <div className="bc-header">
+                      <span className="bc-header-time">{group.time}</span>
+                      <span className="bc-header-line" />
+                      <span className="bc-header-name">{group.slot?.title ?? group.time}</span>
+                      <span className="bc-header-line" />
+                      {groupDur > 0 && (
+                        <span className="bc-header-dur">{formatDuration(groupDur)}</span>
+                      )}
+                      {statusBadge && (
+                        <span className="bc-header-status">{statusBadge}</span>
+                      )}
+                      <div className="bc-header-actions">
+                        <button
+                          className="block-item-btn"
+                          title="Ir para este bloco"
+                          onClick={() => scrollToCard(group.time)}
                         >
-                          {/* Drag handle */}
-                          <span className="block-item-drag-handle" title="Arrastar para reordenar">
-                            <GripVertical size={12} />
-                          </span>
+                          <Crosshair size={11} />
+                        </button>
+                        <button
+                          className="block-item-btn green"
+                          title="Adicionar item neste bloco"
+                          onClick={() => handleAddToGroup(group)}
+                        >
+                          <Plus size={11} />
+                        </button>
+                      </div>
+                    </div>
 
-                          <span className="block-item-num">{idx + 1}</span>
+                    {/* ── Itens ── */}
+                    <div className="bc-items">
+                      {group.items.map((item, idx) => {
+                        const hasFile    = !!item.filePath || !!item.inputName
+                        const isDragging = dragId === item.id
+                        const isDragOver = dragOverId === item.id && dragId !== item.id
+                        const isSelected = item.id === selectedItemId
+                        const isPlaying  = item.status === 'playing'
 
-                          <span className={`block-item-title${item.type === 'pause' ? ' pause-marker' : !hasFile && item.type !== 'vmix_action' ? ' empty' : ''}`}>
-                            {item.type === 'pause'
-                              ? '⏸ Pausa automática'
-                              : item.type === 'vmix_action'
-                              ? `⚡ ${item.vmixAction?.function ?? item.title}`
-                              : hasFile ? item.title
-                              : '— sem arquivo —'}
-                          </span>
+                        // ── Tipo visual do item ──────────────────────────────
+                        // Determina cor + tag de 3 letras exibida na row
+                        const itemTypeInfo = (() => {
+                          if (item.type === 'pause')      return { key: 'pause',    tag: '' }
+                          if (item.type === 'vmix_action') return { key: 'vmix',    tag: 'VMX' }
+                          if (item.adBreakId)              return { key: 'comercial',tag: 'COM' }
+                          if (item.type === 'vinheta')     return { key: 'vinheta', tag: 'VHT' }
+                          if (item.type === 'bumper')      return { key: 'bumper',  tag: 'TRL' }
+                          if (item.type === 'outros')      return { key: 'outros',  tag: 'TRL' }
+                          if (item.mediaType === 'video')  return { key: 'video',   tag: 'VID' }
+                          if (item.mediaType === 'audio')  return { key: 'musica',  tag: 'MÚS' }
+                          return { key: 'default', tag: '' }
+                        })()
 
-                          {item.status === 'playing' && activeItemProgress && isToday && (
-                            <div className="block-item-inline-progress">
+                        const itemCls = [
+                          'bc-item',
+                          `bc-item--${item.status}`,
+                          `bc-item--type-${itemTypeInfo.key}`,
+                          isSelected  ? 'bc-item--selected'  : '',
+                          isDragging  ? 'bc-item--dragging'  : '',
+                          isDragOver  ? 'bc-item--drag-over' : '',
+                        ].filter(Boolean).join(' ')
+
+                        const titleMod = item.type === 'pause'      ? 'bc-item-title--pause'
+                          : item.type === 'vmix_action'             ? 'bc-item-title--vmix'
+                          : !hasFile                                ? 'bc-item-title--empty'
+                          : ''
+
+                        const titleText = item.type === 'pause'
+                          ? '⏸ Pausa automática'
+                          : item.type === 'vmix_action'
+                          ? `⚡ ${item.vmixAction?.function ?? item.title}`
+                          : hasFile ? item.title
+                          : '— sem arquivo —'
+
+                        const isNextItem = item.id === nextItem?.id && !isPlaying
+                        const progressPct = isPlaying && activeItemProgress && activeItemProgress.duration > 0
+                          ? Math.min(100, (activeItemProgress.position / activeItemProgress.duration) * 100)
+                          : 0
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={itemCls}
+                            data-row-id={item.id}
+                            draggable
+                            onClick={() => setSelectedItemId(item.id === selectedItemId ? null : item.id)}
+                            onDragStart={e => handleDragStart(e, item)}
+                            onDragOver={e => handleDragOver(e, item)}
+                            onDrop={e => handleDrop(e, item)}
+                            onDragEnd={handleDragEnd}
+                            onDragLeave={() => setDragOverId(null)}
+                            onContextMenu={e => { handleContextMenu(e, item); setSelectedItemId(item.id) }}
+                          >
+                            {/* ── Fundo de progresso: preenche a row da esquerda p/ direita ── */}
+                            {isPlaying && isToday && progressPct > 0 && (
                               <div
-                                className="block-item-inline-progress-fill"
-                                style={{ width: `${Math.min(100, (activeItemProgress.position / activeItemProgress.duration) * 100)}%` }}
+                                className="bc-item-bg-fill"
+                                style={{ width: `${progressPct}%` }}
                               />
+                            )}
+
+                            <span className="bc-item-drag" title="Arrastar">
+                              <GripVertical size={11} />
+                            </span>
+
+                            {/* Tag de tipo — substitui o dot simples */}
+                            {itemTypeInfo.tag ? (
+                              <span className={`bc-item-type-tag bc-item-type-tag--${itemTypeInfo.key}`}>
+                                {itemTypeInfo.tag}
+                              </span>
+                            ) : (
+                              <span className="bc-item-dot" />
+                            )}
+
+                            <span className="bc-item-time">
+                              {item.scheduledTime?.slice(0, 5) ?? ''}
+                            </span>
+
+                            <span className="bc-item-num">{idx + 1}.</span>
+
+                            <span className={`bc-item-title ${titleMod}`} title={titleText}>
+                              {titleText}
+                            </span>
+
+                            {/* ── Badge AO AR / PROX diretamente na track ── */}
+                            {isPlaying && isToday && (
+                              <span className="bc-item-badge bc-item-badge--ao-ar">◉ AO AR</span>
+                            )}
+                            {isNextItem && isToday && (
+                              <span className="bc-item-badge bc-item-badge--prox">→ PROX</span>
+                            )}
+
+                            <span className="bc-item-dur">
+                              {item.duration > 0 ? formatDuration(item.duration) : '—'}
+                            </span>
+
+                            <div className="bc-item-actions">
+                              {!hasFile && item.type !== 'vmix_action' && item.type !== 'pause' && (
+                                <button className="block-item-btn green" onClick={e => { e.stopPropagation(); handleBrowseFile(item) }} title="Adicionar arquivo">
+                                  <FolderOpen size={11} />
+                                </button>
+                              )}
+                              {isMusical && (
+                                <button className="block-item-btn" onClick={e => { e.stopPropagation(); handleInsertAfter(item) }} title="Inserir após">
+                                  <Plus size={11} />
+                                </button>
+                              )}
+                              {item.status === 'pending' && (
+                                <button className="block-item-btn" onClick={e => { e.stopPropagation(); handleSkip(item) }} title="Pular">
+                                  <SkipForward size={11} />
+                                </button>
+                              )}
+                              <button className="block-item-btn" onClick={e => { e.stopPropagation(); handleMarkDone(item) }} title="Marcar veiculado">
+                                <CheckCircle size={11} />
+                              </button>
+                              <button className="block-item-btn danger" onClick={e => { e.stopPropagation(); handleDelete(item.id) }} title="Remover">
+                                <Trash2 size={11} />
+                              </button>
                             </div>
-                          )}
-
-                          <span className="block-item-dur">
-                            {item.duration > 0 ? formatDuration(item.duration) : '—'}
-                          </span>
-
-                          <div className="block-item-actions">
-                            {!hasFile && item.type !== 'vmix_action' && item.type !== 'pause' && (
-                              <button className="block-item-btn green" onClick={() => handleBrowseFile(item)} title="Adicionar arquivo">
-                                <FolderOpen size={12} />
-                              </button>
-                            )}
-                            {isMusical && (
-                              <button className="block-item-btn" onClick={() => handleInsertAfter(item)} title="Inserir música após">
-                                <Plus size={12} />
-                              </button>
-                            )}
-                            {item.status === 'pending' && (
-                              <button className="block-item-btn" onClick={() => handleSkip(item)} title="Pular">
-                                <SkipForward size={12} />
-                              </button>
-                            )}
-                            <button className="block-item-btn" onClick={() => handleMarkDone(item)} title="Marcar como veiculado">
-                              <CheckCircle size={12} />
-                            </button>
-                            <button className="block-item-btn danger" onClick={() => handleDelete(item.id)} title="Remover">
-                              <Trash2 size={12} />
-                            </button>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
+                        )
+                      })}
 
-                  {isMusical && (
-                    <button className="block-add-btn" onClick={() => handleAddToGroup(group)}>
-                      <Plus size={12} /> Adicionar música
-                    </button>
-                  )}
+                      {isMusical && (
+                        <button className="bc-add-btn" onClick={() => handleAddToGroup(group)}>
+                          <Plus size={11} /> Adicionar música
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )
             })}

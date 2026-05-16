@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **15/05/2026** — Versão **5.2.0** — Fases 1–13 + Comercial Pro + Grafismos + Banco de Mídia + On Air + Command Palette + Saidas vMix + AutoProg misto AudioPro/VideoPro
+> Atualizado em **16/05/2026** — Versão **5.3.0** — Redesign broadcast UI + Drag & Drop MediaBank + Sidebar colapsável + Diferenciação visual por tipo + Correção cleanup de áudio no vMix
 
 ---
 
@@ -29,7 +29,8 @@
 21. [Fase 2 — Grafismos (v5.2.0)](#21-fase-2--grafismos-v520)
 22. [Fases 7 e 7b — Banco de Mídia, On Air e Command Palette](#22-fases-7-e-7b--banco-de-mídia-on-air-e-command-palette-v520)
 23. [Complementos 15/05/2026](#23-complementos-15052026)
-24. [Backlog](#24-backlog)
+24. [v5.3.0 — Redesign Broadcast UI e melhorias de UX (16/05/2026)](#24-v530--redesign-broadcast-ui-e-melhorias-de-ux-16052026)
+25. [Backlog](#25-backlog)
 
 ---
 
@@ -1735,7 +1736,171 @@ Detectado em 15/05/2026: se o VTMaster ficasse aberto e parado atravessando a me
 
 Correcao aplicada em `src/store/AppContext.tsx`: no watcher de virada de dia, `sessionStartRef` volta para `00:00:00`, os refs de interrupcao sao limpos e `minOrderRef` retorna para `-1` antes de gerar a programacao do novo dia. O preloader de comerciais tambem deixou de confiar apenas em `lastLoadedDate`; se o bloco esta marcado como carregado hoje mas nao existe item dele em `dateSchedules[today]`, ele pode ser injetado novamente dentro da janela de preload/grace. O loop do preloader agora usa `workingSchedule`/`workingRotation`, evitando perda de itens quando mais de um bloco entra na mesma varredura.
 
-## 24. Backlog
+## 24. v5.3.0 — Redesign Broadcast UI e melhorias de UX (16/05/2026)
+
+### DaySchedulePanel — Visual estilo broadcast profissional
+
+O painel de Programação do Dia foi completamente redesenhado com visual inspirado em softwares profissionais de playout (WinCAPS/RadioBoss):
+
+#### Layout de bloco (`.bc-block`)
+
+Cada grupo de programação agora tem três camadas visuais:
+
+| Elemento | Descrição |
+|----------|-----------|
+| **Marcador lateral** | Faixa estreita (26–32px) com texto rotacionado indicando estado e tipo |
+| **Header compacto** | `HH:MM ─── Nome do Bloco ────────── Duração · BADGE · ações` |
+| **Linhas de item** | Drag + tag de tipo + horário + número + título + progress fill + duração + ações |
+
+#### Marcadores laterais por estado
+
+| Estado | Cor | Texto |
+|--------|-----|-------|
+| AO AR (tocando) | Verde `#22c55e` pulsante | AO AR |
+| PROX (próximo) | Âmbar `#f59e0b` | PROX |
+| Musical | Índigo `#6366f1` | MUSICAL |
+| Comercial | Laranja `#f97316` | COMERC |
+| Programa | Sky `#0ea5e9` | PROG |
+
+#### Hierarquia visual por foco
+
+Quando há um bloco AO AR, os demais recuam: `opacity: 0.52` + `scale(0.985)`. O bloco tocando cresce: header mais alto, fontes maiores (até `1.05rem`), glow verde, padding generoso. A track tocando tem padding `10px` e título branco bold.
+
+#### Preenchimento de progresso como fundo da track
+
+Em vez de uma barrinha separada, um `div` absolutamente posicionado dentro da row cresce da esquerda para a direita conforme o progresso, usando gradiente verde com borda brilhante. Substitui completamente a `.bc-item-progress` anterior.
+
+#### Badges AO AR / PROX nas tracks individuais
+
+- `◉ AO AR` — verde pulsante — na track que está tocando agora
+- `→ PROX` — âmbar estático — na próxima track da fila
+
+#### Diferenciação visual por tipo de conteúdo
+
+Tags coloridas (pastilha de 3 letras) antes do timestamp de cada item:
+
+| Tag | Tipo | Cor |
+|-----|------|-----|
+| `MÚS` | Música / spot de áudio | Ciano `#22d3ee` |
+| `VHT` | Vinheta | Âmbar `#fbbf24` |
+| `VID` | Vídeo / clipe | Violeta `#a78bfa` |
+| `TRL` | Bumper / trilha / outros | Esmeralda `#34d399` |
+| `VMX` | Ação ou input vMix | Laranja `#fb923c` |
+| `COM` | Spot comercial em bloco | Verde `#4ade80` |
+
+Cada tipo também recebe borda esquerda colorida (3px) e tint de fundo sutil. O título herda a cor do tipo para leitura ainda mais rápida.
+
+---
+
+### Banco de Mídia — Melhorias
+
+#### Pin / Unpin — painel fixo
+
+Botão 📌 no header do drawer:
+- **Não pinado** (padrão): overlay flutuante com `position: fixed`, abre/fecha via toolbar
+- **Pinado**: o componente é renderizado **dentro do `app-body`** como coluna flex, sem sobrepor o conteúdo. O conteúdo principal encolhe lateralmente
+
+**Implementação**: quando pinado, `<MediaBankPanel>` é renderizado inside `.app-body` (não fora); recebe classe `.media-bank-drawer--pinned` que remove `position: fixed`.
+
+#### Drag & Drop para Playlist e Programação
+
+Qualquer arquivo nos browsers de Áudio e Vídeo é `draggable`:
+
+| Arrastar | Para | Resultado |
+|---------|------|-----------|
+| Arquivo de áudio | Linha da Playlist | Insere `type: 'spot'` ou `'vinheta'` abaixo do alvo |
+| Arquivo de vídeo | Linha da Playlist | Insere `type: 'programa'` |
+| Arquivo de áudio | bc-item da Programação | Insere antes do item alvo |
+| Arquivo de vídeo | bc-item da Programação | Insere antes do item alvo |
+| **Pasta (card)** | Qualquer linha | Escaneia a pasta, sorteia **aleatoriamente** uma faixa e insere |
+
+**Mime types usados:**
+- `application/vtmaster-media` — arquivo individual `{title, filePath, mediaType, itemType, duration}`
+- `application/vtmaster-folder` — pasta `{folderPath, label, mediaType}` → sorteia aleatório no drop
+
+#### Toggle Música / Vinheta
+
+No browser de áudios, barra de dois botões logo abaixo do header:
+- `♪ Música` → insere com `type: 'spot'` (GC Musical ativa)
+- `≋ Vinheta` → insere com `type: 'vinheta'` (GC Musical **não ativa**)
+
+Afeta tanto o botão `+` quanto o drag.
+
+---
+
+### Sidebar colapsável
+
+Botão "Recolher" (seta `‹`) no rodapé da sidebar:
+- **Expandida** (176px): exibe ícone + label de cada painel
+- **Colapsada** (48px): só ícones, `title` no hover como tooltip
+- Transição suave `0.2s ease`
+
+---
+
+### Botão "Iniciar Programação" — sempre do item selecionado
+
+Antes: `startScheduleFromNow()` — iniciava pelo próximo item com horário vencido.
+
+Agora: se há um item selecionado na timeline → `startScheduleFromItem(selectedItemId)`. Sem seleção → mantém comportamento anterior. Tooltip informa qual modo está ativo.
+
+---
+
+### GC Musical — skip para vinhetas
+
+A condição do GC Musical em `AppContext.tsx` agora inclui `item.type !== 'vinheta'`:
+
+```typescript
+if (
+  gc.gcMusicEnabled &&
+  gc.gcMusicInputName &&
+  !item.adBreakId &&
+  item.type !== 'vinheta' &&   // ← NOVO
+  item.type !== 'vmix_action' &&
+  item.type !== 'pause' &&
+  item.filePath &&
+  !abortRef.current
+) { ... }
+```
+
+Vinhetas são curtas e o GC perderia a janela de entrada/saída da música seguinte.
+
+---
+
+### Correção crítica: áudios não eram removidos do vMix
+
+**Causa raiz:** arquivos de áudio são adicionados no vMix como tipo `AudioFile`. Diferente de vídeos (que saem do estado `Running` quando `Cut` leva outro vídeo para o PGM), inputs de áudio continuam em estado `Running` no bus de áudio mesmo após o wall-clock timer encerrar. O vMix silenciosamente rejeita `RemoveInput` em inputs `Running`.
+
+**Correção em `removeOwnedInput` (AppContext.tsx):**
+
+```typescript
+// Antes (só RemoveInput):
+await executeVmixCommand('RemoveInput', { input: guid, ... })
+
+// Depois (StopInput primeiro, depois RemoveInput):
+await executeVmixCommand('StopInput', { input: guid, ..., validate: false })
+await new Promise(r => setTimeout(r, 120))  // aguarda vMix processar
+await executeVmixCommand('RemoveInput', { input: guid, ... })
+```
+
+`validate: false` garante que o StopInput de um input já parado (vídeos) não interrompa o fluxo. Para áudios, o stop é necessário antes da remoção.
+
+**Resultado:** após cada música/áudio terminar, o input é removido do projeto vMix — mesmo comportamento que vídeos já tinham.
+
+---
+
+### Auditoria e correções de robustez (16/05/2026)
+
+| Item | Correção |
+|------|---------|
+| `INSERT_PLAYLIST_ITEM_AFTER` quando `afterOrder` não existe | Fallback: append ao final (era: inseria no início) |
+| Toolbar `CLEAR_PLAYLIST` sem confirmação | Adicionado `window.confirm()` igual ao botão "Nova Playlist" |
+| `snapshotFolder` dead code | Removido do tipo — pasta é configurada no vMix, não no VTMaster |
+| `CampaignsPanel` lint warning `campaign.id` | Adicionado ao array de deps do `useMemo` |
+| `FadeToBlack` ausente do catálogo vMix | Adicionado a `vmixCommandCatalog.ts` |
+
+---
+
+## 25. Backlog
 
 ### Alta prioridade
 

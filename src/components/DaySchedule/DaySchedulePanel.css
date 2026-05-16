@@ -1136,3 +1136,665 @@
     flex-direction: column;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   BROADCAST STYLE — Layout estilo playout profissional de TV
+   Substitui .block-card na lista de grupos do DaySchedulePanel
+══════════════════════════════════════════════════════════════════════════════ */
+
+/* Paleta de cores por tipo de bloco */
+:root {
+  --bc-musical:    #6366f1;
+  --bc-comercial:  #f97316;
+  --bc-programa:   #0ea5e9;
+  --bc-outro:      #8888aa;
+  --bc-ao-ar:      #22c55e;
+  --bc-prox:       #f59e0b;
+}
+
+/* ── Container principal do bloco ── */
+.bc-block {
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+
+.bc-block.bc-block--ao-ar {
+  border-color: color-mix(in srgb, var(--bc-ao-ar) 50%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bc-ao-ar) 30%, transparent),
+              0 0 14px color-mix(in srgb, var(--bc-ao-ar) 10%, transparent);
+}
+
+.bc-block.bc-block--prox {
+  border-color: color-mix(in srgb, var(--bc-prox) 40%, transparent);
+  border-style: dashed;
+}
+
+.bc-block.bc-block--done {
+  opacity: 0.5;
+}
+
+/* ── Marcador lateral esquerdo ── */
+.bc-side {
+  width: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bc-color, var(--bc-outro));
+  position: relative;
+  overflow: hidden;
+}
+
+.bc-side-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #fff;
+  user-select: none;
+  white-space: nowrap;
+  opacity: 0.92;
+}
+
+/* Cores por tipo */
+.bc-block--musical  { --bc-color: var(--bc-musical); }
+.bc-block--comercial { --bc-color: var(--bc-comercial); }
+.bc-block--programa  { --bc-color: var(--bc-programa); }
+.bc-block--outro     { --bc-color: var(--bc-outro); }
+
+/* AO AR sobrepõe a cor de tipo */
+.bc-block--ao-ar .bc-side { background: var(--bc-ao-ar); }
+.bc-block--prox:not(.bc-block--ao-ar) .bc-side { background: var(--bc-prox); }
+
+/* Pulsação no AO AR */
+.bc-block--ao-ar .bc-side::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.18);
+  animation: bc-ao-ar-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes bc-ao-ar-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ── Corpo do bloco ── */
+.bc-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header de bloco ── */
+.bc-header {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 5px 10px 5px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 18%, var(--bg-tertiary));
+  min-width: 0;
+}
+
+.bc-header-time {
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  color: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 90%, var(--text-primary));
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.bc-header-line {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 30%, var(--border));
+  margin: 0 8px;
+  min-width: 8px;
+}
+
+.bc-header-name {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  flex-shrink: 1;
+}
+
+.bc-header-dur {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.bc-header-status {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.bc-block--ao-ar  .bc-header-status { background: color-mix(in srgb, var(--bc-ao-ar) 20%, transparent); color: var(--bc-ao-ar); }
+.bc-block--prox   .bc-header-status { background: color-mix(in srgb, var(--bc-prox) 20%, transparent);   color: var(--bc-prox); }
+.bc-block--done   .bc-header-status { background: color-mix(in srgb, var(--border) 30%, transparent);    color: var(--text-secondary); }
+
+.bc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.bc-block:hover .bc-header-actions { opacity: 1; }
+
+/* ── Lista de itens ── */
+.bc-items {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Linha de item ── */
+.bc-item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 4px 10px 4px 6px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  cursor: pointer;
+  transition: background 0.1s;
+  min-width: 0;
+  position: relative;
+}
+
+.bc-item:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.bc-item.bc-item--playing {
+  background: color-mix(in srgb, var(--bc-ao-ar) 12%, transparent);
+}
+
+.bc-item.bc-item--selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
+}
+
+.bc-item.bc-item--selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+}
+
+.bc-item.bc-item--done,
+.bc-item.bc-item--skipped {
+  opacity: 0.42;
+}
+
+.bc-item.bc-item--audio:not(.bc-item--playing):not(.bc-item--selected) {
+  background: color-mix(in srgb, #f59e0b 4%, transparent);
+}
+.bc-item.bc-item--audio::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: color-mix(in srgb, #f59e0b 55%, transparent);
+}
+.bc-item.bc-item--audio.bc-item--selected::before {
+  background: var(--accent);
+  width: 3px;
+}
+
+/* Drag states */
+.bc-item.bc-item--dragging { opacity: 0.35; background: var(--bg-hover); }
+.bc-item.bc-item--drag-over { border-top: 2px solid var(--accent); margin-top: -1px; }
+
+/* ── Drag handle ── */
+.bc-item-drag {
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  opacity: 0.25;
+  cursor: grab;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+.bc-item:hover .bc-item-drag { opacity: 0.6; }
+
+/* ── Status dot ── */
+.bc-item-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin: 0 5px;
+  background: var(--border);
+}
+.bc-item--playing .bc-item-dot {
+  background: var(--bc-ao-ar);
+  box-shadow: 0 0 5px var(--bc-ao-ar);
+  animation: bc-dot-pulse 1s ease-in-out infinite;
+}
+.bc-item--done .bc-item-dot,
+.bc-item--skipped .bc-item-dot { background: var(--text-secondary); opacity: 0.4; }
+.bc-item--error .bc-item-dot { background: var(--error); }
+
+@keyframes bc-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Timestamp ── */
+.bc-item-time {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  min-width: 36px;
+  flex-shrink: 0;
+  font-weight: 500;
+  margin-right: 6px;
+}
+
+/* ── Número de ordem ── */
+.bc-item-num {
+  font-size: 0.66rem;
+  color: var(--text-secondary);
+  min-width: 16px;
+  text-align: right;
+  flex-shrink: 0;
+  margin-right: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Título ── */
+.bc-item-title {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.bc-item-title.bc-item-title--empty { color: var(--text-secondary); font-style: italic; }
+.bc-item-title.bc-item-title--pause { color: #f59e0b; font-style: italic; font-weight: 600; }
+.bc-item-title.bc-item-title--vmix  { color: #a78bfa; }
+.bc-item--playing .bc-item-title { font-weight: 600; color: var(--bc-ao-ar); }
+
+/* ── Barra de progresso inline ── */
+.bc-item-progress {
+  width: 54px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bc-ao-ar) 20%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+  margin: 0 6px;
+}
+.bc-item-progress-fill {
+  height: 100%;
+  background: var(--bc-ao-ar);
+  border-radius: 2px;
+  transition: width 0.3s linear;
+  box-shadow: 0 0 4px color-mix(in srgb, var(--bc-ao-ar) 60%, transparent);
+}
+
+/* ── Duração ── */
+.bc-item-dur {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+/* ── Ações por item ── */
+.bc-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.bc-item:hover .bc-item-actions { opacity: 1; }
+
+/* ── Botão "Adicionar item" ao final do bloco ── */
+.bc-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 10px 6px 36px;
+  padding: 4px 10px;
+  border: 1px dashed color-mix(in srgb, var(--bc-color, var(--bc-outro)) 35%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 70%, var(--text-secondary));
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.12s;
+  align-self: flex-start;
+}
+.bc-add-btn:hover {
+  border-color: var(--bc-color, var(--bc-outro));
+  background: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 8%, transparent);
+  color: var(--bc-color, var(--bc-outro));
+}
+
+/* ── Scroll area ajustada para bc-blocks ── */
+.day-schedule-scroll {
+  padding: 8px 12px;
+  gap: 6px;
+}
+
+/* ── Preenchimento de progresso como fundo da track ── */
+/* Div absolutamente posicionada dentro de bc-item que "toma conta" da row */
+.bc-item-bg-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--bc-ao-ar) 32%, transparent) 0%,
+    color-mix(in srgb, var(--bc-ao-ar) 18%, transparent) 70%,
+    color-mix(in srgb, var(--bc-ao-ar) 6%,  transparent) 100%
+  );
+  transition: width 0.4s linear;
+  border-right: 2px solid color-mix(in srgb, var(--bc-ao-ar) 55%, transparent);
+  box-shadow: 2px 0 8px color-mix(in srgb, var(--bc-ao-ar) 25%, transparent);
+}
+
+/* Garante que todo conteúdo da row fique acima do fundo */
+.bc-item > *:not(.bc-item-bg-fill) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Remove a barrinha de progresso separada — substituída pelo fundo */
+.bc-item-progress { display: none; }
+
+/* ── Badges AO AR / PROX diretamente na track ── */
+.bc-item-badge {
+  flex-shrink: 0;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+
+.bc-item-badge--ao-ar {
+  background: color-mix(in srgb, var(--bc-ao-ar) 22%, transparent);
+  color: var(--bc-ao-ar);
+  border: 1px solid color-mix(in srgb, var(--bc-ao-ar) 45%, transparent);
+  animation: bc-badge-ao-ar 1.2s ease-in-out infinite;
+}
+
+@keyframes bc-badge-ao-ar {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+.bc-item-badge--prox {
+  background: color-mix(in srgb, var(--bc-prox) 18%, transparent);
+  color: var(--bc-prox);
+  border: 1px solid color-mix(in srgb, var(--bc-prox) 40%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   HIERARQUIA VISUAL — AO AR dominante, demais recuam
+   Princípio: quem está no ar CRESCE, o resto encolhe e some ao fundo
+══════════════════════════════════════════════════════════════════════════════ */
+
+/* Quando há um bloco AO AR na lista, recua todos os outros */
+.day-schedule-scroll:has(.bc-block--ao-ar) .bc-block:not(.bc-block--ao-ar):not(.bc-block--prox) {
+  opacity: 0.52;
+  transform: scale(0.985);
+  transform-origin: center top;
+}
+
+/* PROX fica em evidência mas menor que o AO AR */
+.day-schedule-scroll:has(.bc-block--ao-ar) .bc-block--prox {
+  opacity: 0.82;
+}
+
+/* ── Bloco AO AR: tamanho elevado ── */
+.bc-block--ao-ar {
+  border-color: color-mix(in srgb, var(--bc-ao-ar) 55%, transparent) !important;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--bc-ao-ar) 25%, transparent),
+    0 4px 24px color-mix(in srgb, var(--bc-ao-ar) 18%, transparent),
+    0 0 48px color-mix(in srgb, var(--bc-ao-ar) 8%, transparent);
+  background: color-mix(in srgb, var(--bc-ao-ar) 6%, var(--bg-secondary)) !important;
+}
+
+/* Marcador lateral mais largo no AO AR */
+.bc-block--ao-ar .bc-side {
+  width: 32px;
+}
+
+/* Header do bloco AO AR: maior e mais impactante */
+.bc-block--ao-ar .bc-header {
+  padding: 9px 14px;
+  background: color-mix(in srgb, var(--bc-ao-ar) 28%, var(--bg-tertiary)) !important;
+  border-bottom-color: color-mix(in srgb, var(--bc-ao-ar) 30%, transparent) !important;
+}
+
+.bc-block--ao-ar .bc-header-time {
+  font-size: 1.05rem;
+  letter-spacing: 0.8px;
+}
+
+.bc-block--ao-ar .bc-header-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  max-width: 220px;
+  color: #fff;
+}
+
+.bc-block--ao-ar .bc-header-dur {
+  font-size: 0.78rem;
+  color: color-mix(in srgb, var(--bc-ao-ar) 80%, var(--text-secondary));
+}
+
+/* Rows do bloco AO AR: mais espaçadas */
+.bc-block--ao-ar .bc-item {
+  padding: 6px 12px 6px 8px;
+}
+
+/* Item TOCANDO AGORA: o maior de todos */
+.bc-block--ao-ar .bc-item.bc-item--playing {
+  padding: 10px 14px 10px 8px;
+  background: color-mix(in srgb, var(--bc-ao-ar) 10%, transparent) !important;
+}
+
+.bc-block--ao-ar .bc-item.bc-item--playing .bc-item-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.bc-block--ao-ar .bc-item.bc-item--playing .bc-item-time {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--bc-ao-ar);
+}
+
+.bc-block--ao-ar .bc-item.bc-item--playing .bc-item-dur {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--bc-ao-ar) 80%, var(--text-secondary));
+}
+
+.bc-block--ao-ar .bc-item.bc-item--playing .bc-item-dot {
+  width: 9px;
+  height: 9px;
+  margin: 0 7px;
+}
+
+/* Badge AO AR maior no bloco ao vivo */
+.bc-block--ao-ar .bc-item-badge--ao-ar {
+  font-size: 0.66rem;
+  padding: 3px 8px;
+  letter-spacing: 1px;
+}
+
+/* Fundo de progresso mais intenso no bloco ao vivo */
+.bc-block--ao-ar .bc-item-bg-fill {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--bc-ao-ar) 42%, transparent) 0%,
+    color-mix(in srgb, var(--bc-ao-ar) 24%, transparent) 65%,
+    color-mix(in srgb, var(--bc-ao-ar) 8%,  transparent) 100%
+  );
+  border-right: 2px solid color-mix(in srgb, var(--bc-ao-ar) 70%, transparent);
+  box-shadow: 3px 0 12px color-mix(in srgb, var(--bc-ao-ar) 35%, transparent);
+}
+
+/* Transição suave em todos os blocos */
+.bc-block {
+  transition: opacity 0.3s ease, transform 0.3s ease,
+              border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   DIFERENCIAÇÃO VISUAL POR TIPO DE CONTEÚDO
+   Cores semânticas para leitura rápida da grade
+   Música=ciano · Vinheta=âmbar · Vídeo=violeta · Trilha=esmeralda · Vmix=laranja
+══════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --bc-musica:   #22d3ee;   /* ciano    — músicas/spots de áudio     */
+  --bc-vinheta:  #fbbf24;   /* âmbar    — vinhetas curtas             */
+  --bc-video:    #a78bfa;   /* violeta  — vídeos e clipes             */
+  --bc-bumper:   #34d399;   /* esmeralda— bumpers e trilhas           */
+  --bc-vmix:     #fb923c;   /* laranja  — ações e inputs vMix         */
+  --bc-comercial:#4ade80;   /* verde    — spots comerciais em blocos  */
+}
+
+/* ── Tag de tipo (pastilha colorida antes do timestamp) ── */
+.bc-item-type-tag {
+  flex-shrink: 0;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+  position: relative;
+  z-index: 1;
+  min-width: 28px;
+  text-align: center;
+}
+
+.bc-item-type-tag--musica    { background: color-mix(in srgb, var(--bc-musica)   22%, transparent); color: var(--bc-musica);   border: 1px solid color-mix(in srgb, var(--bc-musica)   40%, transparent); }
+.bc-item-type-tag--vinheta   { background: color-mix(in srgb, var(--bc-vinheta)  22%, transparent); color: var(--bc-vinheta);  border: 1px solid color-mix(in srgb, var(--bc-vinheta)  40%, transparent); }
+.bc-item-type-tag--video     { background: color-mix(in srgb, var(--bc-video)    22%, transparent); color: var(--bc-video);    border: 1px solid color-mix(in srgb, var(--bc-video)    40%, transparent); }
+.bc-item-type-tag--bumper,
+.bc-item-type-tag--outros    { background: color-mix(in srgb, var(--bc-bumper)   22%, transparent); color: var(--bc-bumper);   border: 1px solid color-mix(in srgb, var(--bc-bumper)   40%, transparent); }
+.bc-item-type-tag--vmix      { background: color-mix(in srgb, var(--bc-vmix)     22%, transparent); color: var(--bc-vmix);     border: 1px solid color-mix(in srgb, var(--bc-vmix)     40%, transparent); }
+.bc-item-type-tag--comercial { background: color-mix(in srgb, var(--bc-comercial)22%, transparent); color: var(--bc-comercial);border: 1px solid color-mix(in srgb, var(--bc-comercial)40%, transparent); }
+
+/* ── Borda esquerda colorida por tipo ── */
+/* Remove o ::before genérico de audio antigo */
+.bc-item.bc-item--type-musica::before,
+.bc-item.bc-item--type-vinheta::before,
+.bc-item.bc-item--type-video::before,
+.bc-item.bc-item--type-bumper::before,
+.bc-item.bc-item--type-outros::before,
+.bc-item.bc-item--type-vmix::before,
+.bc-item.bc-item--type-comercial::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 0;
+  z-index: 1;
+}
+
+.bc-item.bc-item--type-musica::before    { background: color-mix(in srgb, var(--bc-musica)   65%, transparent); }
+.bc-item.bc-item--type-vinheta::before   { background: color-mix(in srgb, var(--bc-vinheta)  65%, transparent); }
+.bc-item.bc-item--type-video::before     { background: color-mix(in srgb, var(--bc-video)    65%, transparent); }
+.bc-item.bc-item--type-bumper::before,
+.bc-item.bc-item--type-outros::before    { background: color-mix(in srgb, var(--bc-bumper)   65%, transparent); }
+.bc-item.bc-item--type-vmix::before      { background: color-mix(in srgb, var(--bc-vmix)     65%, transparent); }
+.bc-item.bc-item--type-comercial::before { background: color-mix(in srgb, var(--bc-comercial)65%, transparent); }
+
+/* ── Tint de fundo sutil por tipo ── */
+.bc-item.bc-item--type-musica:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped) {
+  background: color-mix(in srgb, var(--bc-musica)   4%, transparent);
+}
+.bc-item.bc-item--type-vinheta:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped) {
+  background: color-mix(in srgb, var(--bc-vinheta)  4%, transparent);
+}
+.bc-item.bc-item--type-video:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped) {
+  background: color-mix(in srgb, var(--bc-video)    4%, transparent);
+}
+.bc-item.bc-item--type-bumper:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped),
+.bc-item.bc-item--type-outros:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped) {
+  background: color-mix(in srgb, var(--bc-bumper)   4%, transparent);
+}
+.bc-item.bc-item--type-vmix:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped) {
+  background: color-mix(in srgb, var(--bc-vmix)     4%, transparent);
+}
+
+/* ── Cor do título por tipo (quando não tocando) ── */
+.bc-item.bc-item--type-musica:not(.bc-item--playing)   .bc-item-title:not(.bc-item-title--empty):not(.bc-item-title--pause) { color: color-mix(in srgb, var(--bc-musica)  70%, var(--text-primary)); }
+.bc-item.bc-item--type-vinheta:not(.bc-item--playing)  .bc-item-title:not(.bc-item-title--empty):not(.bc-item-title--pause) { color: color-mix(in srgb, var(--bc-vinheta) 70%, var(--text-primary)); }
+.bc-item.bc-item--type-video:not(.bc-item--playing)    .bc-item-title:not(.bc-item-title--empty):not(.bc-item-title--pause) { color: color-mix(in srgb, var(--bc-video)   70%, var(--text-primary)); }
+.bc-item.bc-item--type-bumper:not(.bc-item--playing)   .bc-item-title:not(.bc-item-title--empty):not(.bc-item-title--pause),
+.bc-item.bc-item--type-outros:not(.bc-item--playing)   .bc-item-title:not(.bc-item-title--empty):not(.bc-item-title--pause) { color: color-mix(in srgb, var(--bc-bumper)  70%, var(--text-primary)); }
+.bc-item.bc-item--type-vmix:not(.bc-item--playing)     .bc-item-title                                                      { color: color-mix(in srgb, var(--bc-vmix)    70%, var(--text-primary)); }
+
+/* ── Selected: borda accent sobrepõe a cor de tipo ── */
+.bc-item.bc-item--selected::before {
+  background: var(--accent) !important;
+  width: 3px;
+}
+
+/* Legenda de cores — referência para o operador (tooltip implícito via tags) */
+/* MÚS=ciano VHT=âmbar VID=violeta TRL=esmeralda VMX=laranja COM=verde */

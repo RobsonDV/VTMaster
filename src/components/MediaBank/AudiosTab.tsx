@@ -42,7 +42,20 @@ function formatDur(sec?: number) {
 // ── Folder Card (reutilizado de Videos) ─────────────────────────────────────
 function FolderCard({ source, onOpen, onRemove }: { source: FolderSource; onOpen: () => void; onRemove?: () => void }) {
   return (
-    <div className="mb-folder-card" onClick={onOpen} title={source.folderPath}>
+    <div
+      className="mb-folder-card"
+      onClick={onOpen}
+      title={`${source.folderPath}\nArraste para inserir áudio aleatório`}
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.effectAllowed = 'copy'
+        e.dataTransfer.setData('application/vtmaster-folder', JSON.stringify({
+          folderPath: source.folderPath,
+          label: source.label,
+          mediaType: 'audio',
+        }))
+      }}
+    >
       {source.color && <span className="mb-folder-card-dot" style={{ background: source.color }} />}
       <div className="mb-folder-card-icon"><FolderOpen size={32} /></div>
       <div className="mb-folder-card-name">{source.label}</div>
@@ -63,6 +76,8 @@ function AudioBrowser({ source, onBack, onInsert }: { source: FolderSource; onBa
   const [loaded, setLoaded] = useState(false)
   const [search, setSearch] = useState('')
   const [includeSubfolders, setIncludeSubfolders] = useState(true)
+  // Modo vinheta: type='vinheta' → GC Musical não dispara; false = 'spot' normal
+  const [isVinheta, setIsVinheta] = useState(false)
 
   const scan = useCallback(async () => {
     setLoading(true)
@@ -101,6 +116,24 @@ function AudioBrowser({ source, onBack, onInsert }: { source: FolderSource; onBa
         </button>
       </div>
 
+      {/* Toggle Música / Vinheta */}
+      <div className="mb-audio-type-toggle">
+        <button
+          className={`mb-type-btn${!isVinheta ? ' active' : ''}`}
+          onClick={() => setIsVinheta(false)}
+          title="Inserir como Música — GC Musical ativa normalmente"
+        >
+          ♪ Música
+        </button>
+        <button
+          className={`mb-type-btn${isVinheta ? ' active vinheta' : ''}`}
+          onClick={() => setIsVinheta(true)}
+          title="Inserir como Vinheta — GC Musical não ativa (vinhetas são curtas)"
+        >
+          ≋ Vinheta
+        </button>
+      </div>
+
       <div className="mb-search" style={{ position: 'relative' }}>
         <Search size={12} style={{ position: 'absolute', left: 20, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
         <input placeholder="Buscar áudio…" value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 28 }} />
@@ -112,19 +145,33 @@ function AudioBrowser({ source, onBack, onInsert }: { source: FolderSource; onBa
           <div className="mb-empty">{search ? `Nenhum áudio para "${search}"` : 'Nenhum arquivo de áudio nesta pasta.'}</div>
         )}
         {!loading && filtered.map(file => (
-          <div key={file.filePath} className="mb-item">
-            <FileAudio size={14} className="mb-item-icon" />
+          <div
+            key={file.filePath}
+            className={`mb-item${isVinheta ? ' mb-item--vinheta' : ''}`}
+            draggable
+            onDragStart={e => {
+              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.setData('application/vtmaster-media', JSON.stringify({
+                title: noExt(file.filename),
+                filePath: file.filePath,
+                mediaType: 'audio',
+                itemType: isVinheta ? 'vinheta' : 'spot',
+                duration: 0,
+              }))
+            }}
+          >
+            <FileAudio size={14} className="mb-item-icon" style={{ cursor: 'grab' }} />
             <div className="mb-item-info">
               <div className="mb-item-name" title={file.filename}>{noExt(file.filename)}</div>
-              <div className="mb-item-meta">{ext(file.filename)}</div>
+              <div className="mb-item-meta">{ext(file.filename)}{isVinheta ? ' · vinheta' : ''}</div>
             </div>
             <button
               className="mb-item-add"
-              title="Inserir na programação"
+              title={isVinheta ? 'Inserir como vinheta (sem GC)' : 'Inserir como música'}
               onClick={() => onInsert({
                 title: noExt(file.filename),
                 filePath: file.filePath,
-                type: 'spot',
+                type: isVinheta ? 'vinheta' : 'spot',
                 mediaType: 'audio',
                 duration: 0,
               })}

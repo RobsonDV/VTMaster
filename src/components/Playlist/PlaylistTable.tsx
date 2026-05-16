@@ -366,20 +366,72 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
     dispatch({ type: 'REORDER_PLAYLIST', payload: sorted.map((item, i) => ({ ...item, order: i + 1 })) })
   }, [dispatch, playlist])
 
-  const handleRowDragOver = useCallback((e: React.DragEvent, index: number) => {
-    if (!e.dataTransfer.types.includes('application/vmix-input')) return
+  const ACCEPTED_TYPES = ['application/vmix-input', 'application/vtmaster-media', 'application/vtmaster-folder']
+
+  const insertMediaAt = useCallback((payload: { title: string; filePath: string; mediaType: 'audio' | 'video'; itemType: string; duration: number }, atIndex: number) => {
+    const newItem: PlaylistItem = {
+      id: crypto.randomUUID(),
+      order: 0,
+      title: payload.title,
+      type: payload.itemType as SpotType,
+      filePath: payload.filePath,
+      mediaType: payload.mediaType,
+      duration: payload.duration,
+      status: 'pending',
+    }
+    const sorted = [...playlist].sort((a, b) => a.order - b.order)
+    sorted.splice(atIndex, 0, newItem)
+    dispatch({ type: 'REORDER_PLAYLIST', payload: sorted.map((item, i) => ({ ...item, order: i + 1 })) })
+  }, [dispatch, playlist])
+
+  const handleRowDragOver = useCallback((e: React.DragEvent, _index: number) => {
+    if (!ACCEPTED_TYPES.some(t => e.dataTransfer.types.includes(t))) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
-    setDragOverIndex(index)
-  }, [])
+    setDragOverIndex(_index)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDrop = useCallback((e: React.DragEvent, atIndex: number) => {
     e.preventDefault()
     setDragOverIndex(null)
-    const raw = e.dataTransfer.getData('application/vmix-input')
-    if (!raw) return
-    try { insertVmixInput(JSON.parse(raw) as VmixInput, atIndex) } catch { /* ignore malformed drag payload */ }
-  }, [insertVmixInput])
+
+    // ── vMix input ────────────────────────────────────────────────────────────
+    const vmixRaw = e.dataTransfer.getData('application/vmix-input')
+    if (vmixRaw) {
+      try { insertVmixInput(JSON.parse(vmixRaw) as VmixInput, atIndex) } catch { /* ignore */ }
+      return
+    }
+
+    // ── Arquivo de mídia individual ───────────────────────────────────────────
+    const mediaRaw = e.dataTransfer.getData('application/vtmaster-media')
+    if (mediaRaw) {
+      try { insertMediaAt(JSON.parse(mediaRaw), atIndex) } catch { /* ignore */ }
+      return
+    }
+
+    // ── Pasta → faixa aleatória ───────────────────────────────────────────────
+    const folderRaw = e.dataTransfer.getData('application/vtmaster-folder')
+    if (folderRaw && window.spotmaster) {
+      void (async () => {
+        try {
+          const { folderPath, mediaType } = JSON.parse(folderRaw) as { folderPath: string; label: string; mediaType: 'audio' | 'video' }
+          const results = mediaType === 'video'
+            ? await window.spotmaster.scanVideoFolder(folderPath, true)
+            : (await window.spotmaster.scanMusicFolder(folderPath, true)).map(r => ({ filePath: r.filePath, filename: r.filename }))
+          if (results.length === 0) return
+          const pick = results[Math.floor(Math.random() * results.length)]
+          const noExtName = pick.filename.replace(/\.[^.]+$/, '')
+          insertMediaAt({
+            title: noExtName,
+            filePath: pick.filePath,
+            mediaType,
+            itemType: mediaType === 'video' ? 'programa' : 'spot',
+            duration: 0,
+          }, atIndex)
+        } catch { /* ignore */ }
+      })()
+    }
+  }, [insertVmixInput, insertMediaAt])
 
   const handleRowDragLeave = useCallback((e: React.DragEvent) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverIndex(null)

@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **5.1.6** — Atualizado em **14/05/2026** — Comercial Pro (Fase 13) + correção crítica do Autoplay Comercial
+> Versão **5.3.0** — Atualizado em **16/05/2026** — Redesign broadcast UI + Drag & Drop MediaBank + Sidebar colapsável + Correção cleanup áudio vMix
 
 ---
 
@@ -104,3 +104,5 @@
 | Teste auto-update — v5.1.6 | 14/05/2026 | Release pequena para validar se instalações 5.1.5 detectam, baixam e instalam uma nova versão via GitHub Releases. |
 | **Fase 13 — Comercial Pro** | 14/05/2026 | Campaign, Segment, ProgramWindow — sistema completo de contratos comerciais com distribuição automática, modalidade Rotativo, gate de campanha no motor de playout, relatório por campanha, log com campaignId. |
 | **Fix: Autoplay Comercial** | 14/05/2026 | 3 bugs corrigidos: preloader de 20s lê commercialBlocks direto (sem precisar gerar Programação do Dia), commInterruptTimeRef separado do scheduleInterruptTimeRef, grace window de 10 min para app aberto após o horário. |
+| **v5.2.0** | 15/05/2026 | Banco de Mídia (Vídeos/Áudios/Inputs/Ações), VideoPro, AudioPro + AudioStyles com placeholder visual, On Air fullscreen, Command Palette (Ctrl+K), Saídas vMix (Rec/Stream/FTB/EXT/SRT), VmixHealth, Transições configuráveis (Cut/Fade/Merge), Snapshot Comercial, badges EXT+FTB na StatusBar, diferenciação visual áudio na Playlist/Programação, StopInput+PowerSaveBlocker para operação 24h. |
+| **v5.3.0** | 16/05/2026 | **Redesign broadcast UI**: marcadores laterais coloridos (AO AR/PROX/tipo), preenchimento de progresso como fundo da track, badges AO AR/PROX nas tracks, hierarquia visual por foco (bloco ativo cresce, demais recuam), diferenciação por tipo (MÚS/VHT/VID/TRL/VMX/COM). **MediaBank**: pin/unpin (painel fixo no layout), drag & drop de arquivos e pastas (inserção aleatória de pasta), toggle Música/Vinheta. **Sidebar colapsável**. **Iniciar Programação** sempre do item selecionado. **GC Musical** pula vinhetas. **Fix crítico**: áudios agora são removidos do vMix (StopInput antes de RemoveInput). |

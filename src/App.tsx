@@ -110,7 +110,10 @@ export default function App() {
   const [scheduleDate, setScheduleDate] = useState(today)
   // Banco de Mídia, On Air e Command Palette
   const [showMediaBank, setShowMediaBank] = useState(false)
+  const [mediaBankPinned, setMediaBankPinned] = useState(false)
   const [mediaBankTab, setMediaBankTab] = useState<'videos' | 'audios' | 'inputs' | 'actions'>('videos')
+  // Sidebar colapsável
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showOnAir, setShowOnAir] = useState(false)
   const [showCommandPalette, setShowCommandPalette] = useState(false)
 
@@ -251,33 +254,55 @@ export default function App() {
         mediaBankOpen={showMediaBank}
       />
       <div className="app-body">
-        <nav className="sidebar">
+        {/* ── Sidebar colapsável ── */}
+        <nav className={`sidebar${sidebarCollapsed ? ' sidebar--collapsed' : ''}`}>
           {navItems.map(({ id, label, icon: Icon }) => (
-            <button key={id} className={`nav-item ${activePanel === id ? 'active' : ''}`} onClick={() => handleSetPanel(id)}>
+            <button
+              key={id}
+              className={`nav-item ${activePanel === id ? 'active' : ''}`}
+              onClick={() => handleSetPanel(id)}
+              title={sidebarCollapsed ? label : undefined}
+            >
               <Icon size={17} />
-              <span>{label}</span>
+              {!sidebarCollapsed && <span>{label}</span>}
             </button>
           ))}
           <div style={{ flex: 1 }} />
           <button
             className={`nav-item ${showOnAir ? 'active' : ''}`}
             onClick={() => setShowOnAir(v => !v)}
-            title="Modo On Air — tela simplificada de operação"
+            title={sidebarCollapsed ? 'On Air' : 'Modo On Air — tela simplificada de operação'}
             style={{ color: state.isSequencePlaying ? 'var(--danger, #ef4444)' : undefined }}
           >
             <Tv size={17} />
-            <span>On Air</span>
+            {!sidebarCollapsed && <span>On Air</span>}
           </button>
-          <button className="nav-item" onClick={() => setShowSettings(true)}>
+          <button className="nav-item" onClick={() => setShowSettings(true)} title={sidebarCollapsed ? t.settings.title : undefined}>
             <Settings size={18} />
-            <span>{t.settings.title}</span>
+            {!sidebarCollapsed && <span>{t.settings.title}</span>}
           </button>
-          <div className="dev-credit">
-            <strong>VTMaster</strong>
-            {appVersion && <span className="dev-version">v{appVersion}</span>}
-            Desenvolvido por<br />RobsonCostaDV
-          </div>
+          {/* Botão colapsar/expandir sidebar */}
+          <button
+            className="nav-item sidebar-toggle"
+            onClick={() => setSidebarCollapsed(v => !v)}
+            title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+          >
+            {sidebarCollapsed
+              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+              : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+            }
+            {!sidebarCollapsed && <span>Recolher</span>}
+          </button>
+          {!sidebarCollapsed && (
+            <div className="dev-credit">
+              <strong>VTMaster</strong>
+              {appVersion && <span className="dev-version">v{appVersion}</span>}
+              Desenvolvido por<br />RobsonCostaDV
+            </div>
+          )}
         </nav>
+
+        {/* ── Área de conteúdo principal ── */}
         <main className="content-area">
           {activePanel === 'playlist' && (
             <div className="playlist-split">
@@ -321,6 +346,18 @@ export default function App() {
           {activePanel === 'audiopro' && <AudioProPanel />}
           {activePanel === 'videopro' && <VideoProPanel />}
         </main>
+
+        {/* ── Banco de Mídia PINADO: dentro do layout como coluna fixa ── */}
+        {showMediaBank && mediaBankPinned && (
+          <MediaBankPanel
+            tab={mediaBankTab}
+            onTabChange={setMediaBankTab}
+            onClose={() => { setShowMediaBank(false); setMediaBankPinned(false) }}
+            onInsert={handleMediaBankInsert}
+            pinned={true}
+            onTogglePin={() => setMediaBankPinned(false)}
+          />
+        )}
       </div>
       <StatusBar />
       {showItemModal && (
@@ -345,13 +382,15 @@ export default function App() {
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
-      {/* Banco de Mídia — drawer lateral direito */}
-      {showMediaBank && (
+      {/* Banco de Mídia — overlay drawer quando NÃO pinado */}
+      {showMediaBank && !mediaBankPinned && (
         <MediaBankPanel
           tab={mediaBankTab}
           onTabChange={setMediaBankTab}
           onClose={() => setShowMediaBank(false)}
           onInsert={handleMediaBankInsert}
+          pinned={false}
+          onTogglePin={() => setMediaBankPinned(true)}
         />
       )}
 

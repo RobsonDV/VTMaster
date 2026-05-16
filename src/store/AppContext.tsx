@@ -1358,6 +1358,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!guid || !window.spotmaster) return
     setTimeout(async () => {
       if (!window.spotmaster) return
+      // StopInput garante que áudios em estado Running (AudioFile) sejam
+      // encerrados antes da remoção. Para vídeos é inofensivo pois já saíram
+      // do PGM via Cut. Sem este stop, o vMix rejeita RemoveInput em áudios
+      // que ainda estão tocando no bus de áudio.
+      await executeVmixCommand('StopInput', {
+        input: guid,
+        meta: { source: 'pre-stop-before-remove', queue: 'system', ...meta },
+        validate: false,
+      })
+      await new Promise(r => setTimeout(r, 120))
       const result = await executeVmixCommand('RemoveInput', {
         input: guid,
         meta: { source: 'remove-owned-input', queue: 'system', ...meta },
@@ -1648,13 +1658,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // ── GC Musical automático ─────────────────────────────────────────────────
     // Dispara SetText no input de título do vMix após um delay configurável.
-    // Nunca dispara em itens de blocos comerciais (adBreakId presente).
+    // Nunca dispara em blocos comerciais (adBreakId) nem em vinhetas (type='vinheta'),
+    // pois vinhetas são curtas e o GC perderia a janela de entrada/saída.
     {
       const gc = stateRef.current.settings
       if (
         gc.gcMusicEnabled &&
         gc.gcMusicInputName &&
         !item.adBreakId &&
+        item.type !== 'vinheta' &&
         item.type !== 'vmix_action' &&
         item.type !== 'pause' &&
         item.filePath &&

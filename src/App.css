@@ -74,6 +74,22 @@ html, body, #root {
   border-right: 1px solid var(--border);
   flex-shrink: 0;
   padding: 8px 0;
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+
+.sidebar--collapsed {
+  width: 48px;
+}
+
+/* Botão colapsar */
+.sidebar-toggle {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  justify-content: center;
+}
+.sidebar--collapsed .sidebar-toggle {
+  justify-content: center;
 }
 
 .nav-item {
@@ -128,6 +144,22 @@ html, body, #root {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-primary);
+}
+
+/* ── MediaBank pinado: renderizado como coluna dentro do app-body ── */
+/* Quando pinado, o componente é renderizado DENTRO do flex row do app-body,
+   portanto não precisa de position:fixed — herda o layout naturalmente. */
+
+/* O drawer pinado perde o fixed e vira coluna */
+.media-bank-drawer--pinned {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  box-shadow: none !important;
+  animation: none !important;
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 /* Playlist split: table + optional vMix input panel side-by-side */

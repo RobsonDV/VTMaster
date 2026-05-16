@@ -1,4 +1,4 @@
-import { Film, Music, MonitorPlay, Zap, X, Database } from 'lucide-react'
+import { Film, Music, MonitorPlay, Zap, X, Database, Pin, PinOff } from 'lucide-react'
 import type { PlaylistItem } from '../../types'
 import VideosTab from './VideosTab'
 import AudiosTab from './AudiosTab'
@@ -13,6 +13,8 @@ interface Props {
   onTabChange: (tab: Tab) => void
   onClose: () => void
   onInsert: (item: Omit<PlaylistItem, 'id' | 'order' | 'status'>) => void
+  pinned?: boolean
+  onTogglePin?: () => void
 }
 
 const TABS: { id: Tab; label: string; Icon: React.ElementType }[] = [
@@ -22,12 +24,21 @@ const TABS: { id: Tab; label: string; Icon: React.ElementType }[] = [
   { id: 'actions', label: 'Ações',   Icon: Zap },
 ]
 
-export default function MediaBankPanel({ tab, onTabChange, onClose, onInsert }: Props) {
+export default function MediaBankPanel({ tab, onTabChange, onClose, onInsert, pinned, onTogglePin }: Props) {
   return (
-    <div className="media-bank-drawer">
+    <div className={`media-bank-drawer${pinned ? ' media-bank-drawer--pinned' : ''}`}>
       <div className="media-bank-header">
         <Database size={15} style={{ color: 'var(--accent)' }} />
         <h3>Banco de Mídia</h3>
+        {onTogglePin && (
+          <button
+            className={`media-bank-pin${pinned ? ' active' : ''}`}
+            onClick={onTogglePin}
+            title={pinned ? 'Desafixar painel (volta ao modo drawer)' : 'Fixar painel ao lado'}
+          >
+            {pinned ? <PinOff size={13} /> : <Pin size={13} />}
+          </button>
+        )}
         <button className="media-bank-close" onClick={onClose} title="Fechar">
           <X size={15} />
         </button>
