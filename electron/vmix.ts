@@ -15,6 +15,8 @@ export interface VmixStatus {
   recording?: boolean
   streaming?: boolean
   external?: boolean
+  srtOutput?: boolean
+  multiCorder?: boolean
   fadeToBlack?: boolean
 }
 
@@ -39,7 +41,7 @@ function statusHash(s: VmixStatus): string {
   const inputsPart = (s.inputs ?? [])
     .map(i => `${i.number}:${i.key}:${i.type}:${i.title}:${i.state}:${i.duration}`)
     .join('|')
-  return `${s.version}|${s.activeInput}|${s.previewInput}|${s.recording}|${s.streaming}|${s.fadeToBlack}|${inputsPart}`
+  return `${s.version}|${s.activeInput}|${s.previewInput}|${s.recording}|${s.streaming}|${s.external}|${s.srtOutput}|${s.multiCorder}|${s.fadeToBlack}|${inputsPart}`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +136,8 @@ function parseVmixStatus(xml: string): VmixStatus {
     recording: getValue('recording') === 'True',
     streaming: getValue('streaming') === 'True',
     external: getValue('external') === 'True',
+    srtOutput: getValue('srt') === 'True' || getValue('srtOutput') === 'True',
+    multiCorder: getValue('multiCorder') === 'True',
     fadeToBlack: getValue('fadeToBlack') === 'True',
   }
 }

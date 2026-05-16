@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { CommercialBlock, CommercialBlockItem, Client } from '../../types'
-import { formatDuration } from '../../utils/time'
+import { formatDuration, today as todayLocal } from '../../utils/time'
 import { VMIX_ACTION_COMMANDS } from '../../utils/vmixCommandCatalog'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
@@ -308,7 +308,7 @@ function InlineBlockEditor({ draft, setDraft, onSave, onCancel, clients, isNew }
 export default function AdBreaksPanel() {
   const { state, dispatch, loadBlockIntoPlaylist, saveToStorage } = useApp()
   const { commercialBlocks, clientSpots, clients, spotRotation, settings } = state
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
 
   const [expandedId, setExpandedId] = useState<string | null>(null) // block.id or 'new'
   const [draft, setDraft]           = useState<CommercialBlock | null>(null)

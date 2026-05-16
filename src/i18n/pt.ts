@@ -361,6 +361,7 @@ const pt = {
     bumper: 'Bumper',
     outros: 'Outros',
     vmix_action: 'Ação vMix',
+    audio_trigger: 'Gatilho de Áudio',
     pause: 'Pausa',
   },
 
@@ -408,6 +409,53 @@ const pt = {
     vmixInputPickerEmpty: 'Nenhum input encontrado no vMix. Verifique a conexão.',
     vmixInputPickerHint: 'Selecione um input existente do vMix para adicionar à playlist.',
     addToPlaylist: 'Adicionar à Playlist',
+  },
+
+  // Musical Pro — Biblioteca Musical (Fase 5)
+  musicLibrary: {
+    title: 'Biblioteca Musical',
+    empty: 'Biblioteca vazia. Adicione faixas manualmente ou reconcilie com as pastas dos Estilos.',
+    addTrack: 'Adicionar Faixa',
+    reconcile: 'Reconciliar',
+    reconcilingLabel: 'Reconciliando…',
+    reconcileHint: 'Verifica novos e ausentes nas pastas dos estilos cadastrados.',
+    reconcileNoStyles: 'Cadastre estilos com pastas antes de reconciliar.',
+    reconcileResult: 'Resultado da Reconciliação',
+    reconcileNew: 'arquivo(s) novo(s) encontrado(s)',
+    reconcileMissing: 'arquivo(s) ausente(s) na(s) pasta(s)',
+    reconcileInSync: 'Biblioteca está sincronizada com as pastas dos estilos.',
+    addAll: 'Adicionar todos',
+    markMissing: 'Marcar ausentes',
+    deleteConfirm: 'Tem certeza que deseja excluir esta faixa da biblioteca? O arquivo não será deletado do disco.',
+    metaHint: 'Metadados lidos automaticamente das tags ID3/MP4 quando disponíveis. Para vídeos sem tags, preencha manualmente.',
+  },
+  track: {
+    title: 'Título',
+    artist: 'Artista',
+    album: 'Álbum',
+    year: 'Ano',
+    genre: 'Gênero',
+    energy: 'Energia',
+    language: 'Idioma',
+    bpm: 'BPM',
+    tags: 'Tags',
+    lastAired: 'Última vez no ar',
+    playCount: 'Veiculações',
+    duration: 'Duração',
+    missing: 'Arquivo ausente',
+    energyLevels: ['', '1 — Calma', '2 — Suave', '3 — Média', '4 — Animada', '5 — Alta Energia'],
+  },
+
+  // AudioPro — Categorias e modos de reprodução
+  audioCategories: {
+    vinheta: 'Vinheta',
+    musica: 'Música',
+    trilha: 'Trilha',
+    outros: 'Outros',
+  },
+  audioPlayMode: {
+    once: 'Uma vez',
+    loop: 'Loop contínuo',
   },
 }
 

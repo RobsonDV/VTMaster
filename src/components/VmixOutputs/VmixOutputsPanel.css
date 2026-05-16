@@ -1,0 +1,229 @@
+.outputs-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.outputs-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+}
+
+.outputs-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.outputs-tab:hover { color: var(--text-primary); }
+.outputs-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.outputs-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.outputs-message {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.outputs-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.outputs-status-card,
+.outputs-command-card,
+.outputs-editor,
+.outputs-profile-card,
+.outputs-automation-card,
+.outputs-log {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.outputs-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 72px;
+  padding: 12px;
+}
+
+.outputs-status-card span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.outputs-status-card strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.outputs-status-card.on {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.outputs-status-card.warn {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.outputs-command-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.outputs-command-card {
+  padding: 14px;
+}
+
+.outputs-command-card h3,
+.outputs-editor h3,
+.outputs-automation-card h3,
+.outputs-log h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.outputs-command-row,
+.outputs-editor-actions,
+.outputs-profile-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outputs-profiles-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.outputs-editor {
+  padding: 16px;
+}
+
+.outputs-editor-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.outputs-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.outputs-profile-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.outputs-profile-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.outputs-profile-main strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.outputs-profile-main span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outputs-automation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.outputs-automation-card {
+  padding: 14px;
+}
+
+.outputs-automation-card p,
+.outputs-confirm-text {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.outputs-log {
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.outputs-log-row {
+  display: grid;
+  grid-template-columns: 72px minmax(140px, 1fr) minmax(80px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.outputs-log-row span,
+.outputs-log-row em {
+  color: var(--text-secondary);
+  font-style: normal;
+}
+
+.outputs-log-row strong {
+  color: var(--text-primary);
+}
+
+.outputs-log-row.fail em {
+  color: var(--error);
+}
+
+@media (max-width: 900px) {
+  .outputs-profiles-layout {
+    grid-template-columns: 1fr;
+  }
+}

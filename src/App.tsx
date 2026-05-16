@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 import { today } from './utils/time'
 import {
   CalendarDays,
@@ -12,6 +12,10 @@ import {
   Users,
   Megaphone,
   MonitorPlay,
+  Volume2,
+  Film,
+  MonitorCog,
+  Activity,
 } from 'lucide-react'
 import { useApp } from './store/AppContext'
 import Toolbar from './components/Toolbar/Toolbar'
@@ -34,11 +38,18 @@ import type { PlaylistItem } from './types'
 import AutoProgPanel from './components/AutoProg/AutoProgPanel'
 import CampaignsPanel from './components/Campaigns/CampaignsPanel'
 import GrafismosPanel from './components/Grafismos/GrafismosPanel'
+import AudioProPanel from './components/AudioPro/AudioProPanel'
+import MediaBankPanel from './components/MediaBank/MediaBankPanel'
+import OnAirPanel from './components/OnAir/OnAirPanel'
+import CommandPalette from './components/CommandPalette/CommandPalette'
+import VideoProPanel from './components/VideoPro/VideoProPanel'
+import VmixOutputsPanel from './components/VmixOutputs/VmixOutputsPanel'
+import VmixHealthPanel from './components/VmixHealth/VmixHealthPanel'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
-type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'campaigns' | 'grafismos' | 'log' | 'reports' | 'autoprog'
-const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'campaigns', 'grafismos', 'log', 'reports', 'autoprog']
+type Panel = 'playlist' | 'grade' | 'programacao' | 'adbreaks' | 'clients' | 'campaigns' | 'grafismos' | 'outputs' | 'vmixhealth' | 'log' | 'reports' | 'autoprog' | 'audiopro' | 'videopro'
+const PANELS: Panel[] = ['playlist', 'grade', 'programacao', 'adbreaks', 'clients', 'campaigns', 'grafismos', 'outputs', 'vmixhealth', 'log', 'reports', 'autoprog', 'audiopro', 'videopro']
 
 function isPanel(value: string): value is Panel {
   return PANELS.includes(value as Panel)
@@ -97,12 +108,94 @@ export default function App() {
   const [scheduleEditItem, setScheduleEditItem] = useState<PlaylistItem | null>(null)
   // Persists the selected date across Programação tab navigation
   const [scheduleDate, setScheduleDate] = useState(today)
+  // Banco de Mídia, On Air e Command Palette
+  const [showMediaBank, setShowMediaBank] = useState(false)
+  const [mediaBankTab, setMediaBankTab] = useState<'videos' | 'audios' | 'inputs' | 'actions'>('videos')
+  const [showOnAir, setShowOnAir] = useState(false)
+  const [showCommandPalette, setShowCommandPalette] = useState(false)
+
+  // Item selecionado em cada painel — usado pelo Banco de Mídia para inserir abaixo
+  const selectedItemRef = useRef<PlaylistItem | null>(null)
+  const scheduleDateRef = useRef(scheduleDate)
+
+  useEffect(() => {
+    scheduleDateRef.current = scheduleDate
+  }, [scheduleDate])
+
+  // Ctrl+K — Command Palette
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        setShowCommandPalette(v => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Inserção de itens do Banco de Mídia — detecta painel ativo e item selecionado
+  const handleMediaBankInsert = useCallback((item: Omit<PlaylistItem, 'id' | 'order' | 'status'>) => {
+    const selected = selectedItemRef.current
+    const panel = state.activePanel
+
+    if (panel === 'programacao') {
+      // Inserir na Programação do Dia
+      const schedItems = state.dateSchedules[scheduleDate] ?? []
+      if (selected && schedItems.find(i => i.id === selected.id)) {
+        // Inserir logo abaixo do item selecionado, herdando o horário do bloco
+        const newItem: PlaylistItem = {
+          id: crypto.randomUUID(),
+          order: selected.order + 0.5,
+          status: 'pending',
+          scheduledTime: selected.scheduledTime,
+          manuallyAdded: true,
+          ...item,
+        }
+        const sorted = [...schedItems, newItem]
+          .sort((a, b) => a.order - b.order)
+          .map((i, n) => ({ ...i, order: n + 1 }))
+        dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: scheduleDate, items: sorted } })
+      } else {
+        // Sem seleção: adicionar no final do último grupo
+        const sorted = [...schedItems].sort((a, b) => a.order - b.order)
+        const lastItem = sorted[sorted.length - 1]
+        const newItem: PlaylistItem = {
+          id: crypto.randomUUID(),
+          order: (lastItem?.order ?? 0) + 1,
+          status: 'pending',
+          scheduledTime: lastItem?.scheduledTime,
+          manuallyAdded: true,
+          ...item,
+        }
+        dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: scheduleDate, items: [...sorted, newItem] } })
+      }
+    } else {
+      // Inserir na Playlist
+      if (selected && state.playlist.find(i => i.id === selected.id)) {
+        const newItem: PlaylistItem = {
+          id: crypto.randomUUID(),
+          order: selected.order + 0.5,
+          status: 'pending',
+          ...item,
+        }
+        dispatch({ type: 'INSERT_PLAYLIST_ITEM_AFTER', payload: { item: newItem, afterOrder: selected.order } })
+      } else {
+        // Sem seleção: adicionar no final
+        const newItem: PlaylistItem = {
+          id: crypto.randomUUID(),
+          order: state.playlist.length + 1,
+          status: 'pending',
+          ...item,
+        }
+        dispatch({ type: 'ADD_PLAYLIST_ITEM', payload: newItem })
+      }
+    }
+  }, [state.activePanel, state.playlist, state.dateSchedules, scheduleDate, dispatch])
 
   // Auto-advance to the next day at midnight.
   // Only advances if the operator is viewing "today or the past" — future dates chosen
   // manually by the operator are preserved.
-  const scheduleDateRef = useRef(scheduleDate)
-  scheduleDateRef.current = scheduleDate
   useEffect(() => {
     const interval = setInterval(() => {
       const currentDay = today()
@@ -125,9 +218,13 @@ export default function App() {
     { id: 'clients' as Panel,     label: t.nav.clients, icon: Users },
     { id: 'campaigns' as Panel,   label: t.nav.campaigns, icon: Megaphone },
     { id: 'grafismos' as Panel,   label: t.nav.grafismos, icon: MonitorPlay },
+    { id: 'outputs' as Panel,     label: 'Saidas vMix', icon: MonitorCog },
+    { id: 'vmixhealth' as Panel,  label: 'Saude vMix', icon: Activity },
     { id: 'log' as Panel,         label: t.nav.log, icon: ClipboardList },
     { id: 'reports' as Panel,     label: t.nav.reports, icon: FileBarChart },
     { id: 'autoprog' as Panel,    label: 'AutoProg', icon: Music2 },
+    { id: 'audiopro' as Panel,    label: 'AudioPro', icon: Volume2 },
+    { id: 'videopro' as Panel,    label: 'VideoPro', icon: Film },
   ]
 
   const handleSetPanel = (panel: Panel) => {
@@ -150,6 +247,8 @@ export default function App() {
         onAddAdBreak={() => setShowAdBreakSelect(true)}
         onSettings={() => setShowSettings(true)}
         onBrowseVmixInputs={() => setShowVmixPanel(v => !v)}
+        onToggleMediaBank={() => setShowMediaBank(v => !v)}
+        mediaBankOpen={showMediaBank}
       />
       <div className="app-body">
         <nav className="sidebar">
@@ -160,6 +259,15 @@ export default function App() {
             </button>
           ))}
           <div style={{ flex: 1 }} />
+          <button
+            className={`nav-item ${showOnAir ? 'active' : ''}`}
+            onClick={() => setShowOnAir(v => !v)}
+            title="Modo On Air — tela simplificada de operação"
+            style={{ color: state.isSequencePlaying ? 'var(--danger, #ef4444)' : undefined }}
+          >
+            <Tv size={17} />
+            <span>On Air</span>
+          </button>
           <button className="nav-item" onClick={() => setShowSettings(true)}>
             <Settings size={18} />
             <span>{t.settings.title}</span>
@@ -188,6 +296,7 @@ export default function App() {
                   setShowVmixPanel(true)
                 }}
                 onEditSchedule={(item) => { setScheduleEditItem(item) }}
+                onSelectedItemChange={(item) => { selectedItemRef.current = item }}
               />
               {showVmixPanel && <VmixInputPanel onClose={() => setShowVmixPanel(false)} />}
             </div>
@@ -196,6 +305,7 @@ export default function App() {
             <DaySchedulePanel
               selectedDate={scheduleDate}
               onDateChange={setScheduleDate}
+              onSelectedItemChange={(item) => { selectedItemRef.current = item }}
             />
           )}
           {activePanel === 'grade' && <GradePanel onNavigate={handleSetPanel} />}
@@ -203,9 +313,13 @@ export default function App() {
           {activePanel === 'clients' && <ClientsPanel />}
           {activePanel === 'campaigns' && <CampaignsPanel />}
           {activePanel === 'grafismos' && <GrafismosPanel />}
+          {activePanel === 'outputs' && <VmixOutputsPanel />}
+          {activePanel === 'vmixhealth' && <VmixHealthPanel />}
           {activePanel === 'log' && <LogPanel />}
           {activePanel === 'reports' && <ReportsPanel />}
           {activePanel === 'autoprog' && <AutoProgPanel />}
+          {activePanel === 'audiopro' && <AudioProPanel />}
+          {activePanel === 'videopro' && <VideoProPanel />}
         </main>
       </div>
       <StatusBar />
@@ -230,6 +344,32 @@ export default function App() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {/* Banco de Mídia — drawer lateral direito */}
+      {showMediaBank && (
+        <MediaBankPanel
+          tab={mediaBankTab}
+          onTabChange={setMediaBankTab}
+          onClose={() => setShowMediaBank(false)}
+          onInsert={handleMediaBankInsert}
+        />
+      )}
+
+      {/* Modo On Air — overlay de operação simplificado */}
+      {showOnAir && <OnAirPanel onClose={() => setShowOnAir(false)} />}
+
+      {/* Command Palette — Ctrl+K */}
+      {showCommandPalette && (
+        <CommandPalette
+          onClose={() => setShowCommandPalette(false)}
+          onNavigate={(panel) => {
+            dispatch({ type: 'SET_ACTIVE_PANEL', payload: panel })
+            setShowCommandPalette(false)
+          }}
+          onToggleMediaBank={() => { setShowMediaBank(v => !v); setShowCommandPalette(false) }}
+          onToggleOnAir={() => { setShowOnAir(v => !v); setShowCommandPalette(false) }}
+        />
+      )}
     </div>
   )
 }

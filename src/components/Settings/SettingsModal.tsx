@@ -240,6 +240,62 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         {testResult && <div className="ui-card-note">{testResult}</div>}
       </Section>
 
+      <Section title="Transições entre clipes">
+        <FieldRow>
+          <Field label="Tipo de transição">
+            <select
+              className="ui-select"
+              value={form.transitionType ?? 'cut'}
+              onChange={e => set('transitionType', e.target.value as 'cut' | 'fade' | 'merge')}
+            >
+              <option value="cut">Corte seco (Cut)</option>
+              <option value="fade">Fade (mistura gradual)</option>
+              <option value="merge">Merge (fusão)</option>
+            </select>
+          </Field>
+          <Field label="Duração (ms)">
+            <input
+              className="ui-input"
+              type="number"
+              min={0}
+              max={10000}
+              step={100}
+              value={form.transitionDurationMs ?? 0}
+              onChange={e => set('transitionDurationMs', Math.max(0, parseInt(e.target.value) || 0))}
+              disabled={(form.transitionType ?? 'cut') === 'cut'}
+            />
+          </Field>
+        </FieldRow>
+
+        {(form.transitionType ?? 'cut') !== 'cut' && (
+          <div className="ui-field-hint">
+            {form.transitionDurationMs && form.transitionDurationMs > 0
+              ? `O VTMaster configurará o slot 1 de transição do vMix com ${form.transitionDurationMs}ms e executará automaticamente.`
+              : 'Duração 0 = usa a duração atual do botão de transição na interface do vMix.'}
+            {' '}Para <strong>Fade</strong> entre músicas, use 1500–3000ms para uma mixagem suave.
+          </div>
+        )}
+      </Section>
+
+      <Section title="Snapshot Comercial">
+        <div className="settings-inline-actions">
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={form.snapshotOnSpot ?? false}
+              onChange={(e) => set('snapshotOnSpot', e.target.checked)}
+            />
+            Tirar snapshot ao iniciar bloco comercial
+          </label>
+        </div>
+        {(form.snapshotOnSpot) && (
+          <div className="ui-field-hint">
+            O VTMaster enviará o comando <strong>Snapshot</strong> ao vMix no primeiro item de cada bloco comercial.
+            O arquivo é salvo na pasta configurada nas preferências do próprio vMix.
+          </div>
+        )}
+      </Section>
+
       <Section title={t.settings.disparo}>
         <div className="settings-capture-row">
           <Field label={t.settings.disparoKey}>

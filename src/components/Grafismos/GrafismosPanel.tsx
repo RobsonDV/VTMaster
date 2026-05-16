@@ -59,13 +59,22 @@ function GcAutoTab() {
     const r1 = await executeVmixCommand('SetText', { input: form.gcMusicInputName, selectedName: form.gcMusicLine1Field || 'Artist.Text', value: 'Artista Teste', meta: gcMeta, validate: false })
     const r2 = await executeVmixCommand('SetText', { input: form.gcMusicInputName, selectedName: form.gcMusicLine2Field || 'Title.Text',  value: form.gcMusicDynamic ? 'Música Teste' : (form.gcMusicStaticLine2 || ' '), meta: gcMeta, validate: false })
     const ch = form.gcMusicOverlay ?? 0
-    if (ch > 0) await executeVmixCommand(`OverlayInput${ch}In`, { input: form.gcMusicInputName, meta: gcMeta })
+    const hide = form.gcMusicHideDuration ?? 0
+    if (ch > 0) {
+      await executeVmixCommand(`OverlayInput${ch}In`, { input: form.gcMusicInputName, meta: gcMeta })
+      if (hide > 0) {
+        setTimeout(() => {
+          executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta })
+        }, hide * 1000)
+      }
+    }
     if (!r1.success || !r2.success) {
       setTestMsg(`❌ Erro no SetText — Linha 1: ${r1.error ?? 'ok'} | Linha 2: ${r2.error ?? 'ok'} — Verifique o nome do Input e os nomes dos campos (precisam ter .Text no final, ex: Artist.Text)`)
     } else {
-      setTestMsg('✅ GC disparado! Se o texto não mudou no vMix, verifique os nomes dos campos (use NomeDoCampo.Text).')
+      const hideMsg = ch > 0 && hide > 0 ? ` Saindo em ${hide}s.` : ch > 0 ? ' Overlay ativo — retire manualmente no vMix ou configure "Esconder após".' : ''
+      setTestMsg(`✅ GC disparado! Se o texto não mudou no vMix, verifique os nomes dos campos (use NomeDoCampo.Text).${hideMsg}`)
     }
-    setTimeout(() => setTestMsg(null), 8000)
+    setTimeout(() => setTestMsg(null), Math.max(8000, (hide + 2) * 1000))
   }
 
   return (

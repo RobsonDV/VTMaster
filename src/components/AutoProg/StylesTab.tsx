@@ -27,6 +27,7 @@ const DEFAULT_STYLE: Omit<MusicStyle, 'id'> = {
   artistParseRule: 'filename_dash',
   cooldownDays: 7,
   color: COLORS[0],
+  isJingle: false,
 }
 
 // ─── Style Form Modal ─────────────────────────────────────────────────────────
@@ -145,6 +146,20 @@ function StyleModal({
             ))}
           </div>
         </Field>
+
+        <FieldRow>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+            <input
+              type="checkbox"
+              checked={form.isJingle ?? false}
+              onChange={e => set({ isJingle: e.target.checked })}
+            />
+            É um estilo de jingles/vinhetas
+          </label>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: 24, marginTop: 2 }}>
+            Jingles são inseridos automaticamente a cada N músicas, configurado na Sequência.
+          </div>
+        </FieldRow>
       </div>
     </Modal>
   )

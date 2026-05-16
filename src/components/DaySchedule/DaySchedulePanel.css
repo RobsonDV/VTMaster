@@ -498,6 +498,15 @@
   opacity: 0.45;
 }
 
+/* Itens de áudio — barra amarela na esquerda */
+.block-item-row.audio-item {
+  border-left: 2px solid color-mix(in srgb, #f59e0b 60%, transparent);
+  background: color-mix(in srgb, #f59e0b 3%, transparent);
+}
+.block-item-row.audio-item:hover {
+  background: color-mix(in srgb, #f59e0b 7%, transparent);
+}
+
 /* ── Drag handle ── */
 .block-item-drag-handle {
   display: flex;

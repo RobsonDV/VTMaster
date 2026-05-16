@@ -326,6 +326,66 @@ function validateCommercialBlocks(input: SchedulePreflightInput, add: (issue: Om
       }
     }
   }
+
+  const linkedBlockIds = new Set(
+    input.weekSlots
+      .filter(slot => slot.type === 'bloco_comercial' && !!slot.commercialBlockId)
+      .map(slot => slot.commercialBlockId as string),
+  )
+
+  for (const block of input.commercialBlocks) {
+    if (!block.enabled || linkedBlockIds.has(block.id)) continue
+    const blockTime = block.scheduledTime?.slice(0, 5) ?? ''
+    if (block.items.length === 0) {
+      add({
+        id: `${block.id}:standalone-commercial-block-empty`,
+        severity: 'warning',
+        title: 'Bloco comercial autonomo vazio',
+        detail: `"${block.name}" nao esta vinculado a grade, mas pode ser pre-carregado pelo autoplay comercial e nao tem itens.`,
+        time: blockTime,
+      })
+    }
+
+    for (const blockItem of block.items) {
+      const label = `Item ${blockItem.order} do bloco autonomo "${block.name}"`
+      if (blockItem.type === 'spot_client') {
+        if (!blockItem.clientId) {
+          add({
+            id: `${block.id}:${blockItem.id}:standalone-client-missing`,
+            severity: 'error',
+            title: 'Item comercial autonomo sem cliente',
+            detail: `${label} precisa de um cliente.`,
+            time: blockTime,
+          })
+          continue
+        }
+        const clientSpots = spotsByClient.get(blockItem.clientId) ?? []
+        if (clientSpots.length === 0) {
+          add({
+            id: `${block.id}:${blockItem.id}:standalone-client-without-spots`,
+            severity: 'error',
+            title: 'Cliente sem spots em bloco autonomo',
+            detail: `${label} aponta para um cliente sem midias disponiveis.`,
+            time: blockTime,
+          })
+        }
+      }
+
+      if (blockItem.type === 'vmix_input' && !blockItem.inputName?.trim()) {
+        add({
+          id: `${block.id}:${blockItem.id}:standalone-vmix-input-empty`,
+          severity: 'error',
+          title: 'Input vMix vazio em bloco autonomo',
+          detail: `${label} precisa do nome ou numero do input.`,
+          time: blockTime,
+        })
+      }
+
+      if (blockItem.type === 'vmix_action') {
+        validateVmixAction(blockItem.vmixAction, `${block.id}:${blockItem.id}:standalone`, label, add, input.vmixStatus)
+      }
+    }
+  }
 }
 
 function validateTimePlan(input: SchedulePreflightInput, add: (issue: Omit<PreflightIssue, 'id'> & { id?: string }) => void): void {

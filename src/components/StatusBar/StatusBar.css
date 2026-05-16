@@ -66,6 +66,21 @@
   color: #fff;
 }
 
+.status-badge.external {
+  background: #16a34a;
+  color: #fff;
+}
+
+.status-badge.ftb {
+  background: #f59e0b;
+  color: #111827;
+}
+
+.status-badge.srt {
+  background: #8b5cf6;
+  color: #fff;
+}
+
 .status-divider {
   width: 1px;
   height: 18px;

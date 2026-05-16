@@ -1,19 +1,19 @@
 import { useState } from 'react'
-import StylesTab from './StylesTab'
 import SequencesTab from './SequencesTab'
 import AutoBlocoTab from './AutoBlocoTab'
+import SimulatorTab from './SimulatorTab'
 import './AutoProgPanel.css'
 
-type Tab = 'styles' | 'sequences' | 'autobloco'
+type Tab = 'sequences' | 'autobloco' | 'simulator'
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'styles',    label: 'Cadastrar' },
   { id: 'sequences', label: 'Sequência' },
-  { id: 'autobloco', label: 'Autobloco' },
+  { id: 'autobloco', label: 'AutoBloco' },
+  { id: 'simulator', label: 'Simulador' },
 ]
 
 export default function AutoProgPanel() {
-  const [tab, setTab] = useState<Tab>('styles')
+  const [tab, setTab] = useState<Tab>('sequences')
 
   return (
     <div className="autoprog-panel">
@@ -30,9 +30,9 @@ export default function AutoProgPanel() {
       </div>
 
       <div className="autoprog-tab-content">
-        {tab === 'styles'    && <StylesTab />}
         {tab === 'sequences' && <SequencesTab />}
         {tab === 'autobloco' && <AutoBlocoTab />}
+        {tab === 'simulator' && <SimulatorTab />}
       </div>
     </div>
   )

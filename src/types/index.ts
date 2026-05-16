@@ -1,9 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
+﻿// ─────────────────────────────────────────────────────────────────────────────
 // SpotMaster — Type Definitions
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SpotStatus = 'pending' | 'playing' | 'done' | 'skipped' | 'error'
-export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros' | 'vmix_action' | 'pause'
+export type SpotType = 'spot' | 'vinheta' | 'programa' | 'bumper' | 'outros' | 'vmix_action' | 'pause' | 'audio_trigger'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // vMix Action Item — comando enviado diretamente ao vMix (sem mídia)
@@ -53,6 +53,7 @@ export interface PlaylistItem {
   notes?: string
   adBreakId?: string        // if part of an ad break
   vmixAction?: VmixActionItem  // present only when type === 'vmix_action'
+  audioLayerId?: string         // present only when type === 'audio_trigger'
   manuallyAdded?: boolean   // true quando o operador adicionou via UI (não veio da grade)
 }
 
@@ -250,6 +251,74 @@ export interface AppSettings {
   // ── Data Sources ──────────────────────────────────────────────────────────
   dataSourcesEnabled: boolean
   dataSourcesPort: number        // porta do servidor local (padrão: 7070)
+  // ── Banco de Mídia ────────────────────────────────────────────────────────
+  videoFolders: string[]         // pastas de vídeo extras (além das do AutoProg)
+  audioFolders: string[]         // pastas de áudio extras (além das do AudioPro)
+  // ── Transições entre clipes ───────────────────────────────────────────────
+  transitionType: 'cut' | 'fade' | 'merge'  // tipo padrão de transição
+  transitionDurationMs: number               // duração em ms (0 = usa o padrão do vMix)
+  // ── Snapshot Comercial ────────────────────────────────────────────────────
+  snapshotOnSpot: boolean         // tirar snapshot ao iniciar bloco comercial
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VideoPro — Estilos de Vídeo (catálogo de vídeos por coleção/pasta)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface VideoStyle {
+  id: string
+  name: string
+  folderPath: string
+  includeSubfolders: boolean
+  color?: string
+  createdAt: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AudioPro — Estilos de Áudio com Placeholder Visual
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AudioStylePlaceholderType = 'none' | 'image' | 'vmix_input'
+
+export interface AudioStyle {
+  id: string
+  name: string
+  folderPath: string
+  includeSubfolders: boolean
+  color?: string
+  /** Tipo de placeholder visual que aparece no vMix quando este estilo está tocando */
+  placeholderType: AudioStylePlaceholderType
+  /** Caminho da imagem (para type='image') */
+  placeholderImage?: string
+  /** Nome do input vMix onde a imagem/overlay será mostrado */
+  placeholderInputName?: string
+  /** Canal de overlay 1–4 para ativar quando o áudio inicia */
+  overlayChannel?: number
+  createdAt: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 3 — Saidas vMix / Perfis de Output
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type VmixOutputTarget =
+  | 'output2'
+  | 'output3'
+  | 'output4'
+  | 'fullscreen1'
+  | 'fullscreen2'
+  | 'external2'
+
+export type VmixOutputSource = 'program' | 'preview' | 'multiview' | 'clean_feed' | 'input' | 'mix'
+
+export interface VmixOutputProfile {
+  id: string
+  name: string
+  target: VmixOutputTarget
+  source: VmixOutputSource
+  inputName?: string
+  mix?: string
+  createdAt: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,6 +371,8 @@ export interface VmixStatus {
   recording?: boolean
   streaming?: boolean
   external?: boolean
+  srtOutput?: boolean
+  multiCorder?: boolean
   fadeToBlack?: boolean
   error?: string
 }
@@ -390,6 +461,61 @@ export interface PDFReportRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AudioPro — Camadas de Áudio Paralelas / Independentes (Fase 6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AudioLayerMode = 'parallel' | 'replace'
+export type AudioLayerSourceType = 'round_robin' | 'fixed_input'
+export type AudioPlaceholderType = 'file' | 'vmix_input'
+export type AudioLayerCategory = 'vinheta' | 'musica' | 'trilha' | 'outros'
+export type AudioLayerPlayMode = 'once' | 'loop'
+
+/** Fonte de áudio individual dentro de uma camada round-robin */
+export interface AudioPlaceholder {
+  id: string
+  name: string
+  type: AudioPlaceholderType
+  /** Caminho do arquivo no disco (para type='file') */
+  filePath?: string
+  /** Nome do input no vMix (para type='vmix_input') */
+  inputName?: string
+  /** Duração em segundos (opcional; usado para timing) */
+  duration?: number
+  /** Sobrescreve defaultMode da camada (undefined = herda) */
+  mode?: AudioLayerMode
+}
+
+/** Camada de áudio — pode ser round-robin de arquivos/inputs ou um input fixo */
+export interface AudioLayer {
+  id: string
+  name: string
+  /** Categoria: influencia comportamentos padrão */
+  category?: AudioLayerCategory
+  /** Modo de reprodução: 'once' toca e para; 'loop' fica em loop até parar */
+  playMode?: AudioLayerPlayMode
+  /** Se true, esta camada para quando qualquer outra camada for disparada */
+  stopOnNewTrigger?: boolean
+  /** Comandos vMix executados ANTES do áudio iniciar */
+  preActions?: VmixActionItem[]
+  /** Comandos vMix executados APÓS o áudio parar ou terminar */
+  postActions?: VmixActionItem[]
+  /** Modo de reprodução padrão */
+  defaultMode: AudioLayerMode
+  /** Como a fonte de áudio é selecionada */
+  sourceType: AudioLayerSourceType
+  /** Input vMix fixo (para sourceType='fixed_input') */
+  fixedInputName?: string
+  /** Canal de overlay no vMix (1–4; null = sem overlay visual; relevante para parallel) */
+  overlayChannel?: 1 | 2 | 3 | 4 | null
+  /** Volume padrão 0–100 (undefined = não altera volume no vMix) */
+  volume?: number
+  /** Lista de fontes para o round-robin */
+  placeholders: AudioPlaceholder[]
+  /** Posição atual no round-robin (persistida) */
+  currentIndex: number
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AutoProg — Programação Automática de Blocos Musicais
 // ─────────────────────────────────────────────────────────────────────────────
 export type ArtistParseRule = 'filename_dash' | 'filename_underscore' | 'subfolder' | 'none'
@@ -403,10 +529,12 @@ export interface MusicStyle {
   artistParseRule: ArtistParseRule
   cooldownDays: number    // não repetir o mesmo arquivo por X dias
   color?: string          // cor hex para identificação visual
+  isJingle?: boolean      // true = estilo de vinhetas/jingles (sem cooldown rígido, inserção a cada N músicas)
 }
 
 /** Item de uma sequência — estilo + quantidade por passagem */
 export interface MusicSequenceItem {
+  mediaType?: 'audio' | 'video'  // undefined = legado, tratado como audio
   styleId: string
   count: number
 }
@@ -421,6 +549,10 @@ export interface MusicSequence {
   fallback: 'ignore_cooldown' | 'skip' | 'alert'
   targetMode: 'count' | 'duration'
   targetValue: number           // N músicas ou N minutos
+  /** ID do estilo de jingles/vinhetas a ser inserido automaticamente */
+  jingleStyleId?: string
+  /** Inserir 1 jingle a cada N músicas regulares (0 ou undefined = desabilitado) */
+  jingleEveryN?: number
 }
 
 /** Atribuição de uma sequência a um bloco musical específico de um dia da semana */
@@ -429,6 +561,54 @@ export interface AutoBlocoAssignment {
   programSlotId: string   // ProgramSlot.id com type === 'bloco_musical'
   dayOfWeek: number       // 0=Dom … 6=Sáb
   sequenceId: string | null  // null = sem automação (modo manual)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Musical Pro — Biblioteca Musical (Fase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Faixa da biblioteca musical com metadados editáveis */
+export interface MusicTrack {
+  id: string
+  filePath: string
+  filename: string
+  /** Título editável pelo operador (fallback: nome do arquivo sem extensão) */
+  title: string
+  /** Artista editável pelo operador (fallback: extraído via artistParseRule do estilo) */
+  artist: string
+  album?: string
+  year?: number
+  /** Gênero/estilo musical (texto livre) */
+  genre?: string
+  /** Energia 1–5 (1 = calma, 5 = alta energia) */
+  energy?: number
+  /** Idioma (ex: 'pt', 'en', 'es') */
+  language?: string
+  /** BPM (batidas por minuto) */
+  bpm?: number
+  /** Tags livres para filtragem */
+  tags: string[]
+  /** Data do último dia em que a faixa foi veiculada (YYYY-MM-DD) */
+  lastAiredDate?: string
+  /** Total de veiculações registradas */
+  playCount: number
+  /** Duração em segundos */
+  duration?: number
+  /** MD5 hex do conteúdo do arquivo — detecta renomeados/duplicatas na reconciliação */
+  md5?: string
+  /** true se o arquivo não foi encontrado na última reconciliação */
+  missing?: boolean
+}
+
+/** Metadados retornados pelo IPC read-track-metadata */
+export interface TrackMetadataResult {
+  title: string | null
+  artist: string | null
+  album: string | null
+  year: number | null
+  genre: string | null
+  bpm: number | null
+  duration: number | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -460,6 +640,14 @@ export interface SpotMasterAPI {
   browseVideoFile: () => Promise<string | null>
   browseFolder: () => Promise<string | null>
   scanMusicFolder: (folderPath: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string; subfolder: string }>>
+  readTrackMetadata: (filePath: string) => Promise<TrackMetadataResult | null>
+  hashFileMd5: (filePath: string) => Promise<string | null>
+  reconcileMusicFolders: (folderPaths: string[], existingTracks: MusicTrack[]) => Promise<{
+    new: Array<{ filePath: string; filename: string }>
+    missing: string[]  // filePaths ausentes
+    renamed: Array<{ oldPath: string; newPath: string; newFilename: string; md5: string }>
+    duplicates: Array<{ tracks: string[] }>  // arrays de filePaths com mesmo md5
+  }>
   vmixRequest: (params: Record<string, string>, meta?: VmixCommandMeta) => Promise<VmixRequestResult>
   vmixStartPolling: (host: string, port: number) => Promise<boolean>
   vmixStopPolling: () => Promise<boolean>
@@ -482,6 +670,8 @@ export interface SpotMasterAPI {
   startDataSourcesServer: (port: number) => Promise<{ success: boolean; port?: number; error?: string }>
   stopDataSourcesServer: () => Promise<{ success: boolean }>
   getDataSourcesStatus: () => Promise<{ running: boolean }>
+  // Banco de Mídia — vídeos
+  scanVideoFolder: (folderPath: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string }>>
 }
 
 declare global {

@@ -5,7 +5,7 @@
 
 ## 1. Resumo executivo
 
-O VTMaster ja esta no caminho certo: ele nao e apenas uma playlist. Ele ja funciona como uma central de programacao para video, com grade semanal, programacao do dia, blocos comerciais, cadastro de anunciantes, AutoProg musical, logs, relatorios, gatilho global, integracao HTTP com vMix, auto-update e um motor de playout orientado por GUID.
+O VTMaster ja esta no caminho certo: ele nao e apenas uma playlist. Ele ja funciona como uma central de programacao para video, com grade semanal, programacao do dia, blocos comerciais, cadastro de anunciantes, AutoProg de midia, VideoPro, AudioPro, Banco de Midia, Saidas vMix, logs, relatorios, gatilho global, integracao HTTP com vMix, auto-update e um motor de playout orientado por GUID.
 
 O proximo salto nao deveria ser "mais uma tela solta". O melhor caminho e criar uma camada profissional de operacao:
 
@@ -33,7 +33,9 @@ Pelo codigo e docs, o VTMaster ja possui:
 - Blocos comerciais com mini-playlist: spot de cliente, acao vMix e input vMix.
 - Rodizio round-robin por anunciante.
 - Cadastro de clientes e spots.
-- AutoProg musical com estilos, sequencias, cooldown, janela de artista e alvo por quantidade ou duracao.
+- AutoProg de midia com sequencias mistas: estilos de video do VideoPro, estilos de audio do AudioPro, cooldown e alvo por quantidade ou duracao.
+- VideoPro com estilos proprios de video; AudioPro com estilos proprios de audio e placeholder visual opcional.
+- Painel Saidas vMix para Recording, Streaming, External, SRT Output, MultiCorder, Snapshot e perfis de output.
 - Leitura de duracao de midia com cache e fallback nativo para MP4/MOV/M4V/M4A/3GP.
 - Stop Next, ponto de pausa, skip, copiar/colar e drag-and-drop.
 - Disparo global por teclado, gamepad e MIDI.
@@ -47,7 +49,7 @@ Pelo codigo e docs, o VTMaster ja possui:
 - O uso de wall-clock evita depender somente do estado do vMix para concluir itens.
 - A separacao entre Playlist e Programacao do Dia esta correta para operacao real.
 - O fluxo de comerciais com round-robin ja resolve uma dor importante de emissoras.
-- O AutoProg musical abre um caminho muito bom para programacao tipo radio em video.
+- O AutoProg misto abre um caminho muito bom para programacao tipo radio/TV, alternando video, audio e futuras vinhetas no mesmo ciclo.
 - O auto-update ja coloca o produto em uma trilha de entrega continua.
 
 ## 4. Lacunas mais importantes
@@ -63,7 +65,7 @@ Pelo codigo e docs, o VTMaster ja possui:
 - A lista de acoes vMix na UI e pequena e hardcoded.
 - Ainda nao ha modelagem propria para titulos GT/XAML: `SetText`, `SetImage`, `SetTextVisible`, `SetCountdown`, etc.
 - Ainda nao ha uma camada para Data Sources do vMix.
-- Nao ha painel dedicado para Outputs 2-4, NDI/OMT/SRT, Fullscreen, External, Recording, Streaming e MultiCorder.
+- Ja existe painel dedicado para Saidas vMix, Recording, Streaming, External, SRT Output, MultiCorder e perfis basicos de output; ainda falta automatizar regras por grade e detectar com mais precisao recursos indisponiveis por edicao do vMix.
 - Nao ha controle avancado de audio bus, ducking, volumes por item, matriz ou presets.
 
 ### Comercial e comprovacao
@@ -148,6 +150,13 @@ Status de implantacao em 2026-05-14:
 - Botao `Validar` e modal de preflight adicionados na Programacao do Dia.
 - Botao `vMix` com painel de saude/log dos comandos recentes adicionado na Programacao do Dia.
 - Log persistente dos comandos vMix implementado em `vmixCommandLog`.
+
+Complemento P0 em 2026-05-15:
+
+- Exclusao de anunciante ficou transacional no reducer: remove cliente, spots do cliente, campanhas do cliente, itens pendentes na playlist/programacao, itens de blocos comerciais, slots legados e indice de `spotRotation`.
+- Painel dedicado "Saude vMix" criado em `src/components/VmixHealth/VmixHealthPanel.tsx` e adicionado na sidebar/Command Palette.
+- A tela de saude mostra conexao, edicao, Program/Preview, REC/STREAM/EXT/SRT/MultiCorder/FTB, inputs por tipo, inputs em estado suspeito e ultimos comandos com latencia/falha.
+- Autoplay comercial reforcado para operacao 24h+: ao virar o dia com o app aberto, `sessionStartRef` e refs de interrupcao sao resetados antes de gerar a nova programacao; o preloader tambem reinjeta blocos se `lastLoadedDate` diz "carregado hoje" mas nao ha item do bloco em `dateSchedules[today]`.
 
 ### Fase 1 - vMix Bridge 2.0
 
@@ -295,6 +304,27 @@ Cuidados:
 - Respeitar edicao do vMix.
 - Registrar tudo no log tecnico.
 
+Status de implantacao em 2026-05-15:
+
+- Painel "Saidas vMix" criado em `src/components/VmixOutputs/VmixOutputsPanel.tsx`, com abas Controle, Perfis e Automacoes.
+- Controle ao vivo implementado para Recording, Streaming, External, SRT Output, MultiCorder e Snapshot, usando `executeVmixCommand` para registrar tudo no log tecnico central.
+- Confirmacao obrigatoria via modal antes de parar Recording, Streaming, External, SRT Output e MultiCorder.
+- Perfis de output persistidos em `vmixOutputProfiles`, com destino Output 2/3/4, Fullscreen 1/2 e External 2. Fontes suportadas: Program, Preview, MultiView, Clean Feed, Input especifico e Mix especifico.
+- Catalogo vMix expandido com `StartStopRecording`, `StartStopStreaming`, `StartExternal`, `StopExternal`, `StartStopExternal`, `FullscreenOn/Off`, `SetOutputExternal2`, `SetOutputFullscreen`, `SetOutputFullscreen2`, `Start/Stop/StartStopSRTOutput`, `Start/Stop/StartStopMultiCorder`, `Snapshot` e `SnapshotInput`.
+- StatusBar passou a exibir indicadores REC, STREAM, EXT, FTB e SRT quando o status do vMix informa esses estados.
+- Parser de status vMix passou a carregar `external`, `srtOutput` e `multiCorder` quando essas tags existem no XML.
+- Painel adicionado na sidebar e na Command Palette.
+- Build validado com `npm run build` sem erros TypeScript/Vite/Electron.
+
+Pendencias desta fase: automacoes por grade ainda ficam como receitas operacionais e acoes vMix inseriveis no roteiro, nao como uma tela dedicada de regras automaticas por programa; deteccao/ocultacao por edicao do vMix ainda depende do operador, porque o app so recebe a edicao textual do XML; o estado SRT/MultiCorder depende da tag existir no XML do vMix usado em operacao.
+
+Complemento de seguranca em 2026-05-15:
+
+- A limpeza de inputs temporarios do vMix foi reforcada para evitar apagar entradas permanentes criadas pelo operador.
+- O VTMaster agora compara GUIDs existentes antes/depois do `AddInput` para descobrir qual input foi realmente criado, em vez de confiar em numero/ordem do vMix.
+- Todos os caminhos de limpeza de preload, item anterior, abortos, sweep de sequencia, Stop e sessoes AudioPro passam por `removeOwnedInput`.
+- `removeOwnedInput` so remove GUIDs rastreados como criados pelo proprio VTMaster; cameras, NDI, graficos fixos, inputs manuais e qualquer input nao adicionado pelo VTMaster nao entram nessa lista de limpeza.
+
 ### Fase 4 - Comercial Pro
 
 Objetivo: sair de "lista de spots" para "campanha comercial".
@@ -398,7 +428,72 @@ Status de implantacao em 2026-05-14:
 
 Pendencias desta fase: biblioteca musical com metadados editaveis (artista, album, ano, energia, idioma, BPM, tags) ainda nao existe — atualmente o AutoProg usa apenas estilos e sequencias de pastas/arquivos sem metadados ricos; scanner de reconciliacao (novos/removidos/renomeados/duplicados) nao implementado; simulador de grade inteira nao implementado.
 
-### Fase 6 - Experiencia do operador
+Complemento em 2026-05-15:
+
+- Tipo `MusicTrack` criado em `src/types/index.ts` com campos completos: `title`, `artist`, `album`, `year`, `genre`, `energy` (escala 1–5), `language`, `bpm`, `tags`, `lastAiredDate`, `playCount`, `duration`, `md5`, `missing`.
+- `LibraryTab.tsx` adicionado ao painel AutoProg: CRUD de faixas, modal com edicao de todos os metadados, exibicao de energia como dots visuais, badge de faixa ausente e contador de veiculacoes.
+- Scanner de reconciliacao via IPC `reconcileMusicFolders`: percorre as pastas dos estilos cadastrados, adiciona faixas novas, marca como `missing` as removidas e detecta duplicatas por MD5.
+- `SimulatorTab.tsx` + funcao `simulateMusicDay()` em `autoprog.ts`: simula a grade musical de qualquer dia da semana, exibindo blocos gerados, faixas selecionadas, duracoes e avisos de regra (cooldown, artista repetido, etc.).
+- `musicLibrary` incluida no `BACKUP_KEYS`, carregamento no `LOAD_ALL` e persistencia via `saveToStorage`.
+- Actions `SET_MUSIC_LIBRARY` e `UPSERT_MUSIC_TRACK` adicionadas ao reducer do AppContext.
+
+### Fase 6 - AudioPro
+
+Objetivo: permitir o disparo manual de camadas de audio em paralelo ou substituindo o video em ar, com controle de round-robin de fontes e integracao direta com o motor vMix.
+
+Entregas:
+
+- Painel "AudioPro" na navegacao lateral (icone Volume2) com duas abas: Controle e Camadas.
+- Cadastro de camadas de audio:
+  - nome;
+  - modo padrao: `replace` (vai ao PGM via PreviewInput+Cut) ou `parallel` (toca em paralelo, opcionalmente via overlay vMix);
+  - tipo de fonte: `fixed_input` (input permanente do vMix) ou `round_robin` (lista de fontes rotativa);
+  - canal de overlay 1–4 para modo paralelo;
+  - volume padrao 0–100 (opcional);
+  - lista de placeholders (fontes de audio).
+- Placeholders de audio:
+  - tipo `file`: arquivo em disco (MP3, WAV, AAC, OGG, FLAC, M4A, WMA, OPUS, AIFF ou video);
+  - tipo `vmix_input`: input permanente do vMix pelo nome;
+  - duracao opcional em segundos para timing do round-robin;
+  - modo individual que sobrescreve o modo padrao da camada.
+- Motor de disparo (`triggerAudioLayer`):
+  - modo `fixed_input + replace`: PreviewInput > Cut > PlayInput > SetVolume;
+  - modo `fixed_input + parallel`: PlayInput > OverlayInputN > SetVolume;
+  - modo `round_robin + file`: usa `loadNewInput` do AppContext (AddInput + pollForNewInput + waitForInputReady + SetPosition) antes de play/overlay;
+  - pre-carregamento proativo: proximo item agendado 2s antes do fim do atual;
+  - limpeza automatica por GUID 200ms apos o fim;
+  - sessoes independentes por camada: multiplas camadas ativas simultaneamente sem conflito;
+  - indice round-robin persistido no estado global e restaurado ao reabrir o app.
+- Motor de parada (`stopAudioLayer`): cancela todos os timers, remove input ativo por GUID, fecha overlay se canal configurado.
+- Aba "Controle": card por camada com indicador de status ativo/inativo, dots de round-robin mostrando proximo, botoes Disparar/Parar/Proximo e tabela de historico de disparos da sessao.
+- Aba "Camadas": CRUD completo com modal de camada (nome, modo, tipo, input fixo, overlay, volume) e modal de placeholder (nome, tipo, caminho/input, duracao, modo).
+- Novo `SpotType` `'audio_trigger'` e campo `audioLayerId?` em `PlaylistItem` para integracao futura com o motor de playout.
+- Persistencia: `audioLayers` em `BACKUP_KEYS`, carregamento no `LOAD_ALL` e auto-save via `saveToStorage`.
+
+Arquivos criados ou modificados:
+
+- `src/types/index.ts` — AudioLayer, AudioPlaceholder, AudioLayerMode, AudioLayerSourceType, AudioPlaceholderType; `audio_trigger` em SpotType; `audioLayerId?` em PlaylistItem
+- `src/store/AppContext.tsx` — `audioLayers` em AppState e initialState; actions UPSERT_AUDIO_LAYER, DELETE_AUDIO_LAYER, ADVANCE_AUDIO_LAYER_INDEX no reducer; `audioLayerActive` (useState), `audioSessionsRef`, `triggerAudioLayer`, `stopAudioLayer` no Provider; AppContextValue estendido
+- `electron/main.ts` — `'audioLayers'` em BACKUP_KEYS
+- `src/App.tsx` — import AudioProPanel, Volume2; Panel type `'audiopro'`; navItem; rendering condicional
+- `src/components/AudioPro/AudioProPanel.tsx` — container com abas Controle e Camadas
+- `src/components/AudioPro/AudioProPanel.css` — estilos do painel inteiro
+- `src/components/AudioPro/AudioLayersTab.tsx` — UI de configuracao de camadas e placeholders
+- `src/components/AudioPro/AudioControlTab.tsx` — UI de controle ao vivo
+- `src/i18n/pt.ts` e `en.ts` — chave `audio_trigger` adicionada
+
+Status de implantacao em 2026-05-15:
+
+- Implementacao completa. Build validado com 0 erros TypeScript e Vite.
+- Motor de disparo usa `loadNewInput` do AppContext (mesmo fluxo do motor principal de playout): AddInput + poll de GUID + waitForInputReady + SetPosition antes de PlayInput. Garante que o arquivo esteja decodificado antes de qualquer comando de reproducao.
+- Sessoes sao independentes por camada: multiplas camadas podem estar ativas ao mesmo tempo sem conflito de GUID ou timer.
+- Indice round-robin persistido no estado e restaurado ao reabrir o app.
+- Metadata `source: 'audiopro'` registrada em todos os comandos vMix para rastreabilidade no log de comandos.
+- Todos os comandos vMix usam a assinatura correta do servico central: `executeVmixCommand(functionName: string, { input?, value?, meta?, validate? })`.
+
+Pendencias desta fase: integracao do tipo `audio_trigger` no motor de playout (`playItem`) para disparo automatico de camada AudioPro durante a reproducao da playlist nao implementada — o disparo e manual via painel Controle; historico de disparos nao e persistido (resetado ao fechar o app); fade in/out entre itens do round-robin nao implementado.
+
+### Fase 7 - Experiencia do operador
 
 Objetivo: reduzir clique, ansiedade e erro.
 
@@ -442,9 +537,104 @@ Status de implantacao em 2026-05-14:
 - Disparo global por teclado, gamepad e MIDI ja implementados desde Fase 3 (anterior ao PLANOGPT).
 - Design system base em producao: `Button`, `Modal`, `Field`, `SegmentedControl`, `Badge` e `PageHeader` nos fluxos principais.
 
-Pendencias desta fase: Modo "On Air" simplificado (tela dedicada com agora/proximo/5 proximos/botoes grandes) nao implementado; command palette nao implementado; previa de midia (player interno/thumbnail/waveform) nao implementada; atalhos configuraveis por acao (alem do disparo global) nao implementados; VmixInputPanel ainda nao agrupa por tipo nem mostra PGM/PVW em tempo real.
+Complemento em 2026-05-15:
 
-### Fase 7 - Produto multiestacao e continuidade
+- Modo "On Air" implementado (`src/components/OnAir/OnAirPanel.tsx`): overlay fullscreen com Agora/A Seguir (4 itens), barra de progresso em tempo real, botoes grandes INICIAR/PARAR/AVANCAR, badge AO VIVO/PARADO. Ativado pelo botao "On Air" na sidebar (fica vermelho durante transmissao) ou pela Command Palette. ESC fecha.
+- Command Palette implementada (`src/components/CommandPalette/CommandPalette.tsx`): Ctrl+K abre sobreposicao de busca fuzzy. Itens: ferramentas (On Air, Banco de Midia), todos os paineis de navegacao, anunciantes, campanhas ativas, camadas de audio. Navegacao por teclado (setas + Enter). ESC fecha.
+
+Pendencias desta fase: previa de midia (player interno/thumbnail/waveform) nao implementada; atalhos configuraveis por acao (alem do disparo global) nao implementados; VmixInputPanel ainda nao agrupa por tipo nem mostra PGM/PVW (InputsTab do Banco de Midia mostra PGM/PVW via badge).
+
+### Fase 7B - Banco de Midia e Gestao de Pastas
+
+Objetivo: dar ao operador um painel lateral sempre acessivel com toda a midia disponivel (videos, audios, inputs vMix e acoes vMix), com insercao por "+" abaixo do item selecionado ou por drag-and-drop diretamente nas listas de Playlist e Programacao do Dia.
+
+Entregas:
+
+Biblioteca Musical — correcoes e importacao em massa:
+
+- Botao "Importar Pasta" na LibraryTab, independente de ter estilos cadastrados:
+  - abre seletor de pasta;
+  - pergunta se inclui subpastas;
+  - escaneia arquivos .mp3 / .wav / .flac / .m4a / .aac;
+  - le metadados e calcula MD5 em paralelo;
+  - faz upsert em lote na musicLibrary com barra de progresso;
+  - exibe resumo: "N faixas importadas, M ja existiam".
+- Reconciliacao melhorada:
+  - quando nenhum estilo esta cadastrado, exibir callout "Use Importar Pasta para adicionar faixas sem precisar de estilos" em vez de desabilitar o botao;
+  - apos reconciliar, botao "Importar todos os novos (N)" para upsert em lote das faixas novas encontradas.
+
+Banco de Midia — drawer lateral direito (360px):
+
+- Botao "Banco de Midia" na Toolbar (icone Database) abre/fecha o drawer; permanece aberto em qualquer painel.
+- Quatro abas com icone e busca propria:
+  - Videos: pastas de video cadastradas (salvas em `settings.videoFolders`); botao "Adicionar pasta" abre seletor de pasta; lista de arquivos por pasta com scan sob demanda (mp4 / mov / avi / mkv / wmv / mxf); busca por nome de arquivo.
+  - Audios: `state.musicLibrary` com busca por titulo / artista / genero e filtro por estilo.
+  - Inputs: `state.vmixStatus?.inputs` com filtro por tipo (VideoList, Camera, NDI, Audio); estado vazio se vMix desconectado.
+  - Acoes: `VMIX_COMMAND_CATALOG` (itens nao ocultos) agrupados por categoria; campos de input/value inline por linha.
+- Comportamento ao clicar "+":
+  - insere o item abaixo do item atualmente selecionado no painel ativo (mesmo padrao do `VmixInputPanel`);
+  - se nenhum item estiver selecionado, abre `BlockPickerModal` ja existente;
+  - sem modal de escolha de destino — o operador controla o destino pela selecao visual.
+- Drag and drop (Audios e Videos):
+  - cards de audio e video no drawer sao `draggable`;
+  - ao arrastar sobre a Playlist ou Programacao do Dia, aparece indicador de insercao entre os itens;
+  - ao soltar, o item e inserido na posicao exata;
+  - reutiliza o padrao `dragItem` / `dropItem` ja existente na Playlist e na Programacao;
+  - inputs vMix e acoes vMix: apenas "+" (drag nao necessario para esses tipos).
+
+Arquivos principais:
+
+- `src/components/MediaBank/MediaBankPanel.tsx` — container do drawer (novo)
+- `src/components/MediaBank/MediaBankPanel.css` — estilos (novo)
+- `src/components/MediaBank/VideosTab.tsx` — aba de videos (novo)
+- `src/components/MediaBank/AudiosTab.tsx` — aba de audios (novo)
+- `src/components/MediaBank/InputsTab.tsx` — aba de inputs vMix (novo)
+- `src/components/MediaBank/ActionsTab.tsx` — aba de acoes vMix (novo)
+- `src/components/AutoProg/LibraryTab.tsx` — botao Importar Pasta + reconciliacao melhorada
+- `src/types/index.ts` — `videoFolders?: string[]` em AppSettings
+- `src/store/AppContext.tsx` — DEFAULT_SETTINGS.videoFolders: []
+- `src/components/Toolbar/Toolbar.tsx` — botao Database + prop onToggleMediaBank
+- `src/App.tsx` — estado showMediaBank + render MediaBankPanel como drawer
+
+Status de implantacao em 2026-05-15: implementado completamente.
+
+- Drawer lateral direito (360px) abre/fecha pelo botao "Database" na toolbar (ativo = cor primaria).
+- Quatro abas:
+  - **Videos**: pastas de video cadastradas em `settings.videoFolders`; botao "Adicionar" (browse); botao "Escanear" (scan sob demanda); toggle subpastas; busca por nome de arquivo; agrupado por pasta; "+" insere como item tipo `programa`.
+  - **Audios**: lista `state.musicLibrary` com busca por titulo/artista/genero e filtro por genero; "+" insere como tipo `spot` com caminho e duracao da biblioteca.
+  - **Inputs**: inputs do vMix carregados sob demanda (botao Refresh); agrupados por tipo (Video, Camera, Audio, Graficos, Mix, Outros); badge PGM/PVW em tempo real; "+" insere respeitando `spotTypeForVmix`.
+  - **Acoes**: `VMIX_COMMAND_CATALOG` agrupado por categoria; campos inline para Input e Valor quando necessario; "+" insere `vmix_action`.
+- Insercao detecta painel ativo: se `programacao`, insere em `dateSchedules[scheduleDate]` abaixo do item selecionado via `REORDER_DATE_SCHEDULE`; se `playlist`, usa `INSERT_PLAYLIST_ITEM_AFTER`; sem selecao, adiciona no final.
+- Selecao de item levantada para App.tsx via `onSelectedItemChange` em PlaylistTable e DaySchedulePanel; armazenada em `selectedItemRef`.
+- **Banco de Midia — Library Import**: botao "Importar Pasta" adicionado na aba Biblioteca do AutoProg. Abre seletor de pasta, pergunta sobre subpastas, escaneia arquivos de audio (.mp3/.wav/.flac/.m4a/.aac), le metadados via `readTrackMetadata`, calcula MD5, faz upsert em lote com barra de progresso inline e exibe resumo "N faixas adicionadas, M ja existiam". Botao Reconciliar agora funciona mesmo sem estilos (callout removido — aviso no title do botao).
+- `videoFolders: string[]` e `audioFolders: string[]` adicionados em `AppSettings` e `DEFAULT_SETTINGS` (pastas extras alem das do AutoProg).
+- IPC `scan-video-folder` adicionado em `electron/main.ts` e `preload.ts`.
+- `SpotMasterAPI.scanVideoFolder` adicionado em `src/types/index.ts`.
+
+Modularização 2026-05-15 (VideoPro + AudioPro expandido):
+
+- **VideoPro** (novo painel na sidebar, `src/components/VideoPro/VideoProPanel.tsx`): CRUD de `VideoStyle` (nome, pasta, subpastas, cor). Estilos cadastrados aqui alimentam o Banco de Midia → Aba Videos. AutoProg/MusicStyles nao aparecem mais na aba Videos.
+- **AudioPro** expandido: nova aba "Estilos" (`AudioStylesTab.tsx`) para CRUD de `AudioStyle`. Cada estilo tem pasta + configuracao de **placeholder visual**: tipo (`none | image | vmix_input`), arquivo de imagem, nome do input vMix e canal de overlay. Estilos cadastrados aqui alimentam o Banco de Midia → Aba Audios.
+- **Motor de placeholder** em `AppContext.playItem`: quando um item com `mediaType === 'audio'` inicia, detecta o `AudioStyle` cuja `folderPath` e prefixo do `filePath` do item. Se o estilo tem `placeholderType !== 'none'` e `overlayChannel`, dispara `OverlayInputNIn` (com `SetImage` se tipo for `image`). Quando o item termina ou a reproducao para (`stopPlayback`), dispara `OverlayInputNOff`. Referencia armazenada em `activeAudioPlaceholderRef`.
+- **Cores na programacao**: itens com `mediaType === 'audio'` recebem classe `row-audio` (PlaylistTable) e `audio-item` (DaySchedulePanel) — barra amarela na esquerda (`#f59e0b`), fundo levemente amarelado.
+- **Novos tipos** em `src/types/index.ts`: `VideoStyle`, `AudioStyle`, `AudioStylePlaceholderType`.
+- **AppState**: `videoStyles: VideoStyle[]`, `audioStyles: AudioStyle[]`.
+- **Actions**: `ADD/UPDATE/DELETE_VIDEO_STYLE`, `ADD/UPDATE/DELETE_AUDIO_STYLE`.
+- **BACKUP_KEYS** (`electron/main.ts`): `'videoStyles'`, `'audioStyles'`.
+- **Banco de Midia**: `VideosTab` le de `state.videoStyles`; `AudiosTab (Pastas)` le de `state.audioStyles`. AutoProg/MusicStyles desacoplados dos dois.
+- **AutoProg misto**: sequencias agora podem misturar estilos de audio e video no mesmo ciclo. `MusicSequenceItem` recebeu `mediaType?: 'audio' | 'video'`; o motor usa `scanMusicFolder` para audio e `scanVideoFolder` para video.
+- **Legado corrigido**: estilos antigos em `musicStyles` representam o historico do VTMaster como player de video. Por isso entram como `Video - Nome (legado)`, nunca como audio. Audio so vem de `audioStyles`.
+- **Geracao da programacao**: `generateMusicBlock` e `simulateMusicDay` usam fontes unificadas (`buildAutoProgStyleSources`) e preservam `mediaType` nos itens gerados, permitindo cor/placeholder correto na playlist e na Programacao do Dia.
+
+Redesign anterior (pos-entrega inicial):
+
+- **VideosTab**: agora exibe um **grid de cards de pasta** em vez de lista plana. Fontes atuais: estilos cadastrados no VideoPro (`state.videoStyles`) + pastas de video extras (`settings.videoFolders`). Ao clicar num card, entra no modo **browser** da pasta: escaneia arquivos de video (mp4/mov/avi/mkv/wmv/mxf/ts etc), mostra lista com extensor de arquivo e botao "+". Toggle de subpastas e botao de reescanear. Estilos de video sao geridos pelo VideoPro.
+
+- **AudiosTab**: dividida em duas sub-abas:
+  - **Pastas**: mesmo grid de cards que Videos, mas filtrando arquivos de audio (mp3/wav/flac/m4a/aac/ogg/opus). Fontes atuais: estilos cadastrados no AudioPro (`state.audioStyles`) + `settings.audioFolders`. Browser com auto-scan ao abrir.
+  - **Biblioteca**: gestao completa de faixas cadastradas (`musicLibrary`). Botao "Importar Pasta" (lote com progresso), "Adicionar Arquivo" (individual com leitura de metadados), busca, botao de edicao rapida de metadados (titulo/artista/genero/duracao) via modal inline, botao "+" para inserir na programacao.
+
+### Fase 8 - Produto multiestacao e continuidade
 
 Objetivo: preparar uso por emissoras maiores.
 
@@ -470,20 +660,20 @@ Entregas:
 
 ### P0 - Fazer primeiro
 
-- Preflight da programacao.
-- Backup automatico e escrita atomica dos JSONs.
-- Catalogo tipado de comandos vMix.
-- Logs tecnicos de comandos vMix.
-- Validacao de `vmix_action`.
-- Cleanup de `clientSpots` ao excluir anunciante.
-- Tela de saude do vMix.
+- [x] Preflight da programacao.
+- [x] Backup automatico e escrita atomica dos JSONs.
+- [x] Catalogo tipado de comandos vMix.
+- [x] Logs tecnicos de comandos vMix.
+- [x] Validacao de `vmix_action`.
+- [x] Cleanup de anunciante ao excluir: `clientSpots`, campanhas, blocos comerciais, slots legados, playlist/programacao e rotacao.
+- [x] Tela dedicada de saude do vMix.
 
 ### P1 - Alto impacto
 
 - TCP/TALLY bridge.
 - Titulos e overlays com `SetText`/`SetImage`.
 - Data Source JSON local para vMix.
-- Painel de Outputs/Recording/Streaming.
+- Regras automaticas por grade para Saidas vMix/Recording/Streaming.
 - Campanhas comerciais com validade e metas.
 - Relatorio por campanha.
 - Previa de midia.
@@ -593,26 +783,26 @@ interface VmixCommandLog {
 
 ## 11. Primeira entrega recomendada
 
-Se for escolher uma unica proxima entrega, eu faria:
+Entrega concluida como base P0:
 
 1. Preflight da Programacao.
 2. Catalogo tipado de acoes vMix.
 3. Log tecnico de comandos vMix.
-4. Painel de saude do vMix.
+4. Painel dedicado de saude do vMix.
 
 Isso melhora a confianca do operador imediatamente e prepara o terreno para todo o resto.
 
 Checklist dessa entrega:
 
-- Criar `src/utils/preflight.ts`.
-- Criar `src/services/vmixCommandCatalog.ts`.
-- Expandir `VmixActionItem` com parametros opcionais.
-- Migrar `ItemModal`, `VmixActionModal` e `AdBreaksPanel` para usar o mesmo construtor de acao.
-- Adicionar `vmixCommandLog` no estado/persistencia.
-- Criar modal "Validacao da Programacao".
-- Criar painel pequeno "Saude vMix" na toolbar/status.
-- Atualizar docs.
-- Rodar `npm run lint` e `npm run build`.
+- [x] Criar `src/utils/preflight.ts`.
+- [x] Criar catalogo tipado em `src/utils/vmixCommandCatalog.ts`.
+- [x] Expandir `VmixActionItem` com parametros opcionais.
+- [x] Migrar telas principais para usar o catalogo/construtor compartilhado.
+- [x] Adicionar `vmixCommandLog` no estado/persistencia.
+- [x] Criar modal "Validacao da Programacao".
+- [x] Criar painel dedicado "Saude vMix" na sidebar/Command Palette.
+- [x] Atualizar docs.
+- [x] Rodar build.
 
 ## 12. O que eu nao priorizaria agora
 

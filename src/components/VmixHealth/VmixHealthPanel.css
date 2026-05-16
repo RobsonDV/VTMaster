@@ -1,0 +1,222 @@
+.vmix-health-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.vmix-health-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.vmix-health-card,
+.vmix-health-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.vmix-health-card {
+  min-width: 0;
+  padding: 12px;
+}
+
+.vmix-health-card.ok { border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
+.vmix-health-card.warn { border-color: color-mix(in srgb, var(--warning) 48%, var(--border)); }
+.vmix-health-card.bad { border-color: color-mix(in srgb, var(--error) 55%, var(--border)); }
+
+.vmix-health-card span,
+.vmix-health-live-grid span,
+.vmix-health-input-group span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.vmix-health-card strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-primary);
+  font-size: 1.08rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vmix-health-card small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vmix-health-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.vmix-health-section {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.vmix-health-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.vmix-health-section-head strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.vmix-health-section-head span {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.vmix-health-live-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.vmix-health-live-grid > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+
+.vmix-health-live-grid svg {
+  grid-row: span 2;
+  color: var(--accent);
+}
+
+.vmix-health-live-grid strong {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vmix-health-input-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.vmix-health-input-group {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+
+.vmix-health-input-group strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.vmix-health-input-list,
+.vmix-health-command-list {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.vmix-health-input-row,
+.vmix-health-command {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vmix-health-input-row {
+  grid-template-columns: minmax(0, 1fr) 110px;
+}
+
+.vmix-health-input-row strong,
+.vmix-health-command strong {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vmix-health-input-row span {
+  color: var(--warning);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.vmix-health-command {
+  grid-template-columns: 76px minmax(120px, 1fr) 90px minmax(90px, 1fr) 100px;
+}
+
+.vmix-health-command span,
+.vmix-health-command em,
+.vmix-health-command small,
+.vmix-health-command b {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vmix-health-command.ok b { color: var(--success); }
+.vmix-health-command.bad b { color: var(--error); }
+
+.vmix-health-empty {
+  margin: 12px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 1100px) {
+  .vmix-health-overview,
+  .vmix-health-main {
+    grid-template-columns: 1fr;
+  }
+}

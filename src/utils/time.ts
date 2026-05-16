@@ -42,11 +42,15 @@ export function formatDate(dateStr: string, lang: 'pt' | 'en' = 'pt'): string {
   return `${m}/${d}/${y}`
 }
 
+/** Formats a Date as YYYY-MM-DD using the local timezone, never UTC. */
+export function dateToLocalYmd(date = new Date()): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 /** Returns today's date as YYYY-MM-DD (local timezone, not UTC) */
 export function today(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return dateToLocalYmd()
 }

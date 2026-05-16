@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **15/05/2026** — Versão **5.2.0** — Fases 1–13 + Comercial Pro completo + Fase 2 Grafismos + correções e melhorias
+> Atualizado em **15/05/2026** — Versão **5.2.0** — Fases 1–13 + Comercial Pro + Grafismos + Banco de Mídia + On Air + Command Palette + Saidas vMix + AutoProg misto AudioPro/VideoPro
 
 ---
 
@@ -27,7 +27,9 @@
 19. [Correção crítica: Autoplay Comercial](#19-correção-crítica-autoplay-comercial)
 20. [Melhorias v5.2.0](#20-melhorias-v520)
 21. [Fase 2 — Grafismos (v5.2.0)](#21-fase-2--grafismos-v520)
-22. [Backlog](#22-backlog)
+22. [Fases 7 e 7b — Banco de Mídia, On Air e Command Palette](#22-fases-7-e-7b--banco-de-mídia-on-air-e-command-palette-v520)
+23. [Complementos 15/05/2026](#23-complementos-15052026)
+24. [Backlog](#24-backlog)
 
 ---
 
@@ -1611,13 +1613,134 @@ dataSourcesPort: number    // padrão: 7070
 
 ---
 
-## 22. Backlog
+## 22. Fases 7 e 7b — Banco de Mídia, On Air e Command Palette (v5.2.0)
+
+### Banco de Mídia (Fase 7b)
+
+Drawer lateral direito (360px) acessível pelo botão `Database` na toolbar (ícone muda para cor primária quando aberto).
+
+**Aba Videos:**
+- Pastas de video cadastradas no VideoPro (`state.videoStyles`) e pastas extras (`settings.videoFolders`).
+- Botao "Adicionar" -> `browseFolder`.
+- Toggle "incluir subpastas".
+- Botao "Escanear" -> IPC `scan-video-folder` (escaneia mp4/mov/avi/mkv/wmv/mxf/flv/webm/ts/m2ts).
+- Lista agrupada por pasta com busca por nome de arquivo.
+- "+" insere como item `programa` no final da playlist ativa.
+
+**Aba Audios:**
+- Sub-aba Pastas alimentada pelo AudioPro (`state.audioStyles`) e pastas extras (`settings.audioFolders`).
+- Sub-aba Biblioteca alimentada por `state.musicLibrary` (faixas importadas).
+- Busca por titulo, artista, genero; filtro por genero na biblioteca.
+- "+" insere como item de audio com `mediaType: 'audio'`.
+
+**Aba Inputs:**
+- Inputs carregados sob demanda do vMix (botão Refresh).
+- Agrupados por categoria: Vídeo, Câmera, Áudio, Gráficos, Mix, Outros.
+- Badge PGM/PVW em tempo real via `state.vmixStatus`.
+- "+" usa `spotTypeForVmix` para definir o tipo correto.
+
+**Aba Ações:**
+- `VMIX_COMMAND_CATALOG` (itens não ocultos) agrupados por categoria.
+- Campos inline para Input e Valor quando exigidos pelo catálogo.
+- "+" insere `vmix_action` com os campos preenchidos.
+
+**Importar Pasta (LibraryTab / Biblioteca Musical):**
+- Botão "Importar Pasta" no PageHeader da aba Biblioteca do AutoProg.
+- Abre seletor de pasta → pergunta se inclui subpastas → escaneia `.mp3/.wav/.flac/.m4a/.aac`.
+- Lê metadados via `readTrackMetadata` e MD5 via `hashFileMd5`.
+- Faz upsert em lote com barra de progresso inline (`importProgress / importTotal`).
+- Exibe resumo: "N faixas adicionadas, M já existiam".
+- Reconciliar funciona mesmo sem estilos cadastrados (hint no `title` do botão).
+
+### Modo On Air (Fase 7)
+
+Overlay fullscreen (`src/components/OnAir/OnAirPanel.tsx`):
+- Ativado pelo botão "On Air" na sidebar (fica vermelho durante transmissão) ou pela Command Palette.
+- Exibe: badge AO VIVO/PARADO, nome da emissora, card "Agora no ar" com título grande + barra de progresso em tempo real, lista "A Seguir" (até 4 itens).
+- Botões grandes: **INICIAR** (verde) / **PARAR** (vermelho) + **AVANÇAR** (skip).
+- ESC fecha o overlay.
+- Detecta automaticamente a fila ativa (Playlist ou Programação do Dia) via `state.activePanel`.
+
+### Command Palette (Fase 7)
+
+Sobreposição de busca rápida (`src/components/CommandPalette/CommandPalette.tsx`):
+- Ativada por **Ctrl+K** (ou Cmd+K no Mac) a partir de qualquer painel.
+- Busca fuzzy em: ferramentas (On Air, Banco de Mídia), painéis de navegação (11 itens), anunciantes, campanhas ativas, camadas AudioPro (disparo direto).
+- Navegação por teclado: ↑↓ seleciona, Enter executa, ESC fecha.
+- Máximo de 20 resultados; filtrado em tempo real.
+
+### Arquivos criados/modificados
+
+| Arquivo | O que mudou |
+|---------|-------------|
+| `src/components/MediaBank/MediaBankPanel.tsx` | Container do drawer (novo) |
+| `src/components/MediaBank/MediaBankPanel.css` | Estilos do drawer (novo) |
+| `src/components/MediaBank/VideosTab.tsx` | Aba de vídeos (novo) |
+| `src/components/MediaBank/AudiosTab.tsx` | Aba de áudios (novo) |
+| `src/components/MediaBank/InputsTab.tsx` | Aba de inputs vMix (novo) |
+| `src/components/MediaBank/ActionsTab.tsx` | Aba de ações vMix (novo) |
+| `src/components/OnAir/OnAirPanel.tsx` | Modo On Air (novo) |
+| `src/components/OnAir/OnAirPanel.css` | Estilos do On Air (novo) |
+| `src/components/CommandPalette/CommandPalette.tsx` | Command Palette (novo) |
+| `src/components/CommandPalette/CommandPalette.css` | Estilos da Palette (novo) |
+| `src/components/AutoProg/LibraryTab.tsx` | Botão Importar Pasta + progresso |
+| `src/components/Toolbar/Toolbar.tsx` | Botão Database + prop `onToggleMediaBank` |
+| `src/App.tsx` | Estado `showMediaBank/showOnAir/showCommandPalette`, Ctrl+K, botão On Air na sidebar |
+| `src/types/index.ts` | `videoFolders` em `AppSettings`; `scanVideoFolder` em `SpotMasterAPI` |
+| `src/store/AppContext.tsx` | `videoFolders: []` em `DEFAULT_SETTINGS` |
+| `electron/main.ts` | IPC `scan-video-folder` |
+| `electron/preload.ts` | Bridge `scanVideoFolder` |
+
+---
+
+## 23. Complementos 15/05/2026
+
+### Saidas vMix
+
+A Fase 3 do PLANOGPT foi implantada como painel `Saidas vMix` (`src/components/VmixOutputs/VmixOutputsPanel.tsx`). O painel controla Recording, Streaming, External, SRT Output, MultiCorder e Snapshot, com confirmacao antes de parar operacoes criticas.
+
+Perfis de output ficam persistidos em `vmixOutputProfiles`, com destinos Output 2/3/4, Fullscreen 1/2 e External 2. O catalogo de comandos vMix foi ampliado para comandos de Start/Stop/StartStop, Fullscreen, SetOutput, SRT, MultiCorder e Snapshot. A StatusBar exibe REC, STREAM, EXT, FTB e SRT quando o XML do vMix informa esses estados.
+
+Pendencia restante: automacoes por grade ainda sao operacionais/manualizaveis por acoes vMix, nao uma tela completa de regras automaticas por programa.
+
+### Limpeza segura de inputs vMix
+
+A rotina de inputs temporarios foi reforcada para evitar remover entradas permanentes do operador. O VTMaster compara GUIDs antes/depois do `AddInput` e registra apenas o GUID criado por ele. A remocao passa por `removeOwnedInput`, usado em preload antigo, item anterior, abortos, sweeps de sequencia, Stop e sessoes AudioPro.
+
+Regra de seguranca documentada: cameras, NDI, graficos fixos, inputs manuais e qualquer input que nao tenha sido criado pelo VTMaster nao entram na lista de limpeza. Se um input ja existia no vMix antes da execucao, ele nao deve ser removido pelo VTMaster.
+
+### AutoProg misto AudioPro/VideoPro
+
+O modal de sequencias do AutoProg foi atualizado para montar ciclos mistos. Cada linha pode apontar para um estilo de audio do AudioPro ou um estilo de video do VideoPro, permitindo sequencias como video -> audio -> video sem separar programacoes.
+
+`MusicSequenceItem` recebeu `mediaType?: 'audio' | 'video'`. `generateMusicBlock` e `simulateMusicDay` aceitam fontes unificadas (`AutoProgStyleSource`) e usam `scanMusicFolder` para audio e `scanVideoFolder` para video. Os itens gerados preservam `mediaType`, entao a Programacao do Dia consegue distinguir audio/video para cores, placeholders e execucao.
+
+Correcao importante: os estilos antigos em `musicStyles` sao legado de video, pois o VTMaster nasceu como player de video. Por isso aparecem como `Video - Nome (legado)`. Audio so deve vir de `state.audioStyles`; no momento nao ha estilos de audio cadastrados por legado.
+
+### VideoPro e Banco de Midia
+
+VideoPro passou a ter CRUD proprio de `VideoStyle` e deixou de ser apenas wrapper dos estilos musicais antigos. A aba Videos do Banco de Midia le `state.videoStyles`; a aba Audios/Pastas le `state.audioStyles`. AutoProg/MusicStyles antigos ficam apenas como compatibilidade de video legado para geracao.
+
+Arquivos principais envolvidos: `src/utils/autoprog.ts`, `src/utils/autoprogStyles.ts`, `src/components/AutoProg/SequencesTab.tsx`, `src/components/AutoProg/SimulatorTab.tsx`, `src/components/VideoPro/VideoProPanel.tsx`, `src/components/MediaBank/VideosTab.tsx`, `src/store/AppContext.tsx` e `src/types/index.ts`.
+
+### Fechamento P0 do backlog
+
+O fluxo de exclusao de anunciante foi reforcado em `src/store/AppContext.tsx`. Ao remover um cliente, o reducer agora limpa tambem spots do cliente, campanhas, itens pendentes na playlist/programacao, itens de blocos comerciais, slots legados e o indice de `spotRotation`. Isso evita referencias comerciais orfas depois da exclusao.
+
+Foi criado o painel dedicado `Saude vMix` em `src/components/VmixHealth/VmixHealthPanel.tsx`, com CSS proprio. Ele aparece na sidebar e na Command Palette. O painel mostra conexao, edicao, Program/Preview, estados operacionais (REC, STREAM, EXT, SRT, MultiCorder e FTB), inputs por tipo, inputs em estado suspeito e ultimos comandos vMix com latencia ou erro.
+
+### Correcao de autoplay comercial apos 24h parado
+
+Detectado em 15/05/2026: se o VTMaster ficasse aberto e parado atravessando a meia-noite, `sessionStartRef` continuava guardando apenas o horario de abertura do app, sem data. Assim, um comercial de hoje as 21:00 podia ser tratado como "anterior" a uma sessao aberta ontem as 22:00 e ser bloqueado pelo guard de seguranca.
+
+Correcao aplicada em `src/store/AppContext.tsx`: no watcher de virada de dia, `sessionStartRef` volta para `00:00:00`, os refs de interrupcao sao limpos e `minOrderRef` retorna para `-1` antes de gerar a programacao do novo dia. O preloader de comerciais tambem deixou de confiar apenas em `lastLoadedDate`; se o bloco esta marcado como carregado hoje mas nao existe item dele em `dateSchedules[today]`, ele pode ser injetado novamente dentro da janela de preload/grace. O loop do preloader agora usa `workingSchedule`/`workingRotation`, evitando perda de itens quando mais de um bloco entra na mesma varredura.
+
+## 24. Backlog
 
 ### Alta prioridade
 
 | Item | Descrição |
 |------|-----------|
-| **Cleanup ao excluir anunciante** | `clientSpots` ficam órfãos ao deletar o cliente — spots não são limpos das referências em `commercialBlocks.items` |
 | **Prévia de mídia** | Pré-visualizar clipe antes de adicionar à programação |
 | **Edição inline de título/duração** | Editar diretamente na linha do card sem abrir modal |
 
@@ -1626,7 +1749,7 @@ dataSourcesPort: number    // padrão: 7070
 | Item | Descrição |
 |------|-----------|
 | **Regra de separação mínima** | Não veicular dois spots do mesmo cliente em intervalos muito próximos no mesmo dia |
-| **Comprovante por campanha com evidência** | Snapshot vMix (`SnapshotInput`) capturado no início de cada spot — depende da Fase 3 (Outputs/Recording) |
+| **Comprovante por campanha com evidencia** | Snapshot vMix (`SnapshotInput`) capturado no inicio de cada spot, agora com Fase 3 disponivel como base tecnica |
 | **Alerta de campanha quase vencendo** | Notificação quando restam menos de X dias e ainda há spots pendentes |
 
 ### Média prioridade — Geral
@@ -1634,7 +1757,7 @@ dataSourcesPort: number    // padrão: 7070
 | Item | Descrição |
 |------|-----------|
 | **TCP/TALLY bridge** | Fase 1 do PLANOGPT (pendente deliberada) — porta 8099, `SUBSCRIBE TALLY`, fallback HTTP |
-| **Painel de saídas e gravação** | Fase 3 do PLANOGPT — Recording, Streaming, Outputs 2-4, clean feed, MultiCorder |
+| **Regras automaticas para saidas** | Evolucao da Fase 3: regras por grade/programa para Recording, Streaming, Outputs, clean feed e MultiCorder |
 | **Importação CSV** | Carregar itens a partir de planilha |
 | **Múltiplos blocos no mesmo horário** | Potencial conflito de scheduledTime |
 | **Resetar programação do dia** | Botão para regerar do zero descartando edições manuais |
@@ -1644,7 +1767,7 @@ dataSourcesPort: number    // padrão: 7070
 | Item | Descrição |
 |------|-----------|
 | **Musical Pro** | Fase 5 do PLANOGPT — biblioteca musical com tags, scanner, simulador de grade |
-| **Modo On Air simplificado** | Fase 6 do PLANOGPT — tela com agora/próximo/5 próximos, botões grandes, command palette |
+| **Prévia de mídia (player)** | Player interno para visualizar clipe antes de adicionar — `<video>` ou modal com playback local |
 | **GC com relógio em tempo real** | Template "Hora certa" que atualiza a cada minuto enquanto ativo |
 | **Licenciamento** | Proteção por CNPJ/chave de ativação |
 | **Sincronização em rede** | Múltiplos operadores editando simultaneamente |

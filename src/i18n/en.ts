@@ -347,6 +347,7 @@ const en: Translations = {
     bumper: 'Bumper',
     outros: 'Other',
     vmix_action: 'vMix Action',
+    audio_trigger: 'Audio Trigger',
     pause: 'Pause',
   },
 
@@ -392,6 +393,53 @@ const en: Translations = {
     vmixInputPickerEmpty: 'No inputs found in vMix. Check the connection.',
     vmixInputPickerHint: 'Select an existing vMix input to add to the playlist.',
     addToPlaylist: 'Add to Playlist',
+  },
+
+  // Musical Pro — Music Library (Phase 5)
+  musicLibrary: {
+    title: 'Music Library',
+    empty: 'Library is empty. Add tracks manually or reconcile with Style folders.',
+    addTrack: 'Add Track',
+    reconcile: 'Reconcile',
+    reconcilingLabel: 'Reconciling…',
+    reconcileHint: 'Checks for new and missing files in registered Style folders.',
+    reconcileNoStyles: 'Register styles with folders before reconciling.',
+    reconcileResult: 'Reconciliation Result',
+    reconcileNew: 'new file(s) found',
+    reconcileMissing: 'missing file(s) in folder(s)',
+    reconcileInSync: 'Library is in sync with style folders.',
+    addAll: 'Add all',
+    markMissing: 'Mark missing',
+    deleteConfirm: 'Are you sure you want to remove this track from the library? The file will not be deleted from disk.',
+    metaHint: 'Metadata auto-read from ID3/MP4 tags when available. For videos without tags, fill in manually.',
+  },
+  track: {
+    title: 'Title',
+    artist: 'Artist',
+    album: 'Album',
+    year: 'Year',
+    genre: 'Genre',
+    energy: 'Energy',
+    language: 'Language',
+    bpm: 'BPM',
+    tags: 'Tags',
+    lastAired: 'Last Aired',
+    playCount: 'Play Count',
+    duration: 'Duration',
+    missing: 'File missing',
+    energyLevels: ['', '1 — Calm', '2 — Soft', '3 — Medium', '4 — Upbeat', '5 — High Energy'],
+  },
+
+  // AudioPro — Categories and play modes
+  audioCategories: {
+    vinheta: 'Jingle',
+    musica: 'Music',
+    trilha: 'Track/Bed',
+    outros: 'Other',
+  },
+  audioPlayMode: {
+    once: 'Once',
+    loop: 'Continuous Loop',
   },
 }
 

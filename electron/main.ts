@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut, powerSaveBlocker } from 'electron'
 import { createServer, type Server } from 'http'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createReadStream } from 'fs'
+import { createHash } from 'crypto'
 import { randomUUID } from 'crypto'
 import electronUpdater, { type UpdateInfo } from 'electron-updater'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
@@ -23,6 +25,14 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 let registeredTriggerKey: string | null = null
 let updateDownloaded = false
+let powerSaveBlockerId: number | null = null
+
+function localDateYmd(date = new Date()): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
 
 const BACKUP_KEYS = [
   'settings',
@@ -46,6 +56,11 @@ const BACKUP_KEYS = [
   'programWindows',
   'grafismoTitleInputs',
   'grafismoTemplates',
+  'musicLibrary',
+  'audioLayers',
+  'videoStyles',
+  'audioStyles',
+  'vmixOutputProfiles',
 ]
 
 // ── Data Sources HTTP server ──────────────────────────────────────────────────
@@ -195,7 +210,7 @@ function createDataBackup(reason = 'manual'): string {
 function ensureDailyBackup(): void {
   const backupRoot = join(getUserDataPath(), 'backups')
   if (!existsSync(backupRoot)) mkdirSync(backupRoot, { recursive: true })
-  const todayPrefix = new Date().toISOString().slice(0, 10)
+  const todayPrefix = localDateYmd()
   const alreadyExists = readdirSync(backupRoot, { withFileTypes: true })
     .some(entry => entry.isDirectory() && entry.name.startsWith(todayPrefix) && entry.name.includes('daily'))
   if (!alreadyExists) createDataBackup('daily')
@@ -439,6 +454,7 @@ function createWindow(): void {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
     icon: app.isPackaged
       ? join(process.resourcesPath, 'icon.ico')
@@ -461,6 +477,7 @@ function createWindow(): void {
 // App lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
   setupAutoUpdater()
 
   // Serve local files through custom protocol so renderer can read video/audio
@@ -501,6 +518,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+  }
   globalShortcut.unregisterAll()
 })
 
@@ -567,7 +587,7 @@ ipcMain.handle('export-playlist', async (_event, data: unknown) => {
   if (!mainWindow) return null
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Exportar Playlist',
-    defaultPath: `playlist-${new Date().toISOString().slice(0, 10)}.json`,
+    defaultPath: `playlist-${localDateYmd()}.json`,
     filters: [{ name: 'JSON', extensions: ['json'] }],
   })
   if (!result.canceled && result.filePath) {
@@ -599,7 +619,7 @@ ipcMain.handle('import-playlist', async () => {
 // Export weekly grid structure
 ipcMain.handle('export-grid', async (_event, data: unknown) => {
   if (!mainWindow) return null
-  const date = new Date().toISOString().slice(0, 10)
+  const date = localDateYmd()
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Exportar Estrutura de Grade',
     defaultPath: `grade-${date}.vtgrid`,
@@ -722,6 +742,152 @@ ipcMain.handle('scan-music-folder', async (_event, folderPath: string, includeSu
   return results
 })
 
+// ── Musical Pro — Fase 5 ──────────────────────────────────────────────────────
+
+// Helper: computa MD5 de um arquivo via streaming (null em caso de erro)
+async function computeStreamMd5(filePath: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    try {
+      const hash = createHash('md5')
+      const stream = createReadStream(filePath, { highWaterMark: 64 * 1024 })
+      stream.on('data', (chunk) => hash.update(chunk))
+      stream.on('end', () => resolve(hash.digest('hex')))
+      stream.on('error', () => resolve(null))
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+// Lê metadados de tags de um arquivo de áudio/vídeo via music-metadata
+ipcMain.handle('read-track-metadata', async (_event, filePath: string) => {
+  try {
+    const { parseFile } = await import('music-metadata')
+    const meta = await parseFile(filePath, { duration: true, skipCovers: true })
+    return {
+      title:    meta.common.title   ?? null,
+      artist:   meta.common.artist  ?? null,
+      album:    meta.common.album   ?? null,
+      year:     meta.common.year    ?? null,
+      genre:    meta.common.genre?.[0] ?? null,
+      bpm:      meta.common.bpm     ?? null,
+      duration: meta.format.duration != null ? Math.round(meta.format.duration) : null,
+    }
+  } catch {
+    return null
+  }
+})
+
+// Calcula o hash MD5 do conteúdo de um arquivo (para detecção de duplicatas/renomeados)
+ipcMain.handle('hash-file-md5', async (_event, filePath: string) => {
+  return computeStreamMd5(filePath)
+})
+
+// Reconcilia a biblioteca musical com os arquivos reais nas pastas — Sub-fase 5B completo
+ipcMain.handle('reconcile-music-folders', async (_event, folderPaths: string[], existingTracks: unknown[]) => {
+  const MEDIA_EXTS = new Set([
+    'mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff',
+    'mp4','mov','avi','mkv','wmv','flv','webm',
+  ])
+  type ExistingTrack = { filePath: string; filename: string; md5?: string }
+  const tracks = existingTracks as ExistingTrack[]
+  const knownPaths = new Set(tracks.map(t => t.filePath))
+  const foundPaths = new Set<string>()
+
+  function scanDir(dir: string) {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          scanDir(join(dir, entry.name))
+        } else if (entry.isFile()) {
+          const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
+          if (MEDIA_EXTS.has(ext)) foundPaths.add(join(dir, entry.name))
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  for (const fp of folderPaths) {
+    if (fp && existsSync(fp)) scanDir(fp)
+  }
+
+  // Candidatos básicos
+  const newFileCandidates = [...foundPaths]
+    .filter(p => !knownPaths.has(p))
+    .map(p => ({ filePath: p, filename: p.split(/[\\/]/).pop() ?? p }))
+
+  const missingCandidatePaths = [...knownPaths].filter(p => !foundPaths.has(p))
+
+  // ── Sub-fase 5B: detecção de renomeados e duplicatas via MD5 ──────────────
+  const tracksWithMd5 = tracks.filter(t => t.md5 && missingCandidatePaths.includes(t.filePath))
+  const renamed: Array<{ oldPath: string; newPath: string; newFilename: string; md5: string }> = []
+  const duplicates: Array<{ tracks: string[] }> = []
+
+  if (newFileCandidates.length > 0) {
+    // Limita a 300 arquivos para evitar lentidão excessiva
+    const filesToHash = newFileCandidates.slice(0, 300)
+    const newFileMd5Map = new Map<string, string>() // path → md5
+
+    await Promise.all(
+      filesToHash.map(async (f) => {
+        const md5 = await computeStreamMd5(f.filePath)
+        if (md5) newFileMd5Map.set(f.filePath, md5)
+      })
+    )
+
+    // Detecta renomeados: track ausente cujo md5 aparece em arquivo novo
+    if (tracksWithMd5.length > 0) {
+      const md5ToMissing = new Map(tracksWithMd5.map(t => [t.md5!, t]))
+      for (const [newPath, md5] of newFileMd5Map) {
+        if (md5ToMissing.has(md5)) {
+          const oldTrack = md5ToMissing.get(md5)!
+          renamed.push({
+            oldPath: oldTrack.filePath,
+            newPath,
+            newFilename: newPath.split(/[\\/]/).pop() ?? newPath,
+            md5,
+          })
+        }
+      }
+    }
+
+    // Detecta duplicatas: md5 idêntico em 2+ arquivos novos (não cadastrados)
+    const md5Groups = new Map<string, string[]>()
+    for (const [p, md5] of newFileMd5Map) {
+      const group = md5Groups.get(md5)
+      if (group) group.push(p)
+      else md5Groups.set(md5, [p])
+    }
+    for (const [, paths] of md5Groups) {
+      if (paths.length > 1) duplicates.push({ tracks: paths })
+    }
+
+    // Duplicatas entre arquivos novos e existentes (mesmo md5 já na biblioteca)
+    const knownMd5s = new Map<string, string>() // md5 → filePath existente
+    for (const t of tracks) {
+      if (t.md5 && foundPaths.has(t.filePath)) knownMd5s.set(t.md5, t.filePath)
+    }
+    for (const [newPath, md5] of newFileMd5Map) {
+      if (knownMd5s.has(md5)) {
+        duplicates.push({ tracks: [newPath, knownMd5s.get(md5)!] })
+      }
+    }
+  }
+
+  // Excluir renomeados dos conjuntos de novos e ausentes
+  const renamedNewPaths  = new Set(renamed.map(r => r.newPath))
+  const renamedOldPaths  = new Set(renamed.map(r => r.oldPath))
+  const duplicateNewPaths = new Set(duplicates.flatMap(d => d.tracks).filter(p => !knownPaths.has(p)))
+
+  return {
+    new:      newFileCandidates.filter(f => !renamedNewPaths.has(f.filePath) && !duplicateNewPaths.has(f.filePath)),
+    missing:  missingCandidatePaths.filter(p => !renamedOldPaths.has(p)),
+    renamed,
+    duplicates,
+  }
+})
+
 // vMix HTTP request
 ipcMain.handle('vmix-request', async (_event, params: Record<string, string>, meta?: unknown) => {
   const startedAt = Date.now()
@@ -810,6 +976,33 @@ ipcMain.handle('unregister-trigger', () => {
   }
 })
 
+// ── Banco de Mídia — scanner de vídeos ───────────────────────────────────────
+
+ipcMain.handle('scan-video-folder', (_event, folderPath: string, includeSubfolders: boolean) => {
+  const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv', 'wmv', 'mxf', 'flv', 'webm', 'ts', 'm2ts'])
+  const results: Array<{ filePath: string; filename: string }> = []
+
+  function scanDir(dir: string) {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name)
+        if (entry.isDirectory() && includeSubfolders) {
+          scanDir(fullPath)
+        } else if (entry.isFile()) {
+          const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
+          if (VIDEO_EXTS.has(ext)) {
+            results.push({ filePath: fullPath, filename: entry.name })
+          }
+        }
+      }
+    } catch { /* ignore unreadable dirs */ }
+  }
+
+  if (existsSync(folderPath)) scanDir(folderPath)
+  return results
+})
+
 // ── Data Sources IPC handlers ─────────────────────────────────────────────────
 
 ipcMain.handle('datasources-update', (_event, snapshot: unknown) => {
@@ -827,9 +1020,9 @@ ipcMain.handle('datasources-start', (_event, port: number) => {
       if (url.startsWith('/vtmaster/now-next')) {
         body = { nowPlaying: dataSourcesSnapshot.nowPlaying ?? null, nextItem: dataSourcesSnapshot.nextItem ?? null }
       } else if (url.startsWith('/vtmaster/schedule')) {
-        body = { date: new Date().toISOString().slice(0, 10), schedule: dataSourcesSnapshot.schedule ?? [] }
+        body = { date: localDateYmd(), schedule: dataSourcesSnapshot.schedule ?? [] }
       } else if (url.startsWith('/vtmaster/log-today')) {
-        body = { date: new Date().toISOString().slice(0, 10), log: dataSourcesSnapshot.log ?? [] }
+        body = { date: localDateYmd(), log: dataSourcesSnapshot.log ?? [] }
       } else {
         body = { status: 'VTMaster Data Sources', endpoints: ['/vtmaster/now-next', '/vtmaster/schedule', '/vtmaster/log-today'] }
       }

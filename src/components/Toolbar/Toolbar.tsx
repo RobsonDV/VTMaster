@@ -1,4 +1,5 @@
 import {
+  Database,
   Download,
   FilePlus,
   FolderOpen,
@@ -26,9 +27,11 @@ interface ToolbarProps {
   onAddAdBreak: () => void
   onSettings: () => void
   onBrowseVmixInputs: () => void
+  onToggleMediaBank: () => void
+  mediaBankOpen?: boolean
 }
 
-export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseVmixInputs }: ToolbarProps) {
+export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseVmixInputs, onToggleMediaBank, mediaBankOpen }: ToolbarProps) {
   const { state, dispatch, t, saveToStorage } = useApp()
   const { settings, vmixStatus, activePanel } = state
 
@@ -123,6 +126,14 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
           <span className="lang-label">{settings.language.toUpperCase()}</span>
         </Button>
 
+        <Button
+          className="toolbar-icon-btn"
+          variant={mediaBankOpen ? 'primary' : 'ghost'}
+          iconOnly
+          onClick={onToggleMediaBank}
+          title="Banco de Mídia"
+          icon={<Database size={16} />}
+        />
         <Button className="toolbar-icon-btn" variant="ghost" iconOnly onClick={onSettings} title={t.settings.title} icon={<Settings size={16} />} />
       </div>
 
@@ -165,7 +176,11 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
               <Button
                 className="toolbar-btn"
                 variant="danger"
-                onClick={() => dispatch({ type: 'CLEAR_PLAYLIST' })}
+                onClick={() => {
+                  if (window.confirm(t.common.confirmDelete + ' (playlist)')) {
+                    dispatch({ type: 'CLEAR_PLAYLIST' })
+                  }
+                }}
                 title={t.toolbar.clearAll}
                 disabled={state.playlist.length === 0}
                 icon={<Trash2 size={15} />}

@@ -1,7 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // AutoProg — Motor de Geração de Blocos Musicais
 // ─────────────────────────────────────────────────────────────────────────────
-import type { MusicStyle, MusicSequence, PlayLog } from '../types'
+import type { MusicStyle, MusicSequence, PlayLog, AutoBlocoAssignment, ProgramSlot } from '../types'
+import { dateToLocalYmd } from './time'
+
+export type AutoProgMediaType = 'audio' | 'video'
+
+export interface AutoProgStyleSource {
+  id: string
+  name: string
+  folderPath: string
+  includeSubfolders: boolean
+  color?: string
+  mediaType: AutoProgMediaType
+  artistParseRule?: MusicStyle['artistParseRule']
+  cooldownDays?: number
+  isJingle?: boolean
+}
 
 export interface ScannedFile {
   filePath: string
@@ -14,6 +29,7 @@ export interface GeneratedMusicItem {
   title: string       // nome do arquivo sem extensão
   artist: string      // extraído pela regra artistParseRule
   styleId: string
+  mediaType: AutoProgMediaType
   duration?: number   // duração real em segundos, quando conhecida
 }
 
@@ -50,10 +66,11 @@ interface CandidateFile {
 
 interface GenerateArgs {
   sequence: MusicSequence
-  styles: MusicStyle[]
+  styles: AutoProgStyleSource[]
   playLog: PlayLog[]
   date: string  // YYYY-MM-DD — data alvo para verificação de cooldown
   scanFolder: (path: string, includeSubfolders: boolean) => Promise<ScannedFile[]>
+  scanVideoFolder?: (path: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string }>>
   getDuration?: (filePath: string) => Promise<number | null | undefined> | number | null | undefined
 }
 
@@ -67,7 +84,7 @@ interface GenerateArgs {
  * - Fallback configurável quando todos os arquivos estão em cooldown
  */
 export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedMusicItem[]> {
-  const { sequence, styles, playLog, date, scanFolder, getDuration } = args
+  const { sequence, styles, playLog, date, scanFolder, scanVideoFolder, getDuration } = args
   const styleMap = new Map(styles.map(s => [s.id, s]))
 
   // Mapa: título → data mais recente em que foi tocado
@@ -87,20 +104,28 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
 
     let files: ScannedFile[]
     try {
-      files = await scanFolder(style.folderPath, style.includeSubfolders)
+      if (style.mediaType === 'video' && scanVideoFolder) {
+        const scanned = await scanVideoFolder(style.folderPath, style.includeSubfolders)
+        files = scanned.map(f => ({ ...f, subfolder: '' }))
+      } else {
+        files = await scanFolder(style.folderPath, style.includeSubfolders)
+      }
     } catch {
       files = []
     }
 
     const cooldownCutoff = new Date(date)
-    cooldownCutoff.setDate(cooldownCutoff.getDate() - style.cooldownDays)
-    const cutoffStr = cooldownCutoff.toISOString().slice(0, 10)
+    const cooldownDays = style.cooldownDays ?? 0
+    cooldownCutoff.setDate(cooldownCutoff.getDate() - cooldownDays)
+    const cutoffStr = dateToLocalYmd(cooldownCutoff)
 
     const candidates: CandidateFile[] = files.map(f => {
       const noExt = f.filename.replace(/\.[^.]+$/, '')
-      const artist = extractArtist(f.filename, style.artistParseRule, f.subfolder)
+      const artist = style.mediaType === 'audio'
+        ? extractArtist(f.filename, style.artistParseRule ?? 'filename_dash', f.subfolder)
+        : ''
       const lp = lastPlayedByTitle.get(noExt) ?? lastPlayedByTitle.get(f.filename) ?? null
-      const onCooldown = style.cooldownDays > 0 && !!lp && lp >= cutoffStr
+      const onCooldown = cooldownDays > 0 && !!lp && lp >= cutoffStr
       return { file: f, noExt, artist, lastPlayedDate: lp, onCooldown }
     })
     styleCandidates.set(seqItem.styleId, candidates)
@@ -261,9 +286,161 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
       title: chosen.noExt,
       artist: chosen.artist,
       styleId,
+      mediaType: style.mediaType,
       ...(realDuration ? { duration: realDuration } : {}),
     })
   }
 
+  // ── Injeção de jingles (Sub-fase 5C) ──────────────────────────────────────
+  const { jingleStyleId, jingleEveryN } = sequence
+  if (jingleStyleId && jingleEveryN && jingleEveryN > 0 && result.length > 0) {
+    const jingleStyle = styleMap.get(jingleStyleId)
+    if (jingleStyle) {
+      let jingleFiles: ScannedFile[]
+      try {
+        jingleFiles = await scanFolder(jingleStyle.folderPath, jingleStyle.includeSubfolders)
+      } catch { jingleFiles = [] }
+
+      if (jingleFiles.length > 0) {
+        const withJingles: GeneratedMusicItem[] = []
+        let jingleIdx = 0
+        let regularCount = 0
+
+        for (const item of result) {
+          withJingles.push(item)
+          regularCount++
+          if (regularCount % jingleEveryN === 0) {
+            const jf = jingleFiles[jingleIdx % jingleFiles.length]
+            jingleIdx++
+            const noExt = jf.filename.replace(/\.[^.]+$/, '')
+            withJingles.push({
+              filePath: jf.filePath,
+              title:    noExt,
+              artist:   extractArtist(jf.filename, jingleStyle.artistParseRule ?? 'filename_dash', jf.subfolder),
+              styleId:  jingleStyleId,
+              mediaType: 'audio',
+            })
+          }
+        }
+        return withJingles
+      }
+    }
+  }
+
   return result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Simulador de Grade Musical (Sub-fase 5D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DayBlockResult {
+  assignment: AutoBlocoAssignment
+  slotTitle: string
+  slotTime: string   // HH:MM
+  sequence: MusicSequence
+  tracks: GeneratedMusicItem[]
+  totalDuration: number  // segundos estimados (real se getDuration fornecido, senão 180s/faixa)
+  error?: string
+}
+
+interface SimulateDayArgs {
+  dayOfWeek: number
+  assignments: AutoBlocoAssignment[]
+  sequences: MusicSequence[]
+  styles: AutoProgStyleSource[]
+  programSlots: ProgramSlot[]   // slots da grade semanal para o dayOfWeek
+  playLog: PlayLog[]
+  date: string                  // YYYY-MM-DD simulado
+  scanFolder: (path: string, includeSubfolders: boolean) => Promise<ScannedFile[]>
+  scanVideoFolder?: (path: string, includeSubfolders: boolean) => Promise<Array<{ filePath: string; filename: string }>>
+  getDuration?: (filePath: string) => Promise<number | null | undefined> | number | null | undefined
+}
+
+/** Gera a prévia de todos os blocos musicais de um dia da semana */
+export async function simulateMusicDay(args: SimulateDayArgs): Promise<DayBlockResult[]> {
+  const {
+    dayOfWeek, assignments, sequences, styles,
+    programSlots, playLog, date, scanFolder, scanVideoFolder, getDuration,
+  } = args
+
+  const seqMap  = new Map(sequences.map(s => [s.id, s]))
+  const slotMap = new Map(programSlots.map(p => [p.id, p]))
+
+  // Filtra só as atribuições do dia corrente com sequência definida
+  const dayAssignments = assignments.filter(
+    a => a.dayOfWeek === dayOfWeek && a.sequenceId !== null,
+  )
+
+  // Ordena por horário do slot (se disponível)
+  dayAssignments.sort((a, b) => {
+    const ta = slotMap.get(a.programSlotId)?.scheduledTime ?? ''
+    const tb = slotMap.get(b.programSlotId)?.scheduledTime ?? ''
+    return ta.localeCompare(tb)
+  })
+
+  const results: DayBlockResult[] = []
+  // Copia o playLog para simular veiculações acumuladas bloco a bloco
+  const accPlayLog = [...playLog]
+
+  for (const assignment of dayAssignments) {
+    const seq = seqMap.get(assignment.sequenceId!)
+    const slot = slotMap.get(assignment.programSlotId)
+
+    if (!seq) {
+      results.push({
+        assignment,
+        slotTitle: slot?.title ?? assignment.programSlotId,
+        slotTime:  (slot?.scheduledTime ?? '').slice(0, 5),
+        sequence: { id: '', name: '(desconhecida)', items: [], noSameArtistWindow: 0, fallback: 'skip', targetMode: 'count', targetValue: 0 },
+        tracks: [],
+        totalDuration: 0,
+        error: 'Sequência não encontrada.',
+      })
+      continue
+    }
+
+    let tracks: GeneratedMusicItem[] = []
+    let blockError: string | undefined
+
+    try {
+      tracks = await generateMusicBlock({
+        sequence: seq,
+        styles,
+        playLog: accPlayLog,
+        date,
+        scanFolder,
+        scanVideoFolder,
+        getDuration,
+      })
+      // Adiciona as faixas geradas ao playLog acumulado para o próximo bloco
+      for (const t of tracks) {
+        accPlayLog.push({
+          id: crypto.randomUUID(),
+          date,
+          itemId: t.filePath,
+          title: t.title,
+          actualTime: slot?.scheduledTime ?? '00:00:00',
+          duration: t.duration ?? 0,
+          status: 'aired',
+        })
+      }
+    } catch (e) {
+      blockError = String(e)
+    }
+
+    const totalDuration = tracks.reduce((acc, t) => acc + (t.duration ?? 180), 0)
+
+    results.push({
+      assignment,
+      slotTitle: slot?.title ?? assignment.programSlotId,
+      slotTime:  (slot?.scheduledTime ?? '').slice(0, 5),
+      sequence: seq,
+      tracks,
+      totalDuration,
+      error: blockError,
+    })
+  }
+
+  return results
 }

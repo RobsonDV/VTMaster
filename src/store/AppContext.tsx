@@ -2,6 +2,7 @@
   createContext,
   useContext,
   useReducer,
+  useState,
   useEffect,
   useCallback,
   useRef,
@@ -30,11 +31,18 @@ import type {
   ProgramWindow,
   GrafismoTitleInput,
   GrafismoTemplate,
+  MusicTrack,
+  AudioLayer,
+  AudioLayerMode,
+  VideoStyle,
+  AudioStyle,
+  VmixOutputProfile,
 } from '../types'
 import { getTranslations } from '../i18n'
 import type { Translations } from '../i18n'
-import { now, today } from '../utils/time'
+import { dateToLocalYmd, now, today } from '../utils/time'
 import { generateMusicBlock as generateMusicBlockEngine } from '../utils/autoprog'
+import { buildAutoProgStyleSources } from '../utils/autoprogStyles'
 import { setPlaybackProgress } from './playbackProgress'
 import {
   detectMediaType,
@@ -71,6 +79,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   gcMusicDynamic: true,
   dataSourcesEnabled: false,
   dataSourcesPort: 7070,
+  videoFolders: [],
+  audioFolders: [],
+  transitionType: 'cut',
+  transitionDurationMs: 0,
+  snapshotOnSpot: false,
 }
 
 interface AppState {
@@ -98,8 +111,13 @@ interface AppState {
   musicStyles: MusicStyle[]
   musicSequences: MusicSequence[]
   autoBlocoAssignments: AutoBlocoAssignment[]
+  musicLibrary: MusicTrack[]
   grafismoTitleInputs: GrafismoTitleInput[]
   grafismoTemplates: GrafismoTemplate[]
+  audioLayers: AudioLayer[]
+  videoStyles: VideoStyle[]
+  audioStyles: AudioStyle[]
+  vmixOutputProfiles: VmixOutputProfile[]
 }
 
 const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
@@ -137,8 +155,13 @@ const initialState: AppState = {
   musicStyles: [],
   musicSequences: [],
   autoBlocoAssignments: [],
+  musicLibrary: [],
   grafismoTitleInputs: [],
   grafismoTemplates: [],
+  audioLayers: [],
+  videoStyles: [],
+  audioStyles: [],
+  vmixOutputProfiles: [],
 }
 
 type Action =
@@ -197,12 +220,28 @@ type Action =
   | { type: 'DELETE_MUSIC_SEQUENCE';       payload: string }
   | { type: 'SET_AUTO_BLOCO_ASSIGNMENT';   payload: AutoBlocoAssignment }
   | { type: 'DELETE_AUTO_BLOCO_ASSIGNMENT'; payload: string }
+  | { type: 'SET_MUSIC_LIBRARY';          payload: MusicTrack[] }
+  | { type: 'UPSERT_MUSIC_TRACK';         payload: MusicTrack }
+  | { type: 'DELETE_MUSIC_TRACK';         payload: string }
+  | { type: 'UPDATE_MUSIC_TRACK_PLAYED';  payload: { id: string; date: string } }
   | { type: 'ADD_GRAFISMO_TITLE_INPUT';    payload: GrafismoTitleInput }
   | { type: 'UPDATE_GRAFISMO_TITLE_INPUT'; payload: GrafismoTitleInput }
   | { type: 'DELETE_GRAFISMO_TITLE_INPUT'; payload: string }
   | { type: 'ADD_GRAFISMO_TEMPLATE';       payload: GrafismoTemplate }
   | { type: 'UPDATE_GRAFISMO_TEMPLATE';    payload: GrafismoTemplate }
   | { type: 'DELETE_GRAFISMO_TEMPLATE';    payload: string }
+  | { type: 'UPSERT_AUDIO_LAYER';          payload: AudioLayer }
+  | { type: 'DELETE_AUDIO_LAYER';          payload: string }
+  | { type: 'ADVANCE_AUDIO_LAYER_INDEX';   payload: { layerId: string; newIndex: number } }
+  | { type: 'ADD_VIDEO_STYLE';             payload: VideoStyle }
+  | { type: 'UPDATE_VIDEO_STYLE';          payload: VideoStyle }
+  | { type: 'DELETE_VIDEO_STYLE';          payload: string }
+  | { type: 'ADD_AUDIO_STYLE';             payload: AudioStyle }
+  | { type: 'UPDATE_AUDIO_STYLE';          payload: AudioStyle }
+  | { type: 'DELETE_AUDIO_STYLE';          payload: string }
+  | { type: 'ADD_VMIX_OUTPUT_PROFILE';     payload: VmixOutputProfile }
+  | { type: 'UPDATE_VMIX_OUTPUT_PROFILE';  payload: VmixOutputProfile }
+  | { type: 'DELETE_VMIX_OUTPUT_PROFILE';  payload: string }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -253,13 +292,33 @@ function reducer(state: AppState, action: Action): AppState {
           c.id === action.payload.id ? action.payload : c
         ),
       }
-    case 'DELETE_CLIENT':
+    case 'DELETE_CLIENT': {
+      const clientId = action.payload
+      const spotRotation = { ...state.spotRotation }
+      delete spotRotation[clientId]
+      const dateSchedules = Object.fromEntries(
+        Object.entries(state.dateSchedules).map(([date, items]) => [
+          date,
+          items.filter((item) => item.clientId !== clientId).map((item, i) => ({ ...item, order: i + 1 })),
+        ])
+      )
       return {
         ...state,
-        clients: state.clients.filter((c) => c.id !== action.payload),
-        clientSpots: state.clientSpots.filter((s) => s.clientId !== action.payload),
-        campaigns: state.campaigns.filter((camp) => camp.clientId !== action.payload),
+        clients: state.clients.filter((c) => c.id !== clientId),
+        clientSpots: state.clientSpots.filter((s) => s.clientId !== clientId),
+        campaigns: state.campaigns.filter((camp) => camp.clientId !== clientId),
+        playlist: state.playlist.filter((item) => item.clientId !== clientId).map((item, i) => ({ ...item, order: i + 1 })),
+        dateSchedules,
+        commercialBlocks: state.commercialBlocks.map((block) => ({
+          ...block,
+          items: block.items
+            .filter((item) => item.clientId !== clientId)
+            .map((item, i) => ({ ...item, order: i + 1 })),
+          slots: block.slots?.filter((slot) => slot.clientId !== clientId),
+        })),
+        spotRotation,
       }
+    }
     case 'ADD_CAMPAIGN':
       return { ...state, campaigns: [...state.campaigns, action.payload] }
     case 'UPDATE_CAMPAIGN':
@@ -305,10 +364,12 @@ function reducer(state: AppState, action: Action): AppState {
     case 'INSERT_PLAYLIST_ITEM_AFTER': {
       const sorted = [...state.playlist].sort((a, b) => a.order - b.order)
       const insertIdx = sorted.findIndex(i => i.order === action.payload.afterOrder)
+      // insertIdx === -1 means the target was not found — fallback: append at end
+      const splitAt = insertIdx >= 0 ? insertIdx + 1 : sorted.length
       const spliced = [
-        ...sorted.slice(0, insertIdx + 1),
+        ...sorted.slice(0, splitAt),
         action.payload.item,
-        ...sorted.slice(insertIdx + 1),
+        ...sorted.slice(splitAt),
       ].map((i, idx) => ({ ...i, order: idx + 1 }))
       return { ...state, playlist: spliced }
     }
@@ -399,6 +460,29 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'DELETE_AUTO_BLOCO_ASSIGNMENT':
       return { ...state, autoBlocoAssignments: state.autoBlocoAssignments.filter(a => a.id !== action.payload) }
+    case 'SET_MUSIC_LIBRARY':
+      return { ...state, musicLibrary: action.payload }
+    case 'UPSERT_MUSIC_TRACK': {
+      const exists = state.musicLibrary.some(t => t.id === action.payload.id)
+      return {
+        ...state,
+        musicLibrary: exists
+          ? state.musicLibrary.map(t => t.id === action.payload.id ? action.payload : t)
+          : [...state.musicLibrary, action.payload],
+      }
+    }
+    case 'DELETE_MUSIC_TRACK':
+      return { ...state, musicLibrary: state.musicLibrary.filter(t => t.id !== action.payload) }
+    case 'UPDATE_MUSIC_TRACK_PLAYED': {
+      return {
+        ...state,
+        musicLibrary: state.musicLibrary.map(t =>
+          t.id === action.payload.id
+            ? { ...t, lastAiredDate: action.payload.date, playCount: t.playCount + 1 }
+            : t
+        ),
+      }
+    }
     case 'ADD_GRAFISMO_TITLE_INPUT':
       return { ...state, grafismoTitleInputs: [...state.grafismoTitleInputs, action.payload] }
     case 'UPDATE_GRAFISMO_TITLE_INPUT':
@@ -411,6 +495,44 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, grafismoTemplates: state.grafismoTemplates.map(t => t.id === action.payload.id ? action.payload : t) }
     case 'DELETE_GRAFISMO_TEMPLATE':
       return { ...state, grafismoTemplates: state.grafismoTemplates.filter(t => t.id !== action.payload) }
+    case 'UPSERT_AUDIO_LAYER': {
+      const exists = state.audioLayers.some(l => l.id === action.payload.id)
+      return {
+        ...state,
+        audioLayers: exists
+          ? state.audioLayers.map(l => l.id === action.payload.id ? action.payload : l)
+          : [...state.audioLayers, action.payload],
+      }
+    }
+    case 'DELETE_AUDIO_LAYER':
+      return { ...state, audioLayers: state.audioLayers.filter(l => l.id !== action.payload) }
+    case 'ADD_VIDEO_STYLE':
+      return { ...state, videoStyles: [...state.videoStyles, action.payload] }
+    case 'UPDATE_VIDEO_STYLE':
+      return { ...state, videoStyles: state.videoStyles.map(s => s.id === action.payload.id ? action.payload : s) }
+    case 'DELETE_VIDEO_STYLE':
+      return { ...state, videoStyles: state.videoStyles.filter(s => s.id !== action.payload) }
+    case 'ADD_AUDIO_STYLE':
+      return { ...state, audioStyles: [...state.audioStyles, action.payload] }
+    case 'UPDATE_AUDIO_STYLE':
+      return { ...state, audioStyles: state.audioStyles.map(s => s.id === action.payload.id ? action.payload : s) }
+    case 'DELETE_AUDIO_STYLE':
+      return { ...state, audioStyles: state.audioStyles.filter(s => s.id !== action.payload) }
+    case 'ADD_VMIX_OUTPUT_PROFILE':
+      return { ...state, vmixOutputProfiles: [...state.vmixOutputProfiles, action.payload] }
+    case 'UPDATE_VMIX_OUTPUT_PROFILE':
+      return { ...state, vmixOutputProfiles: state.vmixOutputProfiles.map(p => p.id === action.payload.id ? action.payload : p) }
+    case 'DELETE_VMIX_OUTPUT_PROFILE':
+      return { ...state, vmixOutputProfiles: state.vmixOutputProfiles.filter(p => p.id !== action.payload) }
+    case 'ADVANCE_AUDIO_LAYER_INDEX':
+      return {
+        ...state,
+        audioLayers: state.audioLayers.map(l =>
+          l.id === action.payload.layerId
+            ? { ...l, currentIndex: action.payload.newIndex }
+            : l
+        ),
+      }
     default:
       return state
   }
@@ -438,6 +560,9 @@ interface AppContextValue {
   ) => Promise<void>
   skipToNext: () => Promise<void>
   setStopAfterCurrent: (v: boolean) => void
+  triggerAudioLayer: (layerId: string, opts?: { mode?: AudioLayerMode }) => Promise<void>
+  stopAudioLayer: (layerId: string) => Promise<void>
+  audioLayerActive: Record<string, boolean>
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -453,10 +578,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state })
 
+  // ── AudioPro runtime state (not persisted) ────────────────────────────────
+  // Tracks which audio layers are currently playing (used by AudioControlTab)
+  const [audioLayerActive, setAudioLayerActive] = useState<Record<string, boolean>>({})
+  // Runtime session data for each active layer — holds GUIDs and timers for cleanup
+  type AudioSession = { looping: boolean; currentGuid?: string; timers: ReturnType<typeof setTimeout>[] }
+  const audioSessionsRef = useRef<Map<string, AudioSession>>(new Map())
+
   // Tracks the vMix input number currently on-air
   const activeInputRef = useRef<string>('')
   // Set to true by stopPlayback(); checked inside every async loop
   const abortRef = useRef<boolean>(false)
+  // Guarda o canal de overlay ativado pelo AudioStyle placeholder para desativar ao parar
+  const activeAudioPlaceholderRef = useRef<{ channel: number } | null>(null)
+  // Evita duplicar snapshot para o mesmo adBreakId (tira apenas no primeiro item do bloco)
+  const lastSnapshotAdBreakRef = useRef<string | null>(null)
   // When true, the abort was triggered by the schedule (not the user).
   // runSequence uses this to resume instead of stopping.
   const scheduleInterruptRef = useRef<boolean>(false)
@@ -526,7 +662,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newRotation = { ...rotation }
     const items: PlaylistItem[] = []
     let offset = 0
-    const todayStr = new Date().toISOString().slice(0, 10)
+    const todayStr = today()
 
     // Helper: days between two YYYY-MM-DD strings (endDate - startDate)
     const daysBetween = (start: string, end: string): number =>
@@ -687,7 +823,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Expands a block's items and appends them to the playlist tail.
   // Called by the scheduler (auto, manual workflow) and by "Recarregar" button.
   const loadBlockIntoPlaylist = useCallback((block: CommercialBlock) => {
-    const dateStr = new Date().toISOString().slice(0, 10)
+    const dateStr = today()
     const { playlist, spotRotation } = stateRef.current
     const startOrder = playlist.length + 1
 
@@ -779,7 +915,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (slot.type === 'bloco_comercial' || slot.type === 'bloco_musical') {
         if (slot.type === 'bloco_musical') {
           // AutoProg: verifica se há sequência atribuída a este slot+dia
-          const { autoBlocoAssignments, musicSequences, musicStyles, playLog } = stateRef.current
+          const { autoBlocoAssignments, musicSequences, musicStyles, audioStyles, videoStyles, playLog } = stateRef.current
           const assignment = autoBlocoAssignments.find(
             a => a.programSlotId === slot.id && a.dayOfWeek === dayOfWeek && !!a.sequenceId,
           )
@@ -790,10 +926,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               try {
                 const generated = await generateMusicBlockEngine({
                   sequence,
-                  styles: musicStyles,
+                  styles: buildAutoProgStyleSources({ audioStyles, videoStyles, legacyMusicStyles: musicStyles }),
                   playLog,
                   date: dateStr,
                   scanFolder: (p, subs) => window.spotmaster.scanMusicFolder(p, subs),
+                  scanVideoFolder: (p, subs) => window.spotmaster.scanVideoFolder(p, subs),
                   getDuration: readDurationForAutoProg,
                 })
                 if (generated.length > 0) {
@@ -807,7 +944,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       scheduledTime: slot.scheduledTime,
                       duration: g.duration ?? 0,
                       filePath: g.filePath,
-                      mediaType: detectMediaType(g.filePath),
+                      mediaType: g.mediaType,
                     })
                   })
                   musicItemsGenerated = true
@@ -1092,6 +1229,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const currentDay = today()
       if (currentDay !== lastDay) {
         lastDay = currentDay
+        // O app pode ficar aberto por dias. Ao virar a data, o "horario de inicio"
+        // da sessao precisa ser reiniciado; caso contrario 21:00 de hoje pode ser
+        // tratado como anterior a 22:00 de ontem e o autoplay comercial e bloqueado.
+        sessionStartRef.current = '00:00:00'
+        scheduleInterruptTimeRef.current = ''
+        commInterruptTimeRef.current = ''
+        minOrderRef.current = -1
         generatePlaylistFromGrid(currentDay)
       }
     }, 30_000)
@@ -1113,31 +1257,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Returns the highest input number currently registered in vMix
-  const getMaxInputNum = useCallback(async (): Promise<number> => {
-    if (!window.spotmaster) return 0
+  // Snapshot dos inputs atuais do vMix antes/depois de AddInput.
+  // Usar GUID por diferenca e mais seguro que depender apenas do maior numero:
+  // o vMix pode renumerar inputs, e inputs adicionados fora do VTMaster podem
+  // aparecer no meio do processo.
+  const getInputKeys = useCallback(async (): Promise<Set<string>> => {
+    if (!window.spotmaster) return new Set()
     const st = await requestVmixXml()
-    if (!st.success || !st.data) return 0
-    const matches = [...st.data.matchAll(/<input\b[^>]*\bnumber="(\d+)"/gi)]
-    return matches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0)
+    if (!st.success || !st.data) return new Set()
+    const matches = [...st.data.matchAll(/<input\b[^>]*\bkey="([^"]+)"/gi)]
+    return new Set(matches.map(m => m[1]))
   }, [])
 
-  // Polls until a new input (number > prevMax) appears after AddInput.
+  // Polls until a new input appears after AddInput.
   // Returns the input's GUID (key attribute) — stable across renumbering.
   // Aceita tanto <input ...>content</input> quanto <input ... /> (self-closing).
-  const pollForNewInput = useCallback(async (prevMax: number): Promise<string | null> => {
-    for (let attempt = 0; attempt < 50; attempt++) {
+  const pollForNewInput = useCallback(async (knownKeys: Set<string>): Promise<string | null> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
       await sleep(200)
       if (!window.spotmaster) return null
       const st = await requestVmixXml()
       if (st.success && st.data) {
-        // Match abertura da tag input — não exige </input>, então funciona em ambos os formatos.
         const tags = [...st.data.matchAll(/<input\b([^>]*?)\/?>/gi)]
         for (const tag of tags) {
           const attrs = tag[1]
-          const numM = attrs.match(/\bnumber="(\d+)"/i)
           const keyM = attrs.match(/\bkey="([^"]+)"/i)
-          if (numM && parseInt(numM[1]) > prevMax && keyM) {
+          if (keyM && !knownKeys.has(keyM[1])) {
             return keyM[1]  // return GUID — never changes when vMix renumbers
           }
         }
@@ -1150,20 +1295,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // vMix v28/29 mantém state="Loading" enquanto decodifica o arquivo; PlayInput
   // enviado nesse momento é silenciosamente ignorado — daí o sintoma "input
   // adicionado mas não inicia". Esperamos por estados terminais (Paused/Running/Completed).
+  // Extrai os atributos state e position de um input vMix pelo GUID.
+  // O XML do vMix coloca o atributo `key` normalmente no FINAL da tag, portanto
+  // não é possível depender de ordem de atributos. Esta função localiza a tag
+  // completa pelo GUID e extrai os atributos independente de posição.
+  const extractInputAttrs = (xml: string, guid: string): { state: string; position: number } | null => {
+    const keyIdx = xml.indexOf(`key="${guid}"`)
+    if (keyIdx < 0) return null
+    const tagStart = xml.lastIndexOf('<input', keyIdx)
+    if (tagStart < 0) return null
+    const tagEnd = xml.indexOf('>', keyIdx)
+    if (tagEnd < 0) return null
+    const tag = xml.slice(tagStart, tagEnd + 1)
+    const stateM = tag.match(/\bstate="([^"]*)"/)
+    const posM   = tag.match(/\bposition="(\d+)"/)
+    return {
+      state:    stateM?.[1] ?? '',
+      position: posM ? parseInt(posM[1]) : 0,
+    }
+  }
+
   const waitForInputReady = useCallback(async (guid: string, timeoutMs = 6000): Promise<boolean> => {
     if (!window.spotmaster) return false
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
       const st = await requestVmixXml()
       if (st.success && st.data) {
-        // Procura a tag input com o key dado e extrai state
-        const escaped = guid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const re = new RegExp(`<input\\b[^>]*\\bkey="${escaped}"[^>]*\\bstate="([^"]*)"`, 'i')
-        const m = st.data.match(re)
-        if (m) {
-          const state = m[1]
+        const attrs = extractInputAttrs(st.data, guid)
+        if (attrs) {
           // Loading = ainda decodificando. Empty = falhou. Qualquer outro = pronto.
-          if (state && state !== 'Loading' && state !== 'Empty') return true
+          if (attrs.state && attrs.state !== 'Loading' && attrs.state !== 'Empty') return true
         }
       }
       await sleep(150)
@@ -1173,24 +1334,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Polls até o state virar Running (clip efetivamente tocando) ou a position avançar.
   // Usado logo após PlayInput para confirmar que o vMix aceitou o comando.
-  const waitForInputPlaying = useCallback(async (guid: string, timeoutMs = 1200): Promise<boolean> => {
+  const waitForInputPlaying = useCallback(async (guid: string, timeoutMs = 1500): Promise<boolean> => {
     if (!window.spotmaster) return false
     const start = Date.now()
-    const escaped = guid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(`<input\\b[^>]*\\bkey="${escaped}"[^>]*\\bstate="([^"]*)"[^>]*\\bposition="(\\d+)"`, 'i')
     while (Date.now() - start < timeoutMs) {
       const st = await requestVmixXml()
       if (st.success && st.data) {
-        const m = st.data.match(re)
-        if (m) {
-          const state = m[1]
-          const pos = parseInt(m[2] || '0')
-          if (state === 'Running' || pos > 0) return true
+        const attrs = extractInputAttrs(st.data, guid)
+        if (attrs) {
+          if (attrs.state === 'Running' || attrs.position > 0) return true
         }
       }
       await sleep(100)
     }
     return false
+  }, [])
+
+  const removeOwnedInput = useCallback((
+    guid: string,
+    meta?: VmixCommandMeta,
+    delayMs = 0,
+  ) => {
+    if (!guid || !window.spotmaster) return
+    setTimeout(async () => {
+      if (!window.spotmaster) return
+      const result = await executeVmixCommand('RemoveInput', {
+        input: guid,
+        meta: { source: 'remove-owned-input', queue: 'system', ...meta },
+      })
+      if (result.success) spotmasterGuidsRef.current.delete(guid)
+    }, delayMs)
   }, [])
 
   // Loads a file as a new input in vMix.
@@ -1202,12 +1375,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const isAudio = ['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'].includes(ext)
     const vmixType = isImage ? 'Image' : isAudio ? 'AudioFile' : 'Video'
 
-    const prevMax = await getMaxInputNum()
-    await executeVmixCommand('AddInput', {
+    const knownKeys = await getInputKeys()
+    const addResult = await executeVmixCommand('AddInput', {
       value: `${vmixType}|${filePath}`,
       meta: { source: 'load-input', ...meta },
     })
-    const guid = await pollForNewInput(prevMax)  // returns GUID
+    if (!addResult.success) return null
+    const guid = await pollForNewInput(knownKeys)  // returns GUID
     if (!guid) return null
     spotmasterGuidsRef.current.add(guid)  // register so we can clean up later
     // Aguarda o vMix terminar de carregar/decodar o arquivo antes de tocar.
@@ -1226,23 +1400,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
     }
     return guid
-  }, [getMaxInputNum, pollForNewInput, waitForInputReady])  
+  }, [getInputKeys, pollForNewInput, waitForInputReady])
 
   // ── cleanupInputs ───────────────────────────────────────────────────────────
   // Removes the active input (by GUID) from vMix after delayMs.
   const cleanupInputs = useCallback((delayMs = 0) => {
     const toRemove = activeInputRef.current
     activeInputRef.current = ''
-    if (!toRemove || !window.spotmaster) return
-    setTimeout(async () => {
-      if (window.spotmaster) {
-        await executeVmixCommand('RemoveInput', {
-          input: toRemove,
-          meta: { source: 'cleanup-input', queue: 'system' },
-        })
-      }
-    }, delayMs)
-  }, [])  
+    if (!toRemove) return
+    removeOwnedInput(toRemove, { source: 'cleanup-input', queue: 'system' }, delayMs)
+  }, [removeOwnedInput])
 
   // ── playItem ────────────────────────────────────────────────────────────────
   // Sends ONE item to air and awaits until it finishes playing.
@@ -1272,7 +1439,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           type: 'ADD_LOG',
           payload: {
             id: crypto.randomUUID(),
-            date: new Date().toISOString().slice(0, 10),
+            date: today(),
             itemId: item.id,
             title: item.title,
             actualTime,
@@ -1289,7 +1456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         type: 'ADD_LOG',
         payload: {
           id: crypto.randomUUID(),
-          date: new Date().toISOString().slice(0, 10),
+          date: today(),
           itemId: item.id,
           title: item.title,
           actualTime,
@@ -1313,7 +1480,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         type: 'ADD_LOG',
         payload: {
           id: crypto.randomUUID(),
-          date: new Date().toISOString().slice(0, 10),
+          date: today(),
           itemId: item.id,
           title: item.title,
           clientId: item.clientId,
@@ -1348,10 +1515,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             console.warn(`[SpotMaster] discarding stale preload: "${cached.filePath}"`)
             const staleGuid = cached.guid
             preloadedInputRef.current = null
-            executeVmixCommand('RemoveInput', {
-              input: staleGuid,
-              meta: { ...itemMeta, source: 'discard-stale-preload' },
-            })
+            removeOwnedInput(staleGuid, { ...itemMeta, source: 'discard-stale-preload' })
           }
           guid = await loadNewInput(item.filePath, itemMeta)
         }
@@ -1361,43 +1525,72 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const isImg = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
 
           if (!cachedAlreadyOnAir) {
-            // Ordem correta para vMix 28+:
-            //   1) PreviewInput  → input vai pro PVW
-            //   2) Cut           → PVW vira PGM (input visível mas ainda Paused se for vídeo/áudio)
-            //   3) PlayInput     → só agora o clip começa a reproduzir
-            // Enviar PlayInput ANTES de o input estar no Program faz o vMix descartá-lo
-            // silenciosamente em algumas versões — sintoma: "input vai pra play e não roda".
-            await executeVmixCommand('PreviewInput', { input: guid, meta: itemMeta })
-            await sleep(150)
-            await executeVmixCommand('Cut', { meta: itemMeta })
-            await sleep(150)
-            if (!isImg) {
+            const { transitionType: txType, transitionDurationMs: txDuration } =
+              stateRef.current.settings
+            const useFade  = txType === 'fade'
+            const useMerge = txType === 'merge'
+            const useCrossfade = useFade || useMerge
+
+            if (useCrossfade && !isImg) {
+              // ── Crossfade (Fade / Merge) ──────────────────────────────────────
+              // Para crossfade com áudio contínuo:
+              //   1) PreviewInput → input vai pro PVW
+              //   2) PlayInput    → começa a tocar NO PVW (áudio entra gradualmente)
+              //   3) waitForInputPlaying → confirma Running antes de iniciar o fade
+              //   4) SetTransitionEffect1 + SetTransitionDuration1 → configura slot 1
+              //   5) Transition1 → executa a transição; o vMix faz o crossfade
+              // O clip anterior continua tocando no PGM durante o fade — sem dead air.
+              await executeVmixCommand('PreviewInput', { input: guid, meta: itemMeta })
+              await sleep(100)
               await executeVmixCommand('PlayInput', { input: guid, meta: itemMeta })
-              await sleep(200)
-              // Verifica se o input realmente saiu de Paused. Se não, manda um 2º PlayInput.
-              // Isso cobre o caso raro de vMix descartar o primeiro logo após o Cut.
-              const ok = await waitForInputPlaying(guid, 1200)
-              if (!ok) {
-                await executeVmixCommand('PlayInput', {
-                  input: guid,
-                  meta: { ...itemMeta, source: 'playout-retry' },
+              await sleep(150)
+              await waitForInputPlaying(guid, 1500)
+
+              if (txDuration > 0) {
+                const effectName = useFade ? 'Fade' : 'Merge'
+                // Configura tipo e duração no slot 1 de transição do vMix
+                await executeVmixCommand('SetTransitionEffect1', {
+                  value: effectName, meta: { ...itemMeta, source: 'transition-config' }, validate: false,
                 })
+                await executeVmixCommand('SetTransitionDuration1', {
+                  value: String(txDuration), meta: { ...itemMeta, source: 'transition-config' }, validate: false,
+                })
+                await executeVmixCommand('Transition1', { meta: itemMeta })
+              } else {
+                // Usa a duração atual configurada no vMix (botão Fade da interface)
+                await executeVmixCommand(useFade ? 'Fade' : 'Merge', { meta: itemMeta })
+              }
+
+            } else {
+              // ── Corte seco (Cut) — padrão e para imagens ─────────────────────
+              // Ordem correta para vMix 28+:
+              //   1) PreviewInput  → input vai pro PVW
+              //   2) Cut           → PVW vira PGM (input visível mas ainda Paused)
+              //   3) PlayInput     → só agora o clip começa a reproduzir
+              await executeVmixCommand('PreviewInput', { input: guid, meta: itemMeta })
+              await sleep(150)
+              await executeVmixCommand('Cut', { meta: itemMeta })
+              await sleep(150)
+              if (!isImg) {
+                await executeVmixCommand('PlayInput', { input: guid, meta: itemMeta })
+                // Aguarda até 1.5s confirmando Running. Só retenta se vMix realmente não respondeu.
+                const ok = await waitForInputPlaying(guid, 1500)
+                if (!ok) {
+                  console.warn(`[SpotMaster] PlayInput retry for "${item.title}" — vMix did not confirm Running within 1.5s`)
+                  await executeVmixCommand('PlayInput', {
+                    input: guid,
+                    meta: { ...itemMeta, source: 'playout-retry' },
+                  })
+                }
               }
             }
 
-            // Remove the PREVIOUS input 5 s after the cut.
-            // Delayed so the previous audio finishes fading out; GUID-based so
-            // vMix renumbering never removes the wrong input.
+            // Remove o input anterior após a transição completar.
+            // Para crossfade: espera a duração do fade + 2s de margem antes de remover.
             const prevGuid = activeInputRef.current
             if (prevGuid) {
-              setTimeout(async () => {
-                if (window.spotmaster) {
-                  await executeVmixCommand('RemoveInput', {
-                    input: prevGuid,
-                    meta: { ...itemMeta, source: 'remove-previous-input' },
-                  })
-                }
-              }, 5000)
+              const removeDelay = useCrossfade && txDuration > 0 ? txDuration + 2000 : 5000
+              removeOwnedInput(prevGuid, { ...itemMeta, source: 'remove-previous-input' }, removeDelay)
             }
 
             activeInputRef.current = guid
@@ -1412,7 +1605,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             type: 'ADD_LOG',
             payload: {
               id: crypto.randomUUID(),
-              date: new Date().toISOString().slice(0, 10),
+              date: today(),
               itemId: item.id,
               title: item.title,
               clientId: item.clientId,
@@ -1438,14 +1631,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // remove it now (with a 5 s grace period so audio fades out cleanly).
         const prevGuid = activeInputRef.current
         if (prevGuid) {
-          setTimeout(async () => {
-            if (window.spotmaster) {
-              await executeVmixCommand('RemoveInput', {
-                input: prevGuid,
-                meta: { ...itemMeta, source: 'remove-previous-input' },
-              })
-            }
-          }, 5000)
+          removeOwnedInput(prevGuid, { ...itemMeta, source: 'remove-previous-input' }, 5000)
         }
         // Clear the ref — this input is permanent and must NEVER be auto-removed.
         activeInputRef.current = ''
@@ -1505,11 +1691,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // ── AudioStyle placeholder visual ────────────────────────────────────────
+    // Quando um item de áudio inicia, detecta o estilo configurado e ativa
+    // a imagem ou input vMix associado para evitar tela preta no vMix.
+    if (
+      item.mediaType === 'audio' &&
+      item.filePath &&
+      !item.adBreakId &&
+      !abortRef.current
+    ) {
+      const styles = stateRef.current.audioStyles
+      const fileLower = item.filePath.replace(/\\/g, '/')
+      const style = styles.find(s => {
+        const folderLower = s.folderPath.replace(/\\/g, '/')
+        return s.placeholderType !== 'none' && s.overlayChannel && (
+          fileLower.startsWith(folderLower + '/') ||
+          fileLower.startsWith(folderLower + '\\') ||
+          fileLower === folderLower
+        )
+      })
+      if (style && style.overlayChannel) {
+        const ch = style.overlayChannel
+        const phMeta = { source: 'audio-style-placeholder', risk: 'low' as const }
+        ;(async () => {
+          if (abortRef.current) return
+          if (style.placeholderType === 'vmix_input' && style.placeholderInputName) {
+            await executeVmixCommand(`OverlayInput${ch}In`, { input: style.placeholderInputName, meta: phMeta })
+          } else if (style.placeholderType === 'image' && style.placeholderImage && style.placeholderInputName) {
+            await executeVmixCommand('SetImage', { input: style.placeholderInputName, value: style.placeholderImage, meta: phMeta, validate: false })
+            await executeVmixCommand(`OverlayInput${ch}In`, { input: style.placeholderInputName, meta: phMeta })
+          }
+          activeAudioPlaceholderRef.current = { channel: ch }
+        })()
+      }
+    }
+
+    // ── Snapshot Comercial ────────────────────────────────────────────────────
+    // Tira um snapshot no vMix quando o primeiro item de um bloco comercial vai ao ar.
+    // Registra prova de veiculação sem precisar de intervenção manual.
+    if (
+      item.adBreakId &&
+      item.adBreakId !== lastSnapshotAdBreakRef.current &&
+      stateRef.current.settings.snapshotOnSpot &&
+      !abortRef.current
+    ) {
+      lastSnapshotAdBreakRef.current = item.adBreakId
+      ;(async () => {
+        if (abortRef.current) return
+        await executeVmixCommand('Snapshot', { meta: { source: 'snapshot-comercial', risk: 'low' as const } })
+      })()
+    }
+
     dispatch({
       type: 'ADD_LOG',
       payload: {
         id: crypto.randomUUID(),
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         itemId: item.id,
         title: item.title,
         clientId: item.clientId,
@@ -1568,15 +1805,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           duration: totalMs,
         })
         // ── Anticipatory preload ─────────────────────────────────────────────
-        // Start loading the next file-based item ~10 s before this one ends.
-        // The GUID is stored in preloadedInputRef so playItem can use it
-        // instantly instead of waiting for AddInput + buffer (~1.5-2 s).
+        // Inicia o carregamento do próximo item 2s após o atual começar a tocar,
+        // ou no máximo 3s antes do fim (o que vier primeiro). Assim vinhetas
+        // curtas (< 5s) ainda têm tempo de preload antes de acabar.
         if (!preloadTriggered && nextFilePath && window.spotmaster) {
           const remaining = totalMs - elapsed
-          if (remaining <= 10000) {
+          if (elapsed >= 2000 || remaining <= 3000) {
             preloadTriggered = true
             const fpToLoad = nextFilePath
-            console.log(`[SpotMaster] preloading next: "${fpToLoad}" (${(remaining / 1000).toFixed(1)}s remaining)`)
+            console.log(`[SpotMaster] preloading next: "${fpToLoad}" (elapsed ${(elapsed / 1000).toFixed(1)}s / ${(remaining / 1000).toFixed(1)}s remaining)`)
             loadNewInput(fpToLoad, {
               source: 'preload-next-input',
               queue: activeQueueRef.current === 'schedule' ? 'schedule' : 'playlist',
@@ -1584,10 +1821,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               if (!preGuid) return
               if (abortRef.current) {
                 // Playback was stopped while we were loading — discard immediately
-                executeVmixCommand('RemoveInput', {
-                  input: preGuid,
-                  meta: { source: 'discard-aborted-preload', queue: 'system' },
-                })
+                removeOwnedInput(preGuid, { source: 'discard-aborted-preload', queue: 'system' })
               } else {
                 preloadedInputRef.current = { guid: preGuid, filePath: fpToLoad }
               }
@@ -1600,13 +1834,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     setPlaybackProgress(null)
 
+    // Desativar placeholder visual de AudioStyle quando item termina
+    if (item.mediaType === 'audio' && activeAudioPlaceholderRef.current) {
+      const { channel } = activeAudioPlaceholderRef.current
+      activeAudioPlaceholderRef.current = null
+      executeVmixCommand(`OverlayInput${channel}Off`, { meta: { source: 'audio-style-placeholder', risk: 'low' } })
+    }
+
     // Mark done. Items interrupted by a scheduled block go 'done' —
     // playout always moves forward, never returns to what was playing.
     const fresh = getQueue().find(i => i.id === item.id)
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
       updateQueueItem({ ...fresh, status: 'done' })
     }
-  }, [dispatch, loadNewInput, waitForInputPlaying, vmixMetaForItem])
+  }, [dispatch, loadNewInput, removeOwnedInput, waitForInputPlaying, vmixMetaForItem])
 
   // ── runSequence ─────────────────────────────────────────────────────────────
   // Infinite while-loop that reads the LIVE playlist on every iteration.
@@ -1723,7 +1964,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           type: 'ADD_LOG',
           payload: {
             id: crypto.randomUUID(),
-            date: new Date().toISOString().slice(0, 10),
+            date: today(),
             itemId: next.id,
             title: next.title,
             clientId: next.clientId,
@@ -1758,12 +1999,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const unusedPreload = preloadedInputRef.current
     if (unusedPreload) {
       preloadedInputRef.current = null
-      if (window.spotmaster) {
-        executeVmixCommand('RemoveInput', {
-          input: unusedPreload.guid,
-          meta: { source: 'discard-unused-preload', queue: 'system' },
-        })
-      }
+      removeOwnedInput(unusedPreload.guid, { source: 'discard-unused-preload', queue: 'system' })
     }
 
     // cleanupInputs reads activeInputRef internally, then zeros it.
@@ -1777,17 +2013,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Permanent vMix inputs are never in this Set — they are 100% safe.
     if (window.spotmaster) {
       const allGuids = [...spotmasterGuidsRef.current]
-      spotmasterGuidsRef.current.clear()
       for (const g of allGuids) {
-        executeVmixCommand('RemoveInput', {
-          input: g,
-          meta: { source: 'sequence-full-sweep', queue: 'system' },
-        })
+        removeOwnedInput(g, { source: 'sequence-full-sweep', queue: 'system' })
       }
     }
 
     if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
-  }, [dispatch, playItem, loadNewInput, cleanupInputs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, playItem, loadNewInput, cleanupInputs, removeOwnedInput]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
@@ -1979,6 +2211,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     commInterruptTimeRef.current = ''
     minOrderRef.current = -1
     stopAfterCurrentRef.current = false
+    // Desativar placeholder visual de AudioStyle se houver um ativo
+    if (activeAudioPlaceholderRef.current) {
+      const { channel } = activeAudioPlaceholderRef.current
+      activeAudioPlaceholderRef.current = null
+      executeVmixCommand(`OverlayInput${channel}Off`, { meta: { source: 'audio-style-placeholder', risk: 'low' } })
+    }
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: false })
     setPlaybackProgress(null)
     if (window.spotmaster) {
@@ -1987,27 +2225,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const pre = preloadedInputRef.current
       if (pre) {
         preloadedInputRef.current = null
-        executeVmixCommand('RemoveInput', {
-          input: pre.guid,
-          meta: { source: 'stop-discard-preload', queue: 'system' },
-        })
+        removeOwnedInput(pre.guid, { source: 'stop-discard-preload', queue: 'system' })
       }
       cleanupInputs(0)
       // Full sweep: remove every GUID loaded by SpotMaster this session.
       // Catches anything that escaped individual cleanup on abort/stop.
       const allGuids = [...spotmasterGuidsRef.current]
-      spotmasterGuidsRef.current.clear()
       for (const g of allGuids) {
-        executeVmixCommand('RemoveInput', {
-          input: g,
-          meta: { source: 'stop-full-sweep', queue: 'system' },
-        })
+        removeOwnedInput(g, { source: 'stop-full-sweep', queue: 'system' })
       }
     }
     getQueue()
       .filter(i => i.status === 'playing')
       .forEach(i => updateQueueItem({ ...i, status: 'pending' }))
-  }, [dispatch, cleanupInputs])  
+  }, [dispatch, cleanupInputs, removeOwnedInput])
 
   // ── skipToNext ───────────────────────────────────────────────────────────────
   // Manual "Next" button: loads the next pending item into vMix Preview, lets
@@ -2063,14 +2294,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Remove previous input after 5s grace
     const prevGuid = activeInputRef.current
     if (prevGuid) {
-      setTimeout(async () => {
-        if (window.spotmaster) {
-          await executeVmixCommand('RemoveInput', {
-            input: prevGuid,
-            meta: { ...nextMeta, source: 'manual-next-remove-previous' },
-          })
-        }
-      }, 5000)
+      removeOwnedInput(prevGuid, { ...nextMeta, source: 'manual-next-remove-previous' }, 5000)
     }
 
     // Mark as already on air — playItem will skip load+cut
@@ -2080,7 +2304,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Interrupt current playItem wait loop; runSequence keeps running
     disparoInterruptRef.current = true
     abortRef.current = true
-  }, [loadNewInput, vmixMetaForItem])
+  }, [loadNewInput, removeOwnedInput, vmixMetaForItem])
 
   // ── setStopAfterCurrent ─────────────────────────────────────────────────────
   // Arms the "Stop Next" feature: runSequence will break after the current item
@@ -2088,6 +2312,208 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setStopAfterCurrent = useCallback((v: boolean) => {
     stopAfterCurrentRef.current = v
   }, [])
+
+  // ── triggerAudioLayer / stopAudioLayer ─────────────────────────────────────
+  // Dispara ou para uma camada de áudio configurada no AudioPro.
+  // Cada camada pode estar em modo 'replace' (vai ao PGM, substituindo vídeo)
+  // ou 'parallel' (toca em paralelo ao vídeo atual, sem corte no PGM).
+  // Para camadas round_robin com arquivos, aplica pré-carregamento rápido (2s).
+
+  const triggerAudioLayer = useCallback(async (layerId: string, opts?: { mode?: AudioLayerMode }) => {
+    const layer = stateRef.current.audioLayers.find(l => l.id === layerId)
+    if (!layer) return
+
+    const audioMeta: VmixCommandMeta = { source: 'audiopro', category: 'audio', queue: 'manual' }
+
+    // Para todas as camadas com stopOnNewTrigger ativo (exceto a que está sendo disparada)
+    for (const [activeLayerId, session] of audioSessionsRef.current.entries()) {
+      if (activeLayerId === layerId) continue
+      const activeLayer = stateRef.current.audioLayers.find(l => l.id === activeLayerId)
+      if (!activeLayer?.stopOnNewTrigger) continue
+      session.looping = false
+      session.timers.forEach(t => clearTimeout(t))
+      audioSessionsRef.current.delete(activeLayerId)
+      if (session.currentGuid) {
+        executeVmixCommand('StopInput', { input: session.currentGuid, meta: audioMeta, validate: false }).catch(() => {})
+        removeOwnedInput(session.currentGuid, audioMeta)
+      }
+      if (activeLayer.overlayChannel) {
+        executeVmixCommand(`OverlayInput${activeLayer.overlayChannel}Out`, { meta: audioMeta, validate: false }).catch(() => {})
+      }
+      for (const action of (activeLayer.postActions ?? [])) {
+        await executeVmixAction(action, audioMeta).catch(() => {})
+      }
+      setAudioLayerActive(prev => ({ ...prev, [activeLayerId]: false }))
+    }
+
+    // Para sessão anterior desta camada antes de iniciar nova
+    const prevSession = audioSessionsRef.current.get(layerId)
+    if (prevSession) {
+      prevSession.looping = false
+      prevSession.timers.forEach(t => clearTimeout(t))
+      audioSessionsRef.current.delete(layerId)
+    }
+
+    const effectiveMode = opts?.mode ?? layer.defaultMode
+    const playMode = layer.playMode ?? 'once'
+
+    // Executar pré-comandos vMix
+    for (const action of (layer.preActions ?? [])) {
+      await executeVmixAction(action, audioMeta).catch(() => {})
+    }
+
+    // ── fixed_input mode ────────────────────────────────────────────────────
+    if (layer.sourceType === 'fixed_input') {
+      const inputName = layer.fixedInputName
+      if (!inputName) return
+      if (effectiveMode === 'replace') {
+        await executeVmixCommand('PreviewInput', { input: inputName, meta: audioMeta })
+        await executeVmixCommand('Cut', { meta: audioMeta })
+        await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
+      } else {
+        await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
+        if (layer.overlayChannel) {
+          await executeVmixCommand(`OverlayInput${layer.overlayChannel}`, { input: inputName, meta: audioMeta, validate: false })
+        }
+      }
+      if (layer.volume !== undefined) {
+        await executeVmixCommand('SetVolume', { input: inputName, value: String(layer.volume), meta: audioMeta })
+      }
+      if (playMode === 'loop') {
+        await executeVmixCommand('SetLoop', { input: inputName, value: '1', meta: audioMeta, validate: false })
+      }
+      setAudioLayerActive(prev => ({ ...prev, [layerId]: true }))
+      return
+    }
+
+    // ── round_robin mode ───────────────────────────────────────────────────
+    const placeholders = layer.placeholders
+    if (placeholders.length === 0) return
+
+    const session: { looping: boolean; currentGuid?: string; timers: ReturnType<typeof setTimeout>[] } = { looping: true, timers: [] }
+    audioSessionsRef.current.set(layerId, session)
+    setAudioLayerActive(prev => ({ ...prev, [layerId]: true }))
+
+    let index = layer.currentIndex % placeholders.length
+
+    const playNext = async () => {
+      if (!session.looping) return
+      const placeholder = placeholders[index % placeholders.length]
+      const placeholderMode = placeholder.mode ?? effectiveMode
+      index = (index + 1) % placeholders.length
+
+      // Persist updated round-robin index
+      dispatch({ type: 'ADVANCE_AUDIO_LAYER_INDEX', payload: { layerId, newIndex: index } })
+
+      let guid: string | undefined
+
+      if (placeholder.type === 'file' && placeholder.filePath) {
+        // loadNewInput handles AddInput + poll for GUID + waitForInputReady
+        const loaded = await loadNewInput(placeholder.filePath, audioMeta)
+        guid = loaded ?? undefined
+        session.currentGuid = guid
+
+        if (guid && layer.volume !== undefined) {
+          await executeVmixCommand('SetVolume', { input: guid, value: String(layer.volume), meta: audioMeta })
+        }
+        if (playMode === 'loop' && guid) {
+          await executeVmixCommand('SetLoop', { input: guid, value: '1', meta: audioMeta, validate: false })
+        }
+
+        if (placeholderMode === 'replace') {
+          if (guid) await executeVmixCommand('PreviewInput', { input: guid, meta: audioMeta })
+          await executeVmixCommand('Cut', { meta: audioMeta })
+          if (guid) await executeVmixCommand('PlayInput', { input: guid, meta: audioMeta })
+        } else {
+          if (guid) {
+            await executeVmixCommand('PlayInput', { input: guid, meta: audioMeta })
+            if (layer.overlayChannel) {
+              await executeVmixCommand(`OverlayInput${layer.overlayChannel}`, { input: guid, meta: audioMeta, validate: false })
+            }
+          }
+        }
+      } else if (placeholder.type === 'vmix_input' && placeholder.inputName) {
+        const inputName = placeholder.inputName
+        if (layer.volume !== undefined) {
+          await executeVmixCommand('SetVolume', { input: inputName, value: String(layer.volume), meta: audioMeta })
+        }
+        if (playMode === 'loop') {
+          await executeVmixCommand('SetLoop', { input: inputName, value: '1', meta: audioMeta, validate: false })
+        }
+        if (placeholderMode === 'replace') {
+          await executeVmixCommand('PreviewInput', { input: inputName, meta: audioMeta })
+          await executeVmixCommand('Cut', { meta: audioMeta })
+          await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
+        } else {
+          await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
+          if (layer.overlayChannel) {
+            await executeVmixCommand(`OverlayInput${layer.overlayChannel}`, { input: inputName, meta: audioMeta, validate: false })
+          }
+        }
+      }
+
+      // Modo loop: sem timers — sessão permanece ativa até stopAudioLayer
+      if (playMode === 'loop') return
+
+      // Modo 'once': agendar limpeza e pré-carregamento do próximo item
+      const duration = placeholder.duration
+      if (duration && duration > 0 && session.looping) {
+        // Fast-preload: schedule next item at (duration - 2s)
+        const preloadDelay = Math.max(0, (duration - 2) * 1000)
+        const cleanupDelay = duration * 1000 + 200
+
+        const preloadTimer = setTimeout(() => {
+          if (!session.looping) return
+          playNext()
+        }, preloadDelay)
+        session.timers.push(preloadTimer)
+
+        // Cleanup current input after it finishes
+        const cleanupTimer = setTimeout(() => {
+          if (guid) {
+            removeOwnedInput(guid, audioMeta)
+          }
+          if (layer.overlayChannel && placeholderMode === 'parallel') {
+            executeVmixCommand(`OverlayInput${layer.overlayChannel}Out`, { meta: audioMeta, validate: false }).catch(() => {})
+          }
+        }, cleanupDelay)
+        session.timers.push(cleanupTimer)
+      } else if (placeholder.type === 'file' && guid) {
+        // No duration known — play once, cleanup after 60s safety
+        session.looping = false
+        const safeCleanup = setTimeout(() => {
+          removeOwnedInput(guid!, audioMeta)
+        }, 60_000)
+        session.timers.push(safeCleanup)
+        setAudioLayerActive(prev => ({ ...prev, [layerId]: false }))
+      }
+    }
+
+    await playNext()
+  }, [dispatch, loadNewInput, removeOwnedInput])
+
+  const stopAudioLayer = useCallback(async (layerId: string) => {
+    const session = audioSessionsRef.current.get(layerId)
+    const audioMeta: VmixCommandMeta = { source: 'audiopro', category: 'audio', queue: 'manual' }
+    if (session) {
+      session.looping = false
+      session.timers.forEach(t => clearTimeout(t))
+      audioSessionsRef.current.delete(layerId)
+      if (session.currentGuid) {
+        await executeVmixCommand('StopInput', { input: session.currentGuid, meta: audioMeta, validate: false }).catch(() => {})
+        removeOwnedInput(session.currentGuid, audioMeta)
+      }
+    }
+    const layer = stateRef.current.audioLayers.find(l => l.id === layerId)
+    if (layer?.overlayChannel) {
+      await executeVmixCommand(`OverlayInput${layer.overlayChannel}Out`, { meta: audioMeta, validate: false }).catch(() => {})
+    }
+    // Executar pós-comandos vMix após limpeza
+    for (const action of (layer?.postActions ?? [])) {
+      await executeVmixAction(action, audioMeta).catch(() => {})
+    }
+    setAudioLayerActive(prev => ({ ...prev, [layerId]: false }))
+  }, [removeOwnedInput])
 
   // ── disparo ─────────────────────────────────────────────────────────────────
   // Global trigger command: starts sequence if idle, or advances to next item
@@ -2282,9 +2708,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (scheduledDue.length === 0) return
         const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
         if (commInterruptTimeRef.current === triggerTime) return
-        // Permite disparar blocos recentes (até 10 min após horário) mesmo se sessionStart os bloquearia
+        // Permite catch-up comercial por ate 60 min apos o horario, mesmo se
+        // sessionStart bloquearia itens antigos. Depois disso, evita disparar
+        // comerciais muito atrasados sem intervencao do operador.
         const sessionStart = sessionStartRef.current
-        const graceSec = 10 * 60  // 10 minutos de grace após startup
+        const graceSec = 60 * 60
         const [tH, tM, tS] = triggerTime.split(':').map(Number)
         const [sH, sM, sS] = sessionStart.split(':').map(Number)
         const triggerSec = tH * 3600 + tM * 60 + (tS ?? 0)
@@ -2322,48 +2750,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const currentTime = now()
       const preloadMin = stateRef.current.settings.preloadMinutes ?? 5
       const { commercialBlocks, dateSchedules, spotRotation } = stateRef.current
-      const todaySchedule = dateSchedules[todayStr] ?? []
+      let workingSchedule = dateSchedules[todayStr] ?? []
+      let workingRotation = spotRotation
 
       const [cH, cM, cS] = currentTime.split(':').map(Number)
       const currentSec = cH * 3600 + cM * 60 + (cS ?? 0)
 
       for (const block of commercialBlocks) {
         if (!block.enabled || !block.scheduledTime) continue
-        if (block.lastLoadedDate === todayStr) continue
         if (block.daysOfWeek && !block.daysOfWeek.includes(todayDow)) continue
+        const alreadyInSchedule = workingSchedule.some(i => i.adBreakId === block.id)
+        if (block.lastLoadedDate === todayStr && alreadyInSchedule) continue
 
-        // Janela de pré-carregamento: [scheduledTime - preloadMin, scheduledTime + 10min grace]
+        // Janela de pré-carregamento: [scheduledTime - preloadMin, scheduledTime + 60min grace]
         const [bH, bM, bS] = block.scheduledTime.split(':').map(Number)
         const blockSec = bH * 3600 + bM * 60 + (bS ?? 0)
         const windowStart = blockSec - preloadMin * 60
-        const windowEnd   = blockSec + 600  // +10 min grace para app aberto depois do horário
+        const windowEnd   = blockSec + 3600  // +60 min grace para app aberto depois do horário
 
         if (currentSec < windowStart || currentSec > windowEnd) continue
 
         // Não duplicar: verificar se itens do bloco já estão na programação como pending
-        const alreadyPending = todaySchedule.some(
+        const alreadyPending = workingSchedule.some(
           i => i.adBreakId === block.id && i.status === 'pending'
         )
         if (alreadyPending) continue
 
         // Expandir e injetar na programação do dia
-        const maxOrder = todaySchedule.length > 0
-          ? Math.max(...todaySchedule.map(i => i.order))
+        const maxOrder = workingSchedule.length > 0
+          ? Math.max(...workingSchedule.map(i => i.order))
           : 0
-        const [items, newRotation] = expandBlockItems(block, maxOrder + 1, spotRotation)
+        const [items, newRotation] = expandBlockItems(block, maxOrder + 1, workingRotation)
         if (items.length === 0) continue
 
-        const newSchedule = [...todaySchedule, ...items]
-        dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: newSchedule } })
-        dispatch({ type: 'SET_SPOT_ROTATION', payload: newRotation })
+        workingSchedule = [...workingSchedule, ...items]
+        workingRotation = newRotation
+        dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: workingSchedule } })
+        dispatch({ type: 'SET_SPOT_ROTATION', payload: workingRotation })
         dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: todayStr } })
 
         // Persiste imediatamente para sobreviver reload
         if (window.spotmaster) {
           window.spotmaster.saveData('dateSchedules',
-            { ...stateRef.current.dateSchedules, [todayStr]: newSchedule }
+            { ...stateRef.current.dateSchedules, [todayStr]: workingSchedule }
           )
-          window.spotmaster.saveData('spotRotation', newRotation)
+          window.spotmaster.saveData('spotRotation', workingRotation)
         }
 
         console.log(`[SpotMaster] Bloco comercial pré-carregado: "${block.name}" (${block.scheduledTime})`)
@@ -2384,7 +2815,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                blocksRaw, spotsRaw, rotationRaw, panelRaw, gridRaw, dateSchedulesRaw,
                musicStylesRaw, musicSequencesRaw, autoBlocoRaw, deletedSlotsRaw, durationCacheRaw, vmixCommandLogRaw,
                campaignsRaw, segmentsRaw, programWindowsRaw,
-               grafismoInputsRaw, grafismoTemplatesRaw] =
+               grafismoInputsRaw, grafismoTemplatesRaw, musicLibraryRaw, audioLayersRaw,
+               videoStylesRaw, audioStylesRaw, vmixOutputProfilesRaw] =
           await Promise.all([
             window.spotmaster.loadData('settings'),
             window.spotmaster.loadData('playlist'),
@@ -2407,6 +2839,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('programWindows'),
             window.spotmaster.loadData('grafismoTitleInputs'),
             window.spotmaster.loadData('grafismoTemplates'),
+            window.spotmaster.loadData('musicLibrary'),
+            window.spotmaster.loadData('audioLayers'),
+            window.spotmaster.loadData('videoStyles'),
+            window.spotmaster.loadData('audioStyles'),
+            window.spotmaster.loadData('vmixOutputProfiles'),
           ])
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -2446,6 +2883,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             programWindows:       (programWindowsRaw as ProgramWindow[])           ?? [],
             grafismoTitleInputs:  (grafismoInputsRaw as GrafismoTitleInput[])      ?? [],
             grafismoTemplates:    (grafismoTemplatesRaw as GrafismoTemplate[])     ?? [],
+            musicLibrary:         (musicLibraryRaw as MusicTrack[])                ?? [],
+            audioLayers:          (audioLayersRaw as AudioLayer[])                 ?? [],
+            videoStyles:          (videoStylesRaw as VideoStyle[])                 ?? [],
+            audioStyles:          (audioStylesRaw as AudioStyle[])                 ?? [],
+            vmixOutputProfiles:   (vmixOutputProfilesRaw as VmixOutputProfile[])   ?? [],
           },
         })
       } catch {
@@ -2526,7 +2968,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Prune entries older than 30 days before persisting to avoid unbounded growth
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - 30)
-    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    const cutoffStr = dateToLocalYmd(cutoff)
     const pruned = Object.fromEntries(
       Object.entries(state.dateSchedules).filter(([date]) => date >= cutoffStr),
     )
@@ -2542,7 +2984,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Mesmo pruning de 30 dias do dateSchedules
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - 30)
-    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    const cutoffStr = dateToLocalYmd(cutoff)
     const pruned = Object.fromEntries(
       Object.entries(state.deletedScheduleSlots).filter(([date]) => date >= cutoffStr),
     )
@@ -2568,6 +3010,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.isLoading) saveToStorage('grafismoTemplates', state.grafismoTemplates)
   }, [state.grafismoTemplates, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('musicLibrary', state.musicLibrary)
+  }, [state.musicLibrary, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('audioLayers', state.audioLayers)
+  }, [state.audioLayers, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('videoStyles', state.videoStyles)
+  }, [state.videoStyles, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('audioStyles', state.audioStyles)
+  }, [state.audioStyles, state.isLoading, saveToStorage])
+
+  useEffect(() => {
+    if (!state.isLoading) saveToStorage('vmixOutputProfiles', state.vmixOutputProfiles)
+  }, [state.vmixOutputProfiles, state.isLoading, saveToStorage])
 
   // ── Data Sources push — envia snapshot de estado ao servidor HTTP local ──────
   useEffect(() => {
@@ -2621,7 +3083,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive }}>
       {children}
     </AppContext.Provider>
   )

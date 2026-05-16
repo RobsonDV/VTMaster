@@ -8,7 +8,7 @@ import type {
   Campaign, CampaignPriority, CampaignModality, CampaignStatus,
   Segment, ProgramWindow, CommercialBlock, CommercialBlockItem,
 } from '../../types'
-import { today } from '../../utils/time'
+import { dateToLocalYmd, today } from '../../utils/time'
 import Button from '../ui/Button'
 import PageHeader from '../ui/PageHeader'
 import '../AdBreaks/AdBreaksPanel.css'
@@ -25,7 +25,17 @@ function daysBetween(start: string, end: string): number {
 function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr)
   d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
+  return dateToLocalYmd(d)
+}
+
+function stableShuffleScore(seed: string, id: string): number {
+  let hash = 2166136261
+  const text = `${seed}:${id}`
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
 }
 
 function computeEffectiveStatus(camp: Campaign, todayStr: string): CampaignStatus {
@@ -123,12 +133,15 @@ function DistributeModal({
 
   // Randomize and respect spotsPerDay limit
   const selected = useMemo(() => {
-    const shuffled = [...eligible].sort(() => Math.random() - 0.5)
+    const shuffled = [...eligible].sort((a, b) =>
+      stableShuffleScore(`${campaign.id}:${today()}`, a.block.id) -
+      stableShuffleScore(`${campaign.id}:${today()}`, b.block.id)
+    )
     const limit = campaign.spotsPerDay && campaign.spotsPerDay > 0
       ? campaign.spotsPerDay
       : shuffled.length
     return shuffled.slice(0, limit)
-  }, [eligible, campaign.spotsPerDay])
+  }, [eligible, campaign.spotsPerDay, campaign.id])
 
   const clientName = clients.find(c => c.id === campaign.clientId)?.name ?? '—'
 

@@ -3,7 +3,7 @@ import { Play, ListVideo, Square, Edit2, Trash2, CheckCircle, SkipForward, Chevr
 import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
 import type { PlaylistItem, PlayLog, VmixInput, SpotType } from '../../types'
-import { formatDuration, formatTime, now } from '../../utils/time'
+import { formatDuration, formatTime, now, today } from '../../utils/time'
 import { spotTypeForVmix } from '../../utils/vmixInputs'
 import ContextMenu, { type ContextMenuState } from './ContextMenu'
 import './PlaylistTable.css'
@@ -13,6 +13,7 @@ interface PlaylistTableProps {
   onInsertVmixAction?: (afterOrder: number) => void
   onInsertVmixInput?: (afterOrder: number) => void
   onEditSchedule?: (item: PlaylistItem) => void
+  onSelectedItemChange?: (item: PlaylistItem | null) => void
 }
 
 // Célula de "tempo restante" do item tocando — consome progress isoladamente,
@@ -87,7 +88,7 @@ const PlaylistRow = memo(function PlaylistRow({
 }: PlaylistRowProps) {
   const isAwaitingTrigger = !!item.adBreakId && item.status === 'pending'
   const isPlaying = item.status === 'playing'
-  const cls = `playlist-row ${isSelected ? 'selected' : ''} row-${item.status}${dragInsertAbove ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}${item.adBreakId ? ' row-commercial' : ''}${item.type === 'programa' && !item.adBreakId ? ' row-programa' : ''}`
+  const cls = `playlist-row ${isSelected ? 'selected' : ''} row-${item.status}${dragInsertAbove ? ' drag-insert-above' : ''}${isAwaitingTrigger ? ' row-awaiting-trigger' : ''}${item.type === 'vmix_action' ? ' row-vmix-action' : ''}${item.adBreakId ? ' row-commercial' : ''}${item.type === 'programa' && !item.adBreakId ? ' row-programa' : ''}${item.mediaType === 'audio' && !item.adBreakId ? ' row-audio' : ''}${item.mediaType === 'video' && !item.adBreakId && item.type !== 'programa' ? ' row-video' : ''}`
   return (
     <Fragment>
       <tr
@@ -238,10 +239,18 @@ function calcEndTimes(
   return result
 }
 
-export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsertVmixInput, onEditSchedule }: PlaylistTableProps) {
+export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsertVmixInput, onEditSchedule, onSelectedItemChange }: PlaylistTableProps) {
   const { state, dispatch, t, playItem, playSingleItem, startSequence, stopPlayback, saveToStorage } = useApp()
   const { playlist, settings } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  const handleSelect = (id: string) => {
+    const newId = id === selectedId ? null : id
+    setSelectedId(newId)
+    if (onSelectedItemChange) {
+      onSelectedItemChange(newId ? playlist.find(i => i.id === newId) ?? null : null)
+    }
+  }
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
@@ -281,7 +290,7 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
   const handleSkip = useCallback((item: PlaylistItem) => {
     const log: PlayLog = {
       id: crypto.randomUUID(),
-      date: new Date().toISOString().slice(0, 10),
+      date: today(),
       itemId: item.id,
       title: item.title,
       clientId: item.clientId,
@@ -473,7 +482,7 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
                     dragInsertAbove={dragOverIndex === index}
                     endTime={endTimes[item.id]}
                     t={t}
-                    onSelect={setSelectedId}
+                    onSelect={handleSelect}
                     onContextMenu={handleContextMenu}
                     onRowDragOver={handleRowDragOver}
                     onDrop={handleDrop}

@@ -51,6 +51,15 @@ export default function StatusBar() {
           {vmixStatus.connected && vmixStatus.streaming && (
             <span className="status-badge streaming">{t.statusBar.streaming}</span>
           )}
+          {vmixStatus.connected && vmixStatus.external && (
+            <span className="status-badge external">EXT</span>
+          )}
+          {vmixStatus.connected && vmixStatus.fadeToBlack && (
+            <span className="status-badge ftb">FTB</span>
+          )}
+          {vmixStatus.connected && vmixStatus.srtOutput && (
+            <span className="status-badge srt">SRT</span>
+          )}
         </div>
 
         <div className="status-divider" />

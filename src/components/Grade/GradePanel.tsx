@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Plus, Edit2, Trash2, ChevronUp, ChevronDown, Tv, Music, DollarSign, AlertCircle, RefreshCw, Copy, Download, Upload } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { ProgramSlot, ScheduleSlotType, WeeklyProgramGrid } from '../../types'
-import { formatDuration } from '../../utils/time'
+import { formatDuration, today } from '../../utils/time'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import Modal from '../ui/Modal'
@@ -233,7 +233,7 @@ export default function GradePanel({ onNavigate }: Props) {
       const exportData: GridExportFile = {
         version: '1',
         type: 'vtmaster-grade',
-        exportedAt: new Date().toISOString().slice(0, 10),
+        exportedAt: today(),
         grid: state.weeklyGrid,
       }
       const saved = await window.spotmaster.exportGrid(exportData)

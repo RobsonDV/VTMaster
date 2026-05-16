@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useApp } from '../../store/AppContext'
-import { formatDate, formatDuration } from '../../utils/time'
+import { formatDate, formatDuration, today } from '../../utils/time'
 import '../AdBreaks/AdBreaksPanel.css'
 
 export default function LogPanel() {
@@ -86,7 +86,7 @@ export default function LogPanel() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `log-${filterDateFrom || filterDateTo || new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `log-${filterDateFrom || filterDateTo || today()}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }

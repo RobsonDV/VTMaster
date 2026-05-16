@@ -664,9 +664,10 @@ function VmixHealthModal({ status, logs, referenceTime, onClose }: {
 interface Props {
   selectedDate: string        // lifted to App.tsx — persists across tab navigation
   onDateChange: (date: string) => void
+  onSelectedItemChange?: (item: PlaylistItem | null) => void
 }
 
-export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) {
+export default function DaySchedulePanel({ selectedDate, onDateChange, onSelectedItemChange }: Props) {
   const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent } = useApp()
   const { dateSchedules } = state
   const activeItemProgress = usePlaybackProgress()
@@ -759,7 +760,13 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
   const [editTimeItem, setEditTimeItem]   = useState<PlaylistItem | null>(null)
 
   // ── Selection & add-item state ────────────────────────────────────────────
-  const [selectedItemId, setSelectedItemId]   = useState<string | null>(null)
+  const [selectedItemId, setSelectedItemIdRaw] = useState<string | null>(null)
+  const setSelectedItemId = (id: string | null) => {
+    setSelectedItemIdRaw(id)
+    if (onSelectedItemChange) {
+      onSelectedItemChange(id ? (dateSchedules[selectedDate] ?? []).find(i => i.id === id) ?? null : null)
+    }
+  }
   const [showVmixPanel, setShowVmixPanel]     = useState(false)
   const [addGroupModal, setAddGroupModal]     = useState<AddGroupModalState | null>(null)
   const [copiedItem, setCopiedItem]           = useState<PlaylistItem | null>(null)
@@ -1528,6 +1535,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange }: Props) 
                         isDragging  ? 'dragging'   : '',
                         isDragOver  ? 'drag-over'  : '',
                         item.id === selectedItemId ? 'selected' : '',
+                        item.mediaType === 'audio' && !item.adBreakId ? 'audio-item' : '',
                       ].filter(Boolean).join(' ')
 
                       return (

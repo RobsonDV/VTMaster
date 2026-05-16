@@ -53,6 +53,14 @@ contextBridge.exposeInMainWorld('spotmaster', {
   scanMusicFolder: (folderPath: string, includeSubfolders: boolean) =>
     ipcRenderer.invoke('scan-music-folder', folderPath, includeSubfolders),
 
+  // Musical Pro — Fase 5
+  readTrackMetadata: (filePath: string) =>
+    ipcRenderer.invoke('read-track-metadata', filePath),
+  hashFileMd5: (filePath: string) =>
+    ipcRenderer.invoke('hash-file-md5', filePath),
+  reconcileMusicFolders: (folderPaths: string[], existingTracks: unknown[]) =>
+    ipcRenderer.invoke('reconcile-music-folders', folderPaths, existingTracks),
+
   // vMix integration
   vmixRequest: (params: Record<string, string>, meta?: unknown) =>
     ipcRenderer.invoke('vmix-request', params, meta),
