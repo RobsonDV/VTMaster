@@ -823,6 +823,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   const [nextCrossfadeActive, setNextCrossfadeActive] = useState(false)
   const [stopAfterArmed, setStopAfterArmed] = useState(false)
   const [readingDurations, setReadingDurations] = useState(false)
+  const [durOkFlash, setDurOkFlash] = useState(false)
+  const wasReadingRef = useRef(false)
   const [updatingSchedule, setUpdatingSchedule] = useState(false)
   const [updateProgress, setUpdateProgress] = useState<{ done: number; total: number } | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -837,6 +839,21 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     () => schedule.filter(i => i.filePath && (i.duration === 0 || i.duration == null)).length,
     [schedule],
   )
+
+  // Acende badge verde quando leitura automática termina com 0 pendentes
+  useEffect(() => {
+    if (readingDurations) {
+      wasReadingRef.current = true
+      return
+    }
+    if (!wasReadingRef.current) return
+    wasReadingRef.current = false
+    if (missingDurCount === 0 && schedule.length > 0) {
+      setDurOkFlash(true)
+      const tid = setTimeout(() => setDurOkFlash(false), 5000)
+      return () => clearTimeout(tid)
+    }
+  }, [readingDurations, missingDurCount, schedule.length])
 
   // Reset Stop Next when playback stops
   useEffect(() => {
@@ -1374,6 +1391,23 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
               <small>total</small>
             </div>
             {errorCount > 0 && <div className="summary-alert">{errorCount} erro{errorCount > 1 ? 's' : ''}</div>}
+            {/* ── Status de leitura de durações ── */}
+            {readingDurations && (
+              <div className="dur-status reading">
+                <Clock size={11} className="spin" />
+                Lendo {missingDurCount} tempo{missingDurCount !== 1 ? 's' : ''}…
+              </div>
+            )}
+            {!readingDurations && missingDurCount > 0 && (
+              <div className="dur-status missing" onClick={handleRefreshDurations} title="Clique para tentar novamente">
+                ⚠ {missingDurCount} sem tempo
+              </div>
+            )}
+            {!readingDurations && missingDurCount === 0 && durOkFlash && (
+              <div className="dur-status ok">
+                <CheckCircle size={11} /> Tempos OK
+              </div>
+            )}
           </section>
         </div>
 

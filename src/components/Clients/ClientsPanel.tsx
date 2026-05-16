@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Plus, Edit2, Trash2, Search, ChevronDown, ChevronRight, Film, Music, Image as ImageIcon } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { Client, ClientSpot } from '../../types'
-import { detectMediaType, readMediaDuration } from '../../utils/mediaDuration'
+import { detectMediaType, readMediaDuration, mediaDurationCacheKey } from '../../utils/mediaDuration'
 import { formatDuration } from '../../utils/time'
 import '../AdBreaks/AdBreaksPanel.css'
 
@@ -118,6 +118,10 @@ export default function ClientsPanel() {
       dispatch({ type: 'UPDATE_CLIENT_SPOT', payload: { ...editingSpot.spot, ...data } })
     } else {
       dispatch({ type: 'ADD_CLIENT_SPOT', payload: { id: crypto.randomUUID(), clientId, ...data } })
+    }
+    // Cacheia a duração imediatamente para que a próxima grade use o valor real
+    if (data.filePath && data.duration > 0) {
+      dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload: { [mediaDurationCacheKey(data.filePath)]: data.duration } })
     }
     setEditingSpot(null)
   }

@@ -235,6 +235,19 @@
   font-weight: 700;
 }
 
+.dur-status {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.dur-status.reading { color: #fbbf24; }
+.dur-status.ok      { color: #4ade80; }
+.dur-status.missing { color: #fb923c; cursor: pointer; text-decoration: underline dotted; }
+
 .schedule-action-row {
   display: flex;
   align-items: center;
