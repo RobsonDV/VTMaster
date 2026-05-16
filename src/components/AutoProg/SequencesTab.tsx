@@ -50,7 +50,7 @@ function SequenceModal({
     () => new Map(styleSources.map(s => [styleSourceKey(s.mediaType, s.id), s])),
     [styleSources],
   )
-  const audioJingles = styleSources.filter(s => s.mediaType === 'audio' && s.isJingle)
+  const audioJingles = styleSources.filter(s => s.mediaType === 'audio' && (s.isVinheta || s.isJingle))
 
   const addItem = () => {
     const firstStyle = styleSources[0]
@@ -281,7 +281,7 @@ function SequenceModal({
                 <option value="">Desabilitado</option>
                 {audioJingles.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 {audioJingles.length === 0 && (
-                  <option disabled value="">- jingles de audio ainda nao cadastrados -</option>
+                  <option disabled value="">- cadastre um estilo de audio marcado como Vinheta no AudioPro -</option>
                 )}
               </select>
               {jingleStyleId && (

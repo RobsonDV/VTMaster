@@ -16,6 +16,7 @@ export interface AutoProgStyleSource {
   artistParseRule?: MusicStyle['artistParseRule']
   cooldownDays?: number
   isJingle?: boolean
+  isVinheta?: boolean
 }
 
 export interface ScannedFile {
@@ -31,6 +32,7 @@ export interface GeneratedMusicItem {
   styleId: string
   mediaType: AutoProgMediaType
   duration?: number   // duração real em segundos, quando conhecida
+  isVinheta?: boolean // true quando gerado a partir de um AudioStyle marcado como vinheta
 }
 
 /** Extrai o nome do artista de um arquivo com base na regra configurada */
@@ -288,6 +290,7 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
       styleId,
       mediaType: style.mediaType,
       ...(realDuration ? { duration: realDuration } : {}),
+      ...(style.isVinheta ? { isVinheta: true } : {}),
     })
   }
 
@@ -319,6 +322,7 @@ export async function generateMusicBlock(args: GenerateArgs): Promise<GeneratedM
               artist:   extractArtist(jf.filename, jingleStyle.artistParseRule ?? 'filename_dash', jf.subfolder),
               styleId:  jingleStyleId,
               mediaType: 'audio',
+              isVinheta: jingleStyle.isVinheta ?? true,
             })
           }
         }

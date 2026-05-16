@@ -17,6 +17,7 @@ export function buildAutoProgStyleSources(args: {
       mediaType: 'audio' as const,
       artistParseRule: 'filename_dash' as const,
       cooldownDays: 0,
+      isVinheta: style.isVinheta ?? false,
     })),
     ...args.videoStyles.map(style => ({
       id: style.id,

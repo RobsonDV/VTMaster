@@ -286,6 +286,8 @@ export interface AudioStyle {
   folderPath: string
   includeSubfolders: boolean
   color?: string
+  /** Quando true, itens gerados pelo AutoProg a partir deste estilo recebem type='vinheta' */
+  isVinheta?: boolean
   /** Tipo de placeholder visual que aparece no vMix quando este estilo está tocando */
   placeholderType: AudioStylePlaceholderType
   /** Caminho da imagem (para type='image') */

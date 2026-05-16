@@ -35,6 +35,7 @@ function AudioStyleModal({
     folderPath:          initial?.folderPath ?? '',
     includeSubfolders:   initial?.includeSubfolders ?? true,
     color:               initial?.color ?? COLORS[0],
+    isVinheta:           initial?.isVinheta ?? false,
     placeholderType:     initial?.placeholderType ?? 'none',
     placeholderImage:    initial?.placeholderImage ?? '',
     placeholderInputName: initial?.placeholderInputName ?? '',
@@ -105,6 +106,20 @@ function AudioStyleModal({
             onChange={e => set({ includeSubfolders: e.target.checked })}
           />
           Incluir subpastas
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', userSelect: 'none', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px' }}>
+          <input
+            type="checkbox"
+            checked={form.isVinheta ?? false}
+            onChange={e => set({ isVinheta: e.target.checked })}
+          />
+          <span>
+            <strong>Este estilo é Vinheta</strong>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Itens gerados pelo AutoProg receberão tipo <code>VHT</code> — o CG Musical os ignora automaticamente
+            </span>
+          </span>
         </label>
 
         <Field label="Cor de identificação">
