@@ -829,16 +829,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // ── loadBlockIntoPlaylist ───────────────────────────────────────────────────
-  // Expands a block's items and appends them to the playlist tail.
-  // Called by the scheduler (auto, manual workflow) and by "Recarregar" button.
+  // Expands a block's items and replaces any pending items from the same block
+  // in the playlist, then appends new items. Avoids duplicates when called
+  // repeatedly (e.g. "Força Recarregar" clicked more than once, or after editing).
   const loadBlockIntoPlaylist = useCallback((block: CommercialBlock) => {
     const dateStr = today()
     const { playlist, spotRotation } = stateRef.current
-    const startOrder = playlist.length + 1
+
+    // Remove existing PENDING items for this block — they are stale and will be
+    // replaced. Done/playing items are kept (they already aired or are on-air).
+    const filtered = playlist.filter(i => !(i.adBreakId === block.id && i.status === 'pending'))
+    const startOrder = filtered.length + 1
 
     const [items, newRotation] = expandBlockItems(block, startOrder, spotRotation)
-    items.forEach(item => dispatch({ type: 'ADD_PLAYLIST_ITEM', payload: item }))
 
+    // Set the whole playlist at once to avoid intermediate renders with partial state
+    const newPlaylist = [...filtered, ...items].map((item, idx) => ({ ...item, order: idx + 1 }))
+    dispatch({ type: 'SET_PLAYLIST', payload: newPlaylist })
     dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: dateStr } })
     dispatch({ type: 'SET_SPOT_ROTATION', payload: newRotation })
   }, [dispatch, expandBlockItems])
@@ -1220,11 +1227,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: dateStr, items: finalItems } })
     dispatch({ type: 'SET_SPOT_ROTATION', payload: currentRotation })
 
-    // Mark commercial blocks as loaded so the scheduler doesn't duplicate them
+    // Mark ALL used commercial blocks as loaded (linked + unlinked) so the preload scheduler
+    // doesn't re-inject them after they've played. Without this, blocks linked to schedule
+    // slots never got lastLoadedDate set, and the preload scheduler would fire them again
+    // within the 60-minute grace window.
     if (dateStr === today()) {
-      blocksForDay.forEach(b => {
-        dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: dateStr } })
-      })
+      const allUsedBlockIds = new Set([...linkedBlockIds, ...blocksForDay.map(b => b.id)])
+      commercialBlocks
+        .filter(b => allUsedBlockIds.has(b.id))
+        .forEach(b => {
+          dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: dateStr } })
+        })
     }
   }, [dispatch, expandBlockItems])
 
@@ -1952,12 +1965,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // After a commercial interrupt, always continue with the next pending item —
       // broadcast automation never stops mid-schedule. The sequence only stops when
       // there are no more pending items (natural end), a Pause marker, or Stop button.
-      // Release the "due-items-only" constraint so the next block plays immediately.
+      // Release the interrupt refs so the schedulers can fire new blocks freely.
+      // Checks EITHER ref: scheduleInterruptTimeRef (set by general autoPlay scheduler)
+      // OR commInterruptTimeRef (set by the commercial scheduler) — both count.
       if (
         activeQueueRef.current === 'schedule' &&
         (autoPlay || autoplayComerciais) &&
         scheduledDue.length === 0 &&
-        scheduleInterruptTimeRef.current !== ''
+        (scheduleInterruptTimeRef.current !== '' || commInterruptTimeRef.current !== '')
       ) {
         scheduleInterruptTimeRef.current = ''
         commInterruptTimeRef.current = ''
@@ -2845,10 +2860,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // injeta os blocos em dateSchedules dentro da janela de preloadMinutes.
   // Resolve o caso em que o usuário não gerou a programação do dia mas tem
   // autoplayComerciais ligado — os blocos agora aparecem automaticamente na fila.
-  // Roda a cada 20s para não sobrecarregar. O disparo real continua no scheduler de 1s.
+  // Roda imediatamente no startup e depois a cada 20s. O disparo real continua no scheduler de 1s.
   useEffect(() => {
     if (state.isLoading) return
-    const interval = setInterval(() => {
+
+    const runPreload = () => {
       if (!stateRef.current.settings.autoplayComerciais) return
 
       const todayStr = today()
@@ -2905,7 +2921,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         console.log(`[SpotMaster] Bloco comercial pré-carregado: "${block.name}" (${block.scheduledTime})`)
       }
-    }, 20000)
+    }
+
+    runPreload()  // Roda imediatamente ao carregar — evita o delay de 20s no startup
+    const interval = setInterval(runPreload, 20000)
     return () => clearInterval(interval)
   }, [state.isLoading, expandBlockItems, dispatch])
 
@@ -3254,18 +3273,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Tracks whether a schedule sync was deferred because the sequence was playing.
+  // Cleared once the sync actually runs.
+  const needsScheduleSyncRef = useRef(false)
+
   // ── Auto-sync schedule when commercial blocks are configured or modified ─────
-  // Replaces empty placeholder items with real block content as soon as the
-  // operator configures a block — no need to manually click "Atualizar".
-  // Only runs when: schedule already exists for today AND sequence is not playing.
+  // Replaces pending commercial items with refreshed content as soon as the
+  // operator saves a block edit. When the sequence is playing we defer the merge
+  // to avoid async status overwrites — the deferred-retry effect picks it up.
+  // Safe to run immediately when minOrderRef = -1 (no commercial has fired yet,
+  // so no high-water-mark to corrupt).
   useEffect(() => {
     if (state.isLoading) return
     const todayStr = today()
     const schedule = stateRef.current.dateSchedules[todayStr]
-    if (!schedule || schedule.length === 0) return   // fresh-generation handles new days
-    if (stateRef.current.isSequencePlaying) return   // never touch an active playback queue
+    if (!schedule || schedule.length === 0) return  // fresh-generation handles new days
+    if (stateRef.current.isSequencePlaying && minOrderRef.current !== -1) {
+      // A commercial has already fired — renumbering while playing is risky.
+      // Defer until the sequence stops.
+      needsScheduleSyncRef.current = true
+      return
+    }
+    needsScheduleSyncRef.current = false
     generatePlaylistFromGrid(todayStr, true)
   }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Deferred-retry: sync schedule as soon as the sequence stops ─────────────
+  // Picks up updates that were deferred while a commercial had already fired.
+  useEffect(() => {
+    if (state.isLoading || state.isSequencePlaying) return
+    if (!needsScheduleSyncRef.current) return
+    needsScheduleSyncRef.current = false
+    const todayStr = today()
+    const schedule = stateRef.current.dateSchedules[todayStr]
+    if (!schedule || schedule.length === 0) return
+    generatePlaylistFromGrid(todayStr, true)
+  }, [state.isSequencePlaying, state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Max 1-minute guarantee for deferred schedule sync ────────────────────────
+  // If the sequence stays running for a long time without stopping, this timer
+  // fires every 60 s and runs the merge as soon as the sequence is idle.
+  useEffect(() => {
+    if (state.isLoading) return
+    const interval = setInterval(() => {
+      if (!needsScheduleSyncRef.current) return
+      if (stateRef.current.isSequencePlaying) return  // still not safe to merge
+      needsScheduleSyncRef.current = false
+      const todayStr = today()
+      const schedule = stateRef.current.dateSchedules[todayStr]
+      if (!schedule || schedule.length === 0) return
+      generatePlaylistFromGrid(todayStr, true)
+    }, 60_000)
+    return () => clearInterval(interval)
+  }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume }}>
