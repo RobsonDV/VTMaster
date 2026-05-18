@@ -7,7 +7,7 @@ import { writeFile, rename as renameAsync } from 'fs/promises'
 import { createReadStream } from 'fs'
 import { createHash } from 'crypto'
 import { randomUUID } from 'crypto'
-import electronUpdater, { type UpdateInfo } from 'electron-updater'
+import { autoUpdater as _electronAutoUpdater, type UpdateInfo } from 'electron-updater'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -20,11 +20,6 @@ if (isDev) {
 }
 
 app.disableHardwareAcceleration()
-app.commandLine.appendSwitch('disable-gpu')
-app.commandLine.appendSwitch('disable-gpu-compositing')
-app.commandLine.appendSwitch('disable-gpu-sandbox')
-app.commandLine.appendSwitch('disable-software-rasterizer')
-app.commandLine.appendSwitch('disable-features', 'UseSkiaRenderer,VizDisplayCompositor')
 
 // Register custom scheme BEFORE app ready — allows renderer to load local media
 // files via local-media:///path without CORS/CSP restrictions
@@ -41,10 +36,10 @@ let powerSaveBlockerId: number | null = null
 // written to disk async. Avoids blocking synchronous reads on every command.
 let vmixCommandLogBuffer: VmixCommandLog[] = []
 let vmixCommandLogSaveTimer: ReturnType<typeof setTimeout> | null = null
-let autoUpdaterInstance: typeof electronUpdater.autoUpdater | null = null
+let autoUpdaterInstance: typeof _electronAutoUpdater | null = null
 
-function getAutoUpdater(): typeof electronUpdater.autoUpdater {
-  autoUpdaterInstance ??= electronUpdater.autoUpdater
+function getAutoUpdater(): typeof _electronAutoUpdater {
+  autoUpdaterInstance ??= _electronAutoUpdater
   return autoUpdaterInstance
 }
 
@@ -488,17 +483,25 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      sandbox: false,
     },
     icon: app.isPackaged
       ? join(process.resourcesPath, 'icon.ico')
       : join(__dirname, '../public/icon.ico'),
   })
 
+  mainWindow.show()
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
+
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[renderer-gone]', details.reason)
+    mainWindow?.reload()
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
