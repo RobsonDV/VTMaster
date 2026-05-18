@@ -35,10 +35,25 @@ function VideoStyleModal({
 
   const set = (patch: Partial<typeof form>) => setForm(f => ({ ...f, ...patch }))
   const valid = form.name.trim() !== '' && form.folderPath.trim() !== ''
+  const [browsing, setBrowsing] = useState(false)
+  const [browseError, setBrowseError] = useState<string | null>(null)
 
   const browseFolder = async () => {
-    const folder = await window.spotmaster?.browseFolder()
-    if (folder) set({ folderPath: folder })
+    if (browsing) return
+    setBrowsing(true)
+    setBrowseError(null)
+    try {
+      const folder = await window.spotmaster?.browseFolder()
+      if (folder) {
+        set({ folderPath: folder })
+      } else {
+        setBrowseError('Nenhuma pasta selecionada.')
+      }
+    } catch {
+      setBrowseError('Erro ao abrir o seletor de pasta. Tente digitar o caminho manualmente.')
+    } finally {
+      setBrowsing(false)
+    }
   }
 
   return (
@@ -76,11 +91,25 @@ function VideoStyleModal({
 
         <Field label="Pasta de videos *">
           <div style={{ display: 'flex', gap: 6 }}>
-            <input className="ui-input" value={form.folderPath} readOnly style={{ flex: 1 }} />
-            <Button variant="secondary" icon={<FolderOpen size={14} />} onClick={browseFolder}>
-              Procurar
+            <input
+              className="ui-input"
+              value={form.folderPath}
+              onChange={e => { set({ folderPath: e.target.value }); setBrowseError(null) }}
+              placeholder="Clique em Procurar ou cole o caminho aqui"
+              style={{ flex: 1 }}
+            />
+            <Button
+              variant="secondary"
+              icon={<FolderOpen size={14} />}
+              onClick={browseFolder}
+              disabled={browsing}
+            >
+              {browsing ? 'Abrindo…' : 'Procurar'}
             </Button>
           </div>
+          {browseError && (
+            <div style={{ fontSize: '0.78rem', color: 'var(--error)', marginTop: 4 }}>{browseError}</div>
+          )}
         </Field>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>

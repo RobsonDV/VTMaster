@@ -123,6 +123,7 @@ interface AppState {
 }
 
 const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
+const COMMERCIAL_CATCH_UP_GRACE_SECONDS = 10 * 60
 
 function sanitizeDurationCache(raw: unknown): Record<string, number> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -244,6 +245,39 @@ type Action =
   | { type: 'ADD_VMIX_OUTPUT_PROFILE';     payload: VmixOutputProfile }
   | { type: 'UPDATE_VMIX_OUTPUT_PROFILE';  payload: VmixOutputProfile }
   | { type: 'DELETE_VMIX_OUTPUT_PROFILE';  payload: string }
+  | { type: 'CLEAR_MEDIA_DURATION_CACHE' }
+  | { type: 'CLEAR_VMIX_COMMAND_LOG' }
+  | { type: 'CLEAR_PLAY_LOG' }
+  | { type: 'CLEAR_MUSIC_LIBRARY' }
+
+function mergeRuntimeStatus(
+  current: PlaylistItem | undefined,
+  incoming: PlaylistItem,
+  isSequencePlaying: boolean,
+): PlaylistItem {
+  if (!isSequencePlaying || !current) return incoming
+  if (incoming.status !== 'pending') return incoming
+  if (current.status === 'playing') {
+    return { ...incoming, status: current.status }
+  }
+  return incoming
+}
+
+function mergeScheduleRuntimeStatus(
+  currentItems: PlaylistItem[],
+  incomingItems: PlaylistItem[],
+  isSequencePlaying: boolean,
+): PlaylistItem[] {
+  if (!isSequencePlaying || currentItems.length === 0) return incomingItems
+  const currentById = new Map(currentItems.map(item => [item.id, item]))
+  return incomingItems.map(item =>
+    mergeRuntimeStatus(currentById.get(item.id), item, isSequencePlaying)
+  )
+}
+
+function hasPlayableContent(item: PlaylistItem): boolean {
+  return !!item.filePath || !!item.inputName || item.type === 'vmix_action' || item.type === 'pause'
+}
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -259,10 +293,10 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, vmixStatus: action.payload }
     case 'ADD_VMIX_COMMAND_LOG': {
       const next = [...state.vmixCommandLog, action.payload]
-      return { ...state, vmixCommandLog: next.length > 2000 ? next.slice(-2000) : next }
+      return { ...state, vmixCommandLog: next.length > 1000 ? next.slice(-1000) : next }
     }
     case 'SET_VMIX_COMMAND_LOG':
-      return { ...state, vmixCommandLog: action.payload.length > 2000 ? action.payload.slice(-2000) : action.payload }
+      return { ...state, vmixCommandLog: action.payload.length > 1000 ? action.payload.slice(-1000) : action.payload }
     case 'SET_PLAYLIST':
       return { ...state, playlist: action.payload }
     case 'ADD_PLAYLIST_ITEM':
@@ -341,10 +375,10 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, programWindows: state.programWindows.filter(p => p.id !== action.payload) }
     case 'ADD_LOG': {
       const next = [...state.playLog, action.payload]
-      return { ...state, playLog: next.length > 10000 ? next.slice(-10000) : next }
+      return { ...state, playLog: next.length > 2000 ? next.slice(-2000) : next }
     }
     case 'SET_LOG':
-      return { ...state, playLog: action.payload.length > 10000 ? action.payload.slice(-10000) : action.payload }
+      return { ...state, playLog: action.payload.length > 2000 ? action.payload.slice(-2000) : action.payload }
     case 'SET_SEQUENCE_PLAYING':
       return { ...state, isSequencePlaying: action.payload }
     case 'ADD_COMMERCIAL_BLOCK':
@@ -397,11 +431,25 @@ function reducer(state: AppState, action: Action): AppState {
     case 'REORDER_PROGRAM_SLOTS':
       return { ...state, weeklyGrid: { ...state.weeklyGrid, [action.payload.day]: action.payload.slots } }
     case 'SET_DATE_SCHEDULE':
-      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: action.payload.items } }
+      return {
+        ...state,
+        dateSchedules: {
+          ...state.dateSchedules,
+          [action.payload.date]: mergeScheduleRuntimeStatus(
+            state.dateSchedules[action.payload.date] ?? [],
+            action.payload.items,
+            state.isSequencePlaying,
+          ),
+        },
+      }
     case 'UPDATE_SCHEDULE_ITEM': {
       const d = action.payload.date
       return { ...state, dateSchedules: { ...state.dateSchedules,
-        [d]: (state.dateSchedules[d] ?? []).map(i => i.id === action.payload.item.id ? action.payload.item : i),
+        [d]: (state.dateSchedules[d] ?? []).map(i =>
+          i.id === action.payload.item.id
+            ? mergeRuntimeStatus(i, action.payload.item, state.isSequencePlaying)
+            : i
+        ),
       }}
     }
     case 'DELETE_SCHEDULE_ITEM': {
@@ -430,9 +478,32 @@ function reducer(state: AppState, action: Action): AppState {
       }
     }
     case 'REORDER_DATE_SCHEDULE':
-      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: action.payload.items } }
-    case 'UPSERT_MEDIA_DURATIONS':
-      return { ...state, mediaDurationCache: { ...state.mediaDurationCache, ...action.payload } }
+      return {
+        ...state,
+        dateSchedules: {
+          ...state.dateSchedules,
+          [action.payload.date]: mergeScheduleRuntimeStatus(
+            state.dateSchedules[action.payload.date] ?? [],
+            action.payload.items,
+            state.isSequencePlaying,
+          ),
+        },
+      }
+    case 'UPSERT_MEDIA_DURATIONS': {
+      const merged = { ...state.mediaDurationCache, ...action.payload }
+      const entries = Object.entries(merged)
+      // Cap at 15 000 entries — prevents unbounded growth over months of use
+      const capped = entries.length > 15000 ? Object.fromEntries(entries.slice(-15000)) : merged
+      return { ...state, mediaDurationCache: capped }
+    }
+    case 'CLEAR_MEDIA_DURATION_CACHE':
+      return { ...state, mediaDurationCache: {} }
+    case 'CLEAR_VMIX_COMMAND_LOG':
+      return { ...state, vmixCommandLog: [] }
+    case 'CLEAR_PLAY_LOG':
+      return { ...state, playLog: [] }
+    case 'CLEAR_MUSIC_LIBRARY':
+      return { ...state, musicLibrary: [] }
     case 'ADD_MUSIC_STYLE':
       return { ...state, musicStyles: [...state.musicStyles, action.payload] }
     case 'UPDATE_MUSIC_STYLE':
@@ -463,15 +534,14 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DELETE_AUTO_BLOCO_ASSIGNMENT':
       return { ...state, autoBlocoAssignments: state.autoBlocoAssignments.filter(a => a.id !== action.payload) }
     case 'SET_MUSIC_LIBRARY':
-      return { ...state, musicLibrary: action.payload }
+      // Cap at 50 000 tracks — no real station library exceeds this
+      return { ...state, musicLibrary: action.payload.length > 50000 ? action.payload.slice(0, 50000) : action.payload }
     case 'UPSERT_MUSIC_TRACK': {
       const exists = state.musicLibrary.some(t => t.id === action.payload.id)
-      return {
-        ...state,
-        musicLibrary: exists
-          ? state.musicLibrary.map(t => t.id === action.payload.id ? action.payload : t)
-          : [...state.musicLibrary, action.payload],
-      }
+      const next = exists
+        ? state.musicLibrary.map(t => t.id === action.payload.id ? action.payload : t)
+        : [...state.musicLibrary, action.payload]
+      return { ...state, musicLibrary: next.length > 50000 ? next.slice(0, 50000) : next }
     }
     case 'DELETE_MUSIC_TRACK':
       return { ...state, musicLibrary: state.musicLibrary.filter(t => t.id !== action.payload) }
@@ -559,6 +629,7 @@ interface AppContextValue {
     targetDate?: string,
     merge?: boolean,
     onDurationProgress?: (done: number, total: number) => void,
+    backup?: boolean,
   ) => Promise<void>
   skipToNext: () => Promise<void>
   setStopAfterCurrent: (v: boolean) => void
@@ -576,8 +647,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const t = getTranslations(state.settings.language)
 
+  const saveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const saveToStorage = useCallback((key: string, data: unknown) => {
-    if (window.spotmaster) window.spotmaster.saveData(key, data)
+    const existing = saveTimersRef.current.get(key)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      if (!window.spotmaster) return
+      window.spotmaster.saveData(key, data)
+      saveTimersRef.current.delete(key)
+    }, 500)
+    saveTimersRef.current.set(key, timer)
   }, [])
 
   const stateRef = useRef(state)
@@ -860,13 +939,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     targetDate?: string,
     merge = false,
     onDurationProgress?: (done: number, total: number) => void,
+    backup = true,  // false for auto-sync calls to prevent backup storms
   ) => {
     const dateStr = targetDate ?? today()
-    const existingScheduleForBackup = stateRef.current.dateSchedules[dateStr] ?? []
-    if (existingScheduleForBackup.length > 0 && window.spotmaster?.createBackup) {
-      window.spotmaster
-        .createBackup(merge ? 'before-schedule-merge' : 'before-schedule-generate')
-        .catch(() => {})
+    // Only backup for user-initiated actions, not for automatic syncs triggered
+    // by state changes (e.g. commercialBlocks useEffect), which can fire dozens
+    // of times in rapid succession creating hundreds of redundant backup copies.
+    if (backup) {
+      const existingScheduleForBackup = stateRef.current.dateSchedules[dateStr] ?? []
+      if (existingScheduleForBackup.length > 0 && window.spotmaster?.createBackup) {
+        window.spotmaster
+          .createBackup(merge ? 'before-schedule-merge' : 'before-schedule-generate')
+          .catch(() => {})
+      }
     }
     // Parse day-of-week from the target date (midday avoids DST edge cases)
     const dayOfWeek = new Date(dateStr + 'T12:00:00').getDay()
@@ -1451,9 +1536,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const playItem = useCallback(async (item: PlaylistItem, nextFilePath?: string) => {
     if (!window.spotmaster) return
 
+    // Direct/manual execution can call playItem without going through
+    // startSequence/startSchedule. Make sure status updates hit the queue that
+    // actually owns this item instead of whichever queue was active last.
+    if (!stateRef.current.isSequencePlaying) {
+      const todaySchedule = stateRef.current.dateSchedules[today()] ?? []
+      activeQueueRef.current = todaySchedule.some(i => i.id === item.id)
+        ? 'schedule'
+        : 'playlist'
+    }
+
     // Placeholder items (no file, no vMix input, not a vmix_action) have no
     // playable content — skip instantly rather than producing silence.
-    if (!item.filePath && !item.inputName && item.type !== 'vmix_action' && item.type !== 'pause') {
+    if (!hasPlayableContent(item)) {
       updateQueueItem({ ...item, status: 'skipped' })
       return
     }
@@ -1527,6 +1622,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } as PlayLog,
       })
       updateQueueItem({ ...item, status: 'error' })
+      abortRef.current = true
       return
     }
 
@@ -1652,6 +1748,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             } as PlayLog,
           })
           updateQueueItem({ ...item, status: 'error' })
+          abortRef.current = true
           return
         }
 
@@ -1962,21 +2059,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // After a commercial interrupt, always continue with the next pending item —
-      // broadcast automation never stops mid-schedule. The sequence only stops when
-      // there are no more pending items (natural end), a Pause marker, or Stop button.
-      // Release the interrupt refs so the schedulers can fire new blocks freely.
-      // Checks EITHER ref: scheduleInterruptTimeRef (set by general autoPlay scheduler)
-      // OR commInterruptTimeRef (set by the commercial scheduler) — both count.
+      // If an autoplay scheduler started/interrupted the sequence, play only
+      // the items that are due now. Once none are due, stop and wait for the
+      // next scheduler tick. This prevents empty musical placeholders from
+      // being skipped until future commercial blocks play before their time.
       if (
         activeQueueRef.current === 'schedule' &&
         (autoPlay || autoplayComerciais) &&
         scheduledDue.length === 0 &&
         (scheduleInterruptTimeRef.current !== '' || commInterruptTimeRef.current !== '')
       ) {
-        scheduleInterruptTimeRef.current = ''
-        commInterruptTimeRef.current = ''
-        // Don't break — fall through and pick the next pending item by order
+        break
       }
 
       // Apply high-water mark: only consider items at or above the mark.
@@ -1998,7 +2091,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Instantly skip items with no playable content (no file, no vMix input, not a vMix action).
       // These are empty musical slots that the operator hasn't filled yet.
-      if (!next.filePath && !next.inputName && next.type !== 'vmix_action') {
+      if (!hasPlayableContent(next)) {
+        const hasPlayableAhead = candidatePending.some(i =>
+          i.order > next.order && hasPlayableContent(i)
+        )
+        if (!hasPlayableAhead) break
         updateQueueItem({ ...next, status: 'skipped' })
         await sleep(50)
         continue
@@ -2359,6 +2456,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     getQueue()
       .filter(i => i.status === 'playing')
       .forEach(i => updateQueueItem({ ...i, status: 'pending' }))
+    // Reset any schedule items stuck in 'playing' status (e.g. after app crash/close)
+    const todayStr = today()
+    const todaySchedule = stateRef.current.dateSchedules[todayStr]
+    if (todaySchedule?.some(i => i.status === 'playing')) {
+      const fixed = todaySchedule.map(i =>
+        i.status === 'playing' ? { ...i, status: 'pending' as const } : i,
+      )
+      dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: todayStr, items: fixed } })
+    }
   }, [dispatch, cleanupInputs, removeOwnedInput])
 
   // ── skipToNext ───────────────────────────────────────────────────────────────
@@ -2660,6 +2766,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .sort((a, b) => a.order - b.order)
       .find(i => i.status === 'pending')
     if (!first) return
+    activeQueueRef.current = 'playlist'
     abortRef.current = false
     dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })
     if (window.spotmaster) {
@@ -2735,7 +2842,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const pressed = gp.buttons[btnIndex]?.pressed ?? false
       if (pressed && !wasPressed) disparo()
       wasPressed = pressed
-    }, 50)
+    }, 150)
     return () => clearInterval(interval)
   }, [state.settings.triggerEnabled, state.settings.triggerKey, disparo]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2829,11 +2936,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (scheduledDue.length === 0) return
         const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
         if (commInterruptTimeRef.current === triggerTime) return
-        // Permite catch-up comercial por ate 60 min apos o horario, mesmo se
+        // Permite catch-up comercial por uma janela curta apos o horario, mesmo se
         // sessionStart bloquearia itens antigos. Depois disso, evita disparar
         // comerciais muito atrasados sem intervencao do operador.
         const sessionStart = sessionStartRef.current
-        const graceSec = 60 * 60
+        const graceSec = COMMERCIAL_CATCH_UP_GRACE_SECONDS
         const [tH, tM, tS] = triggerTime.split(':').map(Number)
         const [sH, sM, sS] = sessionStart.split(':').map(Number)
         const triggerSec = tH * 3600 + tM * 60 + (tS ?? 0)
@@ -2884,11 +2991,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const alreadyInSchedule = workingSchedule.some(i => i.adBreakId === block.id)
         if (block.lastLoadedDate === todayStr && alreadyInSchedule) continue
 
-        // Janela de pré-carregamento: [scheduledTime - preloadMin, scheduledTime + 60min grace]
+        // Janela de pré-carregamento: [scheduledTime - preloadMin, scheduledTime + catch-up grace]
         const [bH, bM, bS] = block.scheduledTime.split(':').map(Number)
         const blockSec = bH * 3600 + bM * 60 + (bS ?? 0)
         const windowStart = blockSec - preloadMin * 60
-        const windowEnd   = blockSec + 3600  // +60 min grace para app aberto depois do horário
+        const windowEnd   = blockSec + COMMERCIAL_CATCH_UP_GRACE_SECONDS
 
         if (currentSec < windowStart || currentSec > windowEnd) continue
 
@@ -3295,7 +3402,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
     needsScheduleSyncRef.current = false
-    generatePlaylistFromGrid(todayStr, true)
+    generatePlaylistFromGrid(todayStr, true, undefined, false)  // auto-sync: no backup
   }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Deferred-retry: sync schedule as soon as the sequence stops ─────────────
@@ -3307,7 +3414,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const todayStr = today()
     const schedule = stateRef.current.dateSchedules[todayStr]
     if (!schedule || schedule.length === 0) return
-    generatePlaylistFromGrid(todayStr, true)
+    generatePlaylistFromGrid(todayStr, true, undefined, false)  // auto-sync: no backup
   }, [state.isSequencePlaying, state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Max 1-minute guarantee for deferred schedule sync ────────────────────────
@@ -3322,7 +3429,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const todayStr = today()
       const schedule = stateRef.current.dateSchedules[todayStr]
       if (!schedule || schedule.length === 0) return
-      generatePlaylistFromGrid(todayStr, true)
+      generatePlaylistFromGrid(todayStr, true, undefined, false)  // auto-sync: no backup
     }, 60_000)
     return () => clearInterval(interval)
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps

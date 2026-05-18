@@ -47,6 +47,24 @@ function triggerToDisplay(key: string): string {
   return key.replace('CommandOrControl', 'Ctrl').replace(/\+/g, ' + ')
 }
 
+function fmtBytes(b: number): string {
+  if (b === 0) return '—'
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
+}
+
+const DATA_LABELS: Record<string, string> = {
+  mediaDurationCache: 'Cache de durações de mídia',
+  musicLibrary:       'Biblioteca Musical (AutoProg)',
+  playLog:            'Log de veiculação',
+  vmixCommandLog:     'Log de comandos vMix',
+  dateSchedules:      'Programações (30 dias)',
+  playlist:           'Playlist',
+  settings:           'Configurações',
+  __backups__:        'Backups diários',
+}
+
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { state, dispatch, saveToStorage, t } = useApp()
   const [form, setForm] = useState<AppSettings>({ ...state.settings })
@@ -56,6 +74,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [dataSizes, setDataSizes] = useState<Record<string, number> | null>(null)
+  const [loadingSizes, setLoadingSizes] = useState(false)
+  const [maintenanceMsg, setMaintenanceMsg] = useState<string | null>(null)
 
   useEffect(() => {
     window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
@@ -179,6 +200,54 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const installUpdate = async () => {
     await window.spotmaster?.installUpdate()
+  }
+
+  const loadDataSizes = async () => {
+    setLoadingSizes(true)
+    try {
+      const sizes = await window.spotmaster?.getDataSizes?.()
+      if (sizes) setDataSizes(sizes as Record<string, number>)
+    } finally {
+      setLoadingSizes(false)
+    }
+  }
+
+  const clearCache = () => {
+    if (!window.confirm('Limpar o cache de durações? O app vai reler os tempos dos arquivos conforme necessário.')) return
+    dispatch({ type: 'CLEAR_MEDIA_DURATION_CACHE' })
+    saveToStorage('mediaDurationCache', {})
+    setMaintenanceMsg('✅ Cache de durações limpo.')
+    void loadDataSizes()
+  }
+
+  const clearVmixLog = () => {
+    dispatch({ type: 'CLEAR_VMIX_COMMAND_LOG' })
+    saveToStorage('vmixCommandLog', [])
+    setMaintenanceMsg('✅ Log de comandos vMix limpo.')
+    void loadDataSizes()
+  }
+
+  const clearPlayLog = () => {
+    if (!window.confirm('Limpar o log de veiculação? O histórico de exibições será perdido.')) return
+    dispatch({ type: 'CLEAR_PLAY_LOG' })
+    saveToStorage('playLog', [])
+    setMaintenanceMsg('✅ Log de veiculação limpo.')
+    void loadDataSizes()
+  }
+
+  const pruneBackups = async () => {
+    const result = await window.spotmaster?.pruneBackups?.(7)
+    const removed = (result as { removed?: number })?.removed ?? 0
+    setMaintenanceMsg(removed > 0 ? `✅ ${removed} backup(s) antigo(s) removidos.` : 'Nenhum backup antigo para remover (todos têm menos de 7 dias).')
+    void loadDataSizes()
+  }
+
+  const clearMusicLibrary = () => {
+    if (!window.confirm('Limpar a Biblioteca Musical? As faixas precisarão ser reindexadas pelo AutoProg. Estilos e sequências musicais são mantidos.')) return
+    dispatch({ type: 'CLEAR_MUSIC_LIBRARY' })
+    saveToStorage('musicLibrary', [])
+    setMaintenanceMsg('✅ Biblioteca Musical limpa. Reindexe as pastas no AutoProg.')
+    void loadDataSizes()
   }
 
   const defaultCaptureHint = [...navigator.getGamepads()].some(Boolean)
@@ -360,6 +429,59 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             </select>
           </Field>
         </FieldRow>
+      </Section>
+
+      <Section title="Manutenção e Dados">
+        <div className="ui-field-hint" style={{ marginBottom: 8 }}>
+          Arquivos JSON armazenados localmente. Limpe dados volumosos se o app estiver lento — especialmente o cache de durações que cresce com o uso.
+        </div>
+        {!dataSizes ? (
+          <Button variant="secondary" size="sm" onClick={loadDataSizes} disabled={loadingSizes}>
+            {loadingSizes ? 'Analisando...' : '📊 Analisar tamanho dos dados'}
+          </Button>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            {Object.entries(DATA_LABELS).map(([key, label]) => {
+              const size = dataSizes[key] ?? 0
+              return (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.82rem', padding: '4px 8px', background: 'var(--bg-tertiary)', borderRadius: 5 }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                  <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: size > 1024 * 1024 ? 'var(--warning)' : 'var(--text-primary)' }}>
+                    {fmtBytes(size)}
+                  </span>
+                </div>
+              )
+            })}
+            <Button variant="ghost" size="sm" onClick={loadDataSizes} disabled={loadingSizes} style={{ alignSelf: 'flex-start', marginTop: 2 }}>
+              {loadingSizes ? 'Atualizando...' : '↻ Atualizar'}
+            </Button>
+          </div>
+        )}
+
+        <div className="settings-inline-actions" style={{ flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+          <Button variant="secondary" size="sm" onClick={clearCache}>
+            🗑 Cache de durações
+          </Button>
+          <Button variant="secondary" size="sm" onClick={clearVmixLog}>
+            🗑 Log vMix
+          </Button>
+          <Button variant="secondary" size="sm" onClick={clearPlayLog}>
+            🗑 Log de veiculação
+          </Button>
+          <Button variant="secondary" size="sm" onClick={pruneBackups}>
+            🗑 Backups antigos (&gt;7 dias)
+          </Button>
+          <Button variant="secondary" size="sm" onClick={clearMusicLibrary}>
+            🗑 Biblioteca Musical
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => window.spotmaster?.openDataFolder?.()}>
+            📁 Abrir pasta de dados
+          </Button>
+        </div>
+
+        {maintenanceMsg && (
+          <div className="ui-card-note" style={{ marginTop: 6 }}>{maintenanceMsg}</div>
+        )}
       </Section>
 
       <Section title="Atualizações">

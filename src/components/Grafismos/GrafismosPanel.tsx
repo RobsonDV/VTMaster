@@ -44,6 +44,7 @@ function GcAutoTab() {
   const { state, dispatch, saveToStorage } = useApp()
   const [form, setForm] = useState<AppSettings>({ ...state.settings })
   const [testMsg, setTestMsg] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
 
   const set = <K extends keyof AppSettings>(k: K, v: AppSettings[K]) =>
     setForm(f => ({ ...f, [k]: v }))
@@ -54,27 +55,36 @@ function GcAutoTab() {
   }
 
   const handleTest = async () => {
+    if (testing) return
     if (!form.gcMusicInputName) { setTestMsg('❌ Configure o nome do Input vMix antes de testar.'); return }
-    const gcMeta = { source: 'gc-test' as const, risk: 'low' as const }
-    const r1 = await executeVmixCommand('SetText', { input: form.gcMusicInputName, selectedName: form.gcMusicLine1Field || 'Artist.Text', value: 'Artista Teste', meta: gcMeta, validate: false })
-    const r2 = await executeVmixCommand('SetText', { input: form.gcMusicInputName, selectedName: form.gcMusicLine2Field || 'Title.Text',  value: form.gcMusicDynamic ? 'Música Teste' : (form.gcMusicStaticLine2 || ' '), meta: gcMeta, validate: false })
-    const ch = form.gcMusicOverlay ?? 0
-    const hide = form.gcMusicHideDuration ?? 0
-    if (ch > 0) {
-      await executeVmixCommand(`OverlayInput${ch}In`, { input: form.gcMusicInputName, meta: gcMeta })
-      if (hide > 0) {
-        setTimeout(() => {
-          executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta })
-        }, hide * 1000)
+    setTesting(true)
+    setTestMsg('⏳ Enviando para vMix...')
+    try {
+      const gcMeta = { source: 'gc-test' as const, risk: 'low' as const }
+      const [r1, r2] = await Promise.all([
+        executeVmixCommand('SetText', { input: form.gcMusicInputName, selectedName: form.gcMusicLine1Field || 'Artist.Text', value: 'Artista Teste', meta: gcMeta, validate: false }),
+        executeVmixCommand('SetText', { input: form.gcMusicInputName, selectedName: form.gcMusicLine2Field || 'Title.Text',  value: form.gcMusicDynamic ? 'Música Teste' : (form.gcMusicStaticLine2 || ' '), meta: gcMeta, validate: false }),
+      ])
+      const ch = form.gcMusicOverlay ?? 0
+      const hide = form.gcMusicHideDuration ?? 0
+      if (ch > 0) {
+        await executeVmixCommand(`OverlayInput${ch}In`, { input: form.gcMusicInputName, meta: gcMeta })
+        if (hide > 0) {
+          setTimeout(() => {
+            executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta })
+          }, hide * 1000)
+        }
       }
+      if (!r1.success || !r2.success) {
+        setTestMsg(`❌ Erro no SetText — Linha 1: ${r1.error ?? 'ok'} | Linha 2: ${r2.error ?? 'ok'} — Verifique o nome do Input e os nomes dos campos (precisam ter .Text no final, ex: Artist.Text)`)
+      } else {
+        const hideMsg = ch > 0 && hide > 0 ? ` Saindo em ${hide}s.` : ch > 0 ? ' Overlay ativo — retire manualmente no vMix ou configure "Esconder após".' : ''
+        setTestMsg(`✅ GC disparado! Se o texto não mudou no vMix, verifique os nomes dos campos (use NomeDoCampo.Text).${hideMsg}`)
+      }
+      setTimeout(() => setTestMsg(null), Math.max(8000, (hide + 2) * 1000))
+    } finally {
+      setTesting(false)
     }
-    if (!r1.success || !r2.success) {
-      setTestMsg(`❌ Erro no SetText — Linha 1: ${r1.error ?? 'ok'} | Linha 2: ${r2.error ?? 'ok'} — Verifique o nome do Input e os nomes dos campos (precisam ter .Text no final, ex: Artist.Text)`)
-    } else {
-      const hideMsg = ch > 0 && hide > 0 ? ` Saindo em ${hide}s.` : ch > 0 ? ' Overlay ativo — retire manualmente no vMix ou configure "Esconder após".' : ''
-      setTestMsg(`✅ GC disparado! Se o texto não mudou no vMix, verifique os nomes dos campos (use NomeDoCampo.Text).${hideMsg}`)
-    }
-    setTimeout(() => setTestMsg(null), Math.max(8000, (hide + 2) * 1000))
   }
 
   return (
@@ -155,7 +165,7 @@ function GcAutoTab() {
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Button variant="primary" onClick={handleSave}>Salvar configurações</Button>
         {form.gcMusicEnabled && (
-          <Button variant="secondary" icon={<Play size={14} />} onClick={handleTest}>Testar GC agora</Button>
+          <Button variant="secondary" icon={<Play size={14} />} onClick={handleTest} disabled={testing}>{testing ? 'Testando...' : 'Testar GC agora'}</Button>
         )}
       </div>
       {testMsg && <div className="ui-card-note" style={{ marginTop: 8 }}>{testMsg}</div>}
@@ -344,31 +354,41 @@ function TemplatesTab() {
     if (!titleInput) return
     setFiring(template.id)
     const gcMeta = { source: 'grafismo-template' as const, risk: 'low' as const }
-    for (const m of template.mappings) {
-      let value = ''
-      const now = nowItem ? parseTitle(nowItem.title) : { artist: '', song: '' }
-      const next = nextItem ? parseTitle(nextItem.title) : { artist: '', song: '' }
+    const nowParsed  = nowItem  ? parseTitle(nowItem.title)  : { artist: '', song: '' }
+    const nextParsed = nextItem ? parseTitle(nextItem.title) : { artist: '', song: '' }
+    const resolveValue = (m: GrafismoTemplateMapping): string => {
       switch (m.source) {
-        case 'now_artist':  value = now.artist; break
-        case 'now_song':    value = now.song; break
-        case 'now_title':   value = nowItem?.title ?? ''; break
-        case 'next_artist': value = next.artist; break
-        case 'next_song':   value = next.song; break
-        case 'next_title':  value = nextItem?.title ?? ''; break
-        case 'time':        value = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); break
-        case 'station':     value = settings.stationName; break
-        case 'static':      value = m.staticValue ?? ''; break
-      }
-      await executeVmixCommand('SetText', { input: titleInput.name, selectedName: m.fieldName, value, meta: gcMeta })
-    }
-    const ch = template.overlayChannel ?? 0
-    if (ch > 0) {
-      await executeVmixCommand(`OverlayInput${ch}In`, { input: titleInput.name, meta: gcMeta })
-      if (template.hideDuration && template.hideDuration > 0) {
-        setTimeout(() => executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta }), template.hideDuration * 1000)
+        case 'now_artist':  return nowParsed.artist
+        case 'now_song':    return nowParsed.song
+        case 'now_title':   return nowItem?.title ?? ''
+        case 'next_artist': return nextParsed.artist
+        case 'next_song':   return nextParsed.song
+        case 'next_title':  return nextItem?.title ?? ''
+        case 'time':        return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        case 'station':     return settings.stationName
+        case 'static':      return m.staticValue ?? ''
+        default:            return ''
       }
     }
-    setTimeout(() => setFiring(null), 1200)
+    try {
+      // Todos os SetText em paralelo — cada campo vai pro vMix ao mesmo tempo
+      await Promise.all(
+        template.mappings.map(m =>
+          executeVmixCommand('SetText', { input: titleInput.name, selectedName: m.fieldName, value: resolveValue(m), meta: gcMeta })
+        )
+      )
+      const ch = template.overlayChannel ?? 0
+      if (ch > 0) {
+        await executeVmixCommand(`OverlayInput${ch}In`, { input: titleInput.name, meta: gcMeta })
+        if (template.hideDuration && template.hideDuration > 0) {
+          setTimeout(() => executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta }), template.hideDuration * 1000)
+        }
+      }
+    } catch {
+      // erro no vMix — o finally garante que o botão volta ao normal
+    } finally {
+      setTimeout(() => setFiring(null), 600)
+    }
   }, [grafismoTitleInputs, nowItem, nextItem, settings.stationName])
 
   const inp = { background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none', width: '100%' } as const

@@ -140,4 +140,12 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.invoke('load-playback-snapshot'),
   clearPlaybackSnapshot: () =>
     ipcRenderer.invoke('clear-playback-snapshot'),
+
+  // Maintenance
+  getDataSizes: () =>
+    ipcRenderer.invoke('get-data-sizes'),
+  openDataFolder: () =>
+    ipcRenderer.invoke('open-data-folder'),
+  pruneBackups: (keepDays?: number) =>
+    ipcRenderer.invoke('prune-backups', keepDays),
 })

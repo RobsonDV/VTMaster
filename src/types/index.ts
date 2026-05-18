@@ -704,6 +704,10 @@ export interface SpotMasterAPI {
   savePlaybackSnapshot: (snapshot: PlaybackSnapshot) => Promise<boolean>
   loadPlaybackSnapshot: () => Promise<PlaybackSnapshot | null>
   clearPlaybackSnapshot: () => Promise<boolean>
+  // Maintenance
+  getDataSizes: () => Promise<Record<string, number>>
+  openDataFolder: () => Promise<boolean>
+  pruneBackups: (keepDays?: number) => Promise<{ removed: number }>
 }
 
 declare global {

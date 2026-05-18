@@ -1,20 +1,30 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, globalShortcut, powerSaveBlocker, Menu } from 'electron'
 import { createServer, type Server } from 'http'
-import { fileURLToPath, pathToFileURL } from 'url'
-import { dirname, join } from 'path'
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { pathToFileURL } from 'url'
+import { join } from 'path'
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
+import { writeFile, rename as renameAsync } from 'fs/promises'
 import { createReadStream } from 'fs'
 import { createHash } from 'crypto'
 import { randomUUID } from 'crypto'
 import electronUpdater, { type UpdateInfo } from 'electron-updater'
 import { makeVmixRequest, startVmixPolling, stopVmixPolling, startVmixFastPolling, stopVmixFastPolling } from './vmix.js'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
 const isDev = process.env.NODE_ENV === 'development'
 const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR
-const { autoUpdater } = electronUpdater
+
+if (isDev) {
+  const devUserDataPath = join(process.cwd(), '.electron-dev-user-data')
+  if (!existsSync(devUserDataPath)) mkdirSync(devUserDataPath, { recursive: true })
+  app.setPath('userData', devUserDataPath)
+}
+
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('disable-gpu-compositing')
+app.commandLine.appendSwitch('disable-gpu-sandbox')
+app.commandLine.appendSwitch('disable-software-rasterizer')
+app.commandLine.appendSwitch('disable-features', 'UseSkiaRenderer,VizDisplayCompositor')
 
 // Register custom scheme BEFORE app ready — allows renderer to load local media
 // files via local-media:///path without CORS/CSP restrictions
@@ -26,6 +36,25 @@ let mainWindow: BrowserWindow | null = null
 let registeredTriggerKey: string | null = null
 let updateDownloaded = false
 let powerSaveBlockerId: number | null = null
+
+// In-memory vmixCommandLog — loaded once at startup, appended in memory,
+// written to disk async. Avoids blocking synchronous reads on every command.
+let vmixCommandLogBuffer: VmixCommandLog[] = []
+let vmixCommandLogSaveTimer: ReturnType<typeof setTimeout> | null = null
+let autoUpdaterInstance: typeof electronUpdater.autoUpdater | null = null
+
+function getAutoUpdater(): typeof electronUpdater.autoUpdater {
+  autoUpdaterInstance ??= electronUpdater.autoUpdater
+  return autoUpdaterInstance
+}
+
+function flushVmixCommandLog(): void {
+  if (vmixCommandLogSaveTimer) clearTimeout(vmixCommandLogSaveTimer)
+  vmixCommandLogSaveTimer = setTimeout(() => {
+    void saveData('vmixCommandLog', vmixCommandLogBuffer)
+    vmixCommandLogSaveTimer = null
+  }, 2000) // batch writes: save at most once every 2 seconds
+}
 
 function localDateYmd(date = new Date()): string {
   const y = date.getFullYear()
@@ -130,11 +159,11 @@ function storageFilePath(key: string): string {
   return join(getUserDataPath(), `${key}.json`)
 }
 
-function saveData(key: string, data: unknown): void {
+async function saveData(key: string, data: unknown): Promise<void> {
   const filePath = storageFilePath(key)
   const tmpPath = `${filePath}.${process.pid}.tmp`
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
-  renameSync(tmpPath, filePath)
+  await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
+  await renameAsync(tmpPath, filePath)
 }
 
 function loadData(key: string): unknown {
@@ -161,7 +190,7 @@ function sanitizeBackupReason(reason: string): string {
     .slice(0, 48) || 'manual'
 }
 
-function pruneOldBackups(maxBackups = 60): void {
+function pruneOldBackups(maxBackups = 30): void {
   const backupRoot = join(getUserDataPath(), 'backups')
   if (!existsSync(backupRoot)) return
   const dirs = readdirSync(backupRoot, { withFileTypes: true })
@@ -217,10 +246,9 @@ function ensureDailyBackup(): void {
 }
 
 function appendVmixCommandLog(log: VmixCommandLog): void {
-  const current = loadData('vmixCommandLog')
-  const list = Array.isArray(current) ? current as VmixCommandLog[] : []
-  const next = [...list, log].slice(-2000)
-  saveData('vmixCommandLog', next)
+  vmixCommandLogBuffer.push(log)
+  if (vmixCommandLogBuffer.length > 1000) vmixCommandLogBuffer = vmixCommandLogBuffer.slice(-1000)
+  flushVmixCommandLog()
 }
 
 function cleanMetaValue(value: unknown): string | undefined {
@@ -362,6 +390,8 @@ function readNativeMediaDuration(filePath: string): number | null {
 // Auto updater (GitHub Releases via electron-updater)
 // ─────────────────────────────────────────────────────────────────────────────
 function setupAutoUpdater(): void {
+  if (!app.isPackaged || isPortable) return
+  const autoUpdater = getAutoUpdater()
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
@@ -427,7 +457,7 @@ async function checkForAppUpdates(manual = false): Promise<UpdateStatus> {
 
   try {
     sendUpdateStatus({ status: 'checking', message: 'Verificando atualizações...' })
-    await autoUpdater.checkForUpdates()
+    await getAutoUpdater().checkForUpdates()
     return { status: 'checking', message: 'Verificação iniciada.' }
   } catch (err) {
     const status: UpdateStatus = {
@@ -505,6 +535,12 @@ app.whenReady().then(() => {
 
   try { ensureDailyBackup() } catch (err) { console.error('[backup] daily backup failed', err) }
 
+  // Load vmixCommandLog into memory once — avoids disk reads on every command
+  try {
+    const stored = loadData('vmixCommandLog')
+    vmixCommandLogBuffer = Array.isArray(stored) ? (stored as VmixCommandLog[]).slice(-1000) : []
+  } catch { vmixCommandLogBuffer = [] }
+
   createWindow()
   if (app.isPackaged && !isPortable) {
     setTimeout(() => { void checkForAppUpdates() }, 12_000)
@@ -525,6 +561,20 @@ app.on('will-quit', () => {
     powerSaveBlocker.stop(powerSaveBlockerId)
   }
   globalShortcut.unregisterAll()
+  stopVmixPolling()
+  stopVmixFastPolling()
+  if (dataSourcesServer) {
+    dataSourcesServer.close()
+    dataSourcesServer = null
+  }
+  // Flush pending vmixCommandLog write synchronously before exit
+  if (vmixCommandLogSaveTimer) {
+    clearTimeout(vmixCommandLogSaveTimer)
+    vmixCommandLogSaveTimer = null
+    try {
+      writeFileSync(storageFilePath('vmixCommandLog'), JSON.stringify(vmixCommandLogBuffer, null, 2), 'utf-8')
+    } catch { /* non-critical */ }
+  }
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -532,8 +582,14 @@ app.on('will-quit', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Save/load persistent data
-ipcMain.handle('save-data', (_event, key: string, data: unknown) => {
-  saveData(key, data)
+ipcMain.handle('save-data', async (_event, key: string, data: unknown) => {
+  await saveData(key, data)
+  // Keep in-memory buffer in sync when renderer explicitly saves vmixCommandLog
+  // (e.g. when the user clears it via the Maintenance panel)
+  if (key === 'vmixCommandLog') {
+    vmixCommandLogBuffer = Array.isArray(data) ? (data as VmixCommandLog[]) : []
+    if (vmixCommandLogSaveTimer) { clearTimeout(vmixCommandLogSaveTimer); vmixCommandLogSaveTimer = null }
+  }
   return true
 })
 
@@ -541,8 +597,8 @@ ipcMain.handle('load-data', (_event, key: string) => {
   return loadData(key)
 })
 
-ipcMain.handle('save-playback-snapshot', (_event, snapshot: unknown) => {
-  saveData('lastPlaybackSnapshot', snapshot)
+ipcMain.handle('save-playback-snapshot', async (_event, snapshot: unknown) => {
+  await saveData('lastPlaybackSnapshot', snapshot)
   return true
 })
 
@@ -550,12 +606,18 @@ ipcMain.handle('load-playback-snapshot', () => {
   try { return loadData('lastPlaybackSnapshot') ?? null } catch { return null }
 })
 
-ipcMain.handle('clear-playback-snapshot', () => {
-  saveData('lastPlaybackSnapshot', null)
+ipcMain.handle('clear-playback-snapshot', async () => {
+  await saveData('lastPlaybackSnapshot', null)
   return true
 })
 
+let lastBackupMs = 0
 ipcMain.handle('create-backup', (_event, reason?: string) => {
+  // Rate-limit: at most 1 backup every 30 seconds to prevent backup storms
+  // caused by rapid-fire state changes triggering the same backup multiple times.
+  const now = Date.now()
+  if (now - lastBackupMs < 30_000) return { success: true, skipped: true }
+  lastBackupMs = now
   try {
     return { success: true, path: createDataBackup(reason || 'manual') }
   } catch (err) {
@@ -604,7 +666,7 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('install-update', () => {
   if (!updateDownloaded) return false
-  autoUpdater.quitAndInstall()
+  getAutoUpdater().quitAndInstall()
   return true
 })
 
@@ -1081,4 +1143,53 @@ ipcMain.handle('datasources-stop', () => {
 
 ipcMain.handle('datasources-status', () => {
   return { running: dataSourcesServer !== null }
+})
+
+// ── Maintenance ───────────────────────────────────────────────────────────────
+
+ipcMain.handle('get-data-sizes', () => {
+  const dir = getUserDataPath()
+  const result: Record<string, number> = {}
+  for (const key of BACKUP_KEYS) {
+    const fp = join(dir, `${key}.json`)
+    try { result[key] = existsSync(fp) ? statSync(fp).size : 0 } catch { result[key] = 0 }
+  }
+  // Total size of backups folder
+  const backupRoot = join(dir, 'backups')
+  let backupTotal = 0
+  if (existsSync(backupRoot)) {
+    const walk = (d: string) => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else try { backupTotal += statSync(full).size } catch { /* ignore */ }
+      }
+    }
+    walk(backupRoot)
+  }
+  result['__backups__'] = backupTotal
+  return result
+})
+
+ipcMain.handle('open-data-folder', () => {
+  shell.openPath(getUserDataPath())
+  return true
+})
+
+ipcMain.handle('prune-backups', (_event, keepDays: number = 7) => {
+  const backupRoot = join(getUserDataPath(), 'backups')
+  if (!existsSync(backupRoot)) return { removed: 0 }
+  const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000
+  let removed = 0
+  for (const entry of readdirSync(backupRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const full = join(backupRoot, entry.name)
+    try {
+      if (statSync(full).mtimeMs < cutoff) {
+        rmSync(full, { recursive: true, force: true })
+        removed++
+      }
+    } catch { /* ignore */ }
+  }
+  return { removed }
 })

@@ -1,26 +1,33 @@
 /**
- * Converts dist-electron/preload.js (ESM) to dist-electron/preload.cjs (CJS).
- * Run after electron:compile so preload.cjs stays in sync with preload.ts.
+ * Keeps Electron runtime artifacts compatible with the repo-level
+ * "type": "module" package setting.
+ *
+ * The Electron build is CommonJS, and dist-electron/package.json makes
+ * main.js/vmix.js load as CommonJS. preload.cjs is kept as the explicit
+ * preload entry used by BrowserWindow.
  */
 const fs = require('fs')
 const path = require('path')
 
-const src  = path.join(__dirname, '..', 'dist-electron', 'preload.js')
-const dest = path.join(__dirname, '..', 'dist-electron', 'preload.cjs')
+const distDir = path.join(__dirname, '..', 'dist-electron')
+const src = path.join(distDir, 'preload.js')
+const dest = path.join(distDir, 'preload.cjs')
 
 let content = fs.readFileSync(src, 'utf8')
 
-// Replace ESM import with CJS require
-content = content.replace(
-  /^import\s*\{([^}]+)\}\s*from\s*['"]electron['"];?\s*/m,
-  (_, names) => `"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\nconst electron_1 = require("electron");\n`
-)
+// Older builds emitted preload.js as ESM; current tsconfig emits CJS.
+// Accept both shapes so this script remains safe during future config changes.
+if (/^import\s*\{[^}]+\}\s*from\s*['"]electron['"];?\s*/m.test(content)) {
+  content = content.replace(
+    /^import\s*\{[^}]+\}\s*from\s*['"]electron['"];?\s*/m,
+    () => `"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\nconst electron_1 = require("electron");\n`,
+  )
 
-// Replace bare identifiers with electron_1. prefix
-const electronExports = ['contextBridge', 'ipcRenderer']
-for (const name of electronExports) {
-  content = content.replace(new RegExp(`\\b${name}\\b`, 'g'), `electron_1.${name}`)
+  for (const name of ['contextBridge', 'ipcRenderer']) {
+    content = content.replace(new RegExp(`\\b${name}\\b`, 'g'), `electron_1.${name}`)
+  }
 }
 
 fs.writeFileSync(dest, content, 'utf8')
-console.log('✓ preload.cjs updated from preload.js')
+fs.writeFileSync(path.join(distDir, 'package.json'), '{"type":"commonjs"}\n', 'utf8')
+console.log('preload.cjs and dist-electron/package.json updated')

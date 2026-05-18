@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo, Fragment } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, memo, Fragment } from 'react'
 import { Play, ListVideo, Square, Edit2, Trash2, CheckCircle, SkipForward, ChevronUp, ChevronDown, FileVideo, Zap } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
@@ -254,10 +254,12 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
-  // Live preview clock — ticks every second ONLY when not playing
+  // Preview clock — ticks every 30s. Frequent ticks re-render every row every
+  // second (memo can't help when endTime prop changes), causing CSS :hover to
+  // flicker. 30s is accurate enough for end-time estimates in the playlist.
   const [nowSecs, setNowSecs] = useState(nowSeconds)
   useEffect(() => {
-    const id = setInterval(() => setNowSecs(nowSeconds()), 1000)
+    const id = setInterval(() => setNowSecs(nowSeconds()), 30_000)
     return () => clearInterval(id)
   }, [])
 
@@ -275,7 +277,7 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
   }, [state.isSequencePlaying])
 
   // Use frozen anchor when playing, otherwise live clock
-  const endTimes = calcEndTimes(playlist, playAnchor ?? nowSecs)
+  const endTimes = useMemo(() => calcEndTimes(playlist, playAnchor ?? nowSecs), [playlist, playAnchor, nowSecs])
   const hasPending = playlist.some(i => i.status === 'pending')
 
   // ── Play single item ──
@@ -504,7 +506,17 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
       </div>
 
       {playlist.length === 0 ? (
-        <div className="playlist-empty"><p>{t.playlist.empty}</p></div>
+        <div
+          className={`playlist-empty${dragOverIndex === 0 ? ' drag-insert-above' : ''}`}
+          onDragOver={(e) => handleRowDragOver(e, 0)}
+          onDrop={(e) => handleDrop(e, 0)}
+          onDragLeave={() => setDragOverIndex(null)}
+        >
+          <p>{t.playlist.empty}</p>
+          {dragOverIndex === 0 && (
+            <p style={{ color: 'var(--accent)', fontWeight: 600, marginTop: 8 }}>Solte para adicionar</p>
+          )}
+        </div>
       ) : (
         <>
           <div className="playlist-scroll">

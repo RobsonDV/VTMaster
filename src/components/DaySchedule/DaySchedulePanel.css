@@ -1385,8 +1385,10 @@
 }
 
 .bc-item.bc-item--playing {
-  background: color-mix(in srgb, var(--bc-ao-ar) 12%, transparent);
+  background: color-mix(in srgb, var(--bc-ao-ar) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-ao-ar) 40%, transparent);
 }
+
 
 .bc-item.bc-item--selected {
   background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
@@ -1563,6 +1565,33 @@
   border-color: var(--bc-color, var(--bc-outro));
   background: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 8%, transparent);
   color: var(--bc-color, var(--bc-outro));
+}
+
+/* ── Drop zone no rodapé de cada bloco ── */
+.bc-drop-zone {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 10px 6px 36px;
+  padding: 5px 10px;
+  border: 1px dashed color-mix(in srgb, var(--bc-color, var(--bc-outro)) 35%, transparent);
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 60%, var(--text-secondary));
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.bc-drop-zone:hover {
+  border-color: var(--bc-color, var(--bc-outro));
+  background: color-mix(in srgb, var(--bc-color, var(--bc-outro)) 8%, transparent);
+  color: var(--bc-color, var(--bc-outro));
+}
+.bc-drop-zone--active {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
 }
 
 /* ── Scroll area ajustada para bc-blocks ── */
@@ -1831,6 +1860,17 @@
 }
 .bc-item.bc-item--type-vmix:not(.bc-item--playing):not(.bc-item--selected):not(.bc-item--done):not(.bc-item--skipped) {
   background: color-mix(in srgb, var(--bc-vmix)     4%, transparent);
+}
+
+/* Playing ::before must come AFTER type rules so it wins the cascade */
+.bc-item.bc-item--playing::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--bc-ao-ar) !important;
+  border-radius: 2px 0 0 2px;
+  z-index: 2;
 }
 
 /* ── Cor do título por tipo (quando não tocando) ── */

@@ -4,6 +4,7 @@ import {
   Trash2, RefreshCw, CalendarDays,
   FolderOpen, Plus, Crosshair,
   Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical, Search,
+  Music2, Film, Radio,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
@@ -422,10 +423,12 @@ function ScheduleTimeEditModal({ item, date, onClose }: {
 
 // ── Add Item Picker Modal ─────────────────────────────────────────────────────
 
-function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }: {
+function AddItemModal({ groupTime, onClose, onMusic, onVinheta, onVideo, onVmixAction, onVmixInput }: {
   groupTime: string
   onClose: () => void
-  onFile: () => void
+  onMusic: () => void
+  onVinheta: () => void
+  onVideo: () => void
   onVmixAction: () => void
   onVmixInput: () => void
 }) {
@@ -434,18 +437,36 @@ function AddItemModal({ groupTime, onClose, onFile, onVmixAction, onVmixInput }:
   return (
     <Modal title={`Adicionar ao bloco ${groupTime}`} onClose={onClose} maxWidth={430}>
       <div className="ui-field-hint">
-        Escolha o tipo de item que você quer inserir. O novo item entra no bloco selecionado sem quebrar a ordem da programação.
+        Escolha o tipo de mídia. O arquivo será aberto pelo explorador e o tipo já fica definido automaticamente.
       </div>
       <div className="day-add-choice-list">
-        <button ref={ref} className="day-add-choice-card" onClick={onFile}>
-          <div className="day-add-choice-icon">
-            <FolderOpen size={18} />
+        <button ref={ref} className="day-add-choice-card" onClick={onMusic}>
+          <div className="day-add-choice-icon" style={{ color: '#f59e0b' }}>
+            <Music2 size={18} />
           </div>
           <div className="day-add-choice-copy">
-            <strong>Arquivo de mídia</strong>
-            <span>Vídeo, áudio ou imagem do disco</span>
+            <strong>Música</strong>
+            <span>Áudio — tipo Spot — GC Musical ativa normalmente</span>
           </div>
           <Badge>Mais comum</Badge>
+        </button>
+        <button className="day-add-choice-card" onClick={onVinheta}>
+          <div className="day-add-choice-icon" style={{ color: '#a78bfa' }}>
+            <Radio size={18} />
+          </div>
+          <div className="day-add-choice-copy">
+            <strong>Vinheta / Jingle</strong>
+            <span>Áudio — tipo Vinheta — GC Musical não dispara</span>
+          </div>
+        </button>
+        <button className="day-add-choice-card" onClick={onVideo}>
+          <div className="day-add-choice-icon" style={{ color: '#3b82f6' }}>
+            <Film size={18} />
+          </div>
+          <div className="day-add-choice-copy">
+            <strong>Vídeo / Programa</strong>
+            <span>Vídeo — tipo Programa — para conteúdo em vídeo</span>
+          </div>
         </button>
         <button className="day-add-choice-card day-add-choice-card--purple" onClick={onVmixAction}>
           <div className="day-add-choice-icon">
@@ -754,7 +775,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   )
 
   // Tick a cada 2 minutos para recalcular horários estimados com base no now() real
-  const [airTimeTick, setAirTimeTick] = useState(0)
+  const [, setAirTimeTick] = useState(0)
   useEffect(() => {
     const id = setInterval(() => setAirTimeTick(t => t + 1), 2 * 60 * 1000)
     return () => clearInterval(id)
@@ -807,7 +828,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
       }
     }
     return map
-  }, [groups, airTimeTick])
+  }, [groups])
 
   // ── Context menu state ────────────────────────────────────────────────────
   const [ctxMenu, setCtxMenu]             = useState<CtxState | null>(null)
@@ -856,7 +877,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     if (!wasReadingRef.current) return
     wasReadingRef.current = false
     if (missingDurCount === 0 && schedule.length > 0) {
-      setDurOkFlash(true)
+      queueMicrotask(() => setDurOkFlash(true))
       const tid = setTimeout(() => setDurOkFlash(false), 5000)
       return () => clearTimeout(tid)
     }
@@ -870,6 +891,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   // ── Drag-and-drop state ───────────────────────────────────────────────────
   const [dragId, setDragId]     = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragOverGroupTime, setDragOverGroupTime] = useState<string | null>(null)
 
   const handleDragStart = (e: React.DragEvent, item: PlaylistItem) => {
     setDragId(item.id)
@@ -984,6 +1006,97 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
 
   const handleDragEnd = () => { setDragId(null); setDragOverId(null) }
 
+  // ── Drop on block add-zone (bottom of each block) ─────────────────────────
+  const EXTERNAL_DROP_TYPES = ['application/vtmaster-media', 'application/vtmaster-folder']
+
+  const handleDragOverGroup = (e: React.DragEvent, group: BlockGroup) => {
+    e.preventDefault()
+    const isExternal = [...EXTERNAL_DROP_TYPES, 'application/vmix-input']
+      .some(t => e.dataTransfer.types.includes(t))
+    e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move'
+    setDragOverGroupTime(group.time)
+  }
+
+  const handleDropOnGroup = (e: React.DragEvent, group: BlockGroup) => {
+    e.preventDefault()
+    setDragOverGroupTime(null)
+
+    const mediaRaw = e.dataTransfer.getData('application/vtmaster-media')
+    if (mediaRaw) {
+      try {
+        const p = JSON.parse(mediaRaw) as { title: string; filePath: string; mediaType: 'audio' | 'video'; itemType: string; duration: number }
+        insertItemAtGroupEnd(group, {
+          title: p.title, type: p.itemType as PlaylistItem['type'],
+          filePath: p.filePath, mediaType: p.mediaType,
+          duration: p.duration, status: 'pending',
+          scheduledTime: group.time + ':00', manuallyAdded: true,
+        })
+      } catch { /* ignore */ }
+      return
+    }
+
+    const folderRaw = e.dataTransfer.getData('application/vtmaster-folder')
+    if (folderRaw && window.spotmaster) {
+      void (async () => {
+        try {
+          const { folderPath, mediaType } = JSON.parse(folderRaw) as { folderPath: string; label: string; mediaType: 'audio' | 'video' }
+          const results = mediaType === 'video'
+            ? await window.spotmaster.scanVideoFolder(folderPath, true)
+            : (await window.spotmaster.scanMusicFolder(folderPath, true)).map(r => ({ filePath: r.filePath, filename: r.filename }))
+          if (results.length === 0) return
+          const pick = results[Math.floor(Math.random() * results.length)]
+          insertItemAtGroupEnd(group, {
+            title: pick.filename.replace(/\.[^.]+$/, ''),
+            type: mediaType === 'video' ? 'programa' : 'spot',
+            filePath: pick.filePath, mediaType,
+            duration: 0, status: 'pending',
+            scheduledTime: group.time + ':00', manuallyAdded: true,
+          })
+        } catch { /* ignore */ }
+      })()
+      return
+    }
+
+    // ── vMix input drop ───────────────────────────────────────────────────────
+    const vmixRaw = e.dataTransfer.getData('application/vmix-input')
+    if (vmixRaw) {
+      try {
+        const inp = JSON.parse(vmixRaw) as VmixInput
+        insertItemAtGroupEnd(group, {
+          title: inp.title || `Input ${inp.number}`,
+          type: spotTypeForVmix(inp.type),
+          duration: inp.duration > 0 ? Math.round(inp.duration / 1000) : 30,
+          status: 'pending',
+          inputName: inp.number,
+          scheduledTime: group.time + ':00',
+          manuallyAdded: true,
+        })
+      } catch { /* ignore */ }
+      return
+    }
+
+    // ── Reordenação interna: move item para o fim do grupo ────────────────────
+    if (!dragId) return
+    const dragItem = sorted.find(i => i.id === dragId)
+    if (!dragItem) return
+    const lastInGroup = [...group.items].sort((a, b) => a.order - b.order).pop()
+    const newOrder = lastInGroup ? lastInGroup.order + 1 : (sorted[sorted.length - 1]?.order ?? 0) + 1
+    const movedItem = dragItem.scheduledTime?.slice(0, 5) !== group.time
+      ? { ...dragItem, scheduledTime: group.time + ':00', adBreakId: undefined }
+      : { ...dragItem }
+    const without = sorted.filter(i => i.id !== dragId)
+    without.push({ ...movedItem, order: newOrder })
+    dispatch({
+      type: 'REORDER_DATE_SCHEDULE',
+      payload: {
+        date: selectedDate,
+        items: without.sort((a, b) => a.order - b.order).map((i, n) => ({ ...i, order: n + 1 })),
+      },
+    })
+    setDragId(null)
+    setDragOverGroupTime(null)
+  }
+
   const handleContextMenu = (e: React.MouseEvent, item: PlaylistItem) => {
     e.preventDefault()
     setCtxMenu({ x: e.clientX, y: e.clientY, item })
@@ -1073,18 +1186,14 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   ])
 
   // Inicia sempre do item selecionado (se houver) ou do próximo pendente por horário
-  const handleStartScheduleWithPreflight = useCallback(async () => {
-    const summary = await runPreflight('start')
-    if (!summary) return
-    if (summary.errorCount === 0 && summary.warningCount === 0) {
-      setPreflightSummary(null)
-      if (selectedItemId) {
-        startScheduleFromItem(selectedItemId)
-      } else {
-        startScheduleFromNow()
-      }
+  const handleStartSchedule = useCallback(() => {
+    setPreflightSummary(null)
+    if (selectedItemId) {
+      startScheduleFromItem(selectedItemId)
+    } else {
+      startScheduleFromNow()
     }
-  }, [runPreflight, startScheduleFromNow, startScheduleFromItem, selectedItemId])
+  }, [startScheduleFromNow, startScheduleFromItem, selectedItemId])
 
   const handleStartAfterPreflightWarning = useCallback(() => {
     setPreflightSummary(null)
@@ -1225,7 +1334,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   }
 
   // ── Add file to a group via file browser ──────────────────────────────────
-  const handleAddItemFile = async (group: BlockGroup) => {
+  const handleAddItemFile = async (group: BlockGroup, itemType: 'spot' | 'vinheta' | 'programa' = 'spot') => {
     const fp = await window.spotmaster?.browseVideoFile()
     if (!fp) return
     const mt = detectMediaType(fp)
@@ -1240,7 +1349,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     }
     insertItemAtGroupEnd(group, {
       title: nameNoExt,
-      type: mt === 'audio' ? 'spot' : 'vinheta',
+      type: itemType,
       status: 'pending',
       scheduledTime: group.time + ':00',
       duration: dur,
@@ -1425,8 +1534,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
               !state.isSequencePlaying ? (
                 <button
                   className="day-schedule-btn play"
-                  onClick={handleStartScheduleWithPreflight}
-                  disabled={!hasPending || preflightRunning}
+                  onClick={handleStartSchedule}
+                  disabled={!hasPending}
                   title={!hasPending ? 'Nenhum item pendente' : selectedItemId ? 'Iniciar a partir do item selecionado' : 'Iniciar a partir do próximo item por horário'}
                 >
                   <ListVideo size={15} /> {t.schedule.playSchedule}
@@ -1575,8 +1684,8 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
             !state.isSequencePlaying ? (
               <button
                 className="day-schedule-btn accent"
-                onClick={handleStartScheduleWithPreflight}
-                disabled={!hasPending || preflightRunning}
+                onClick={handleStartSchedule}
+                disabled={!hasPending}
                 title={hasPending ? 'Iniciar programação do bloco atual' : 'Nenhum item pendente'}
               >
                 <ListVideo size={15} /> {t.schedule.playSchedule}
@@ -1877,11 +1986,17 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
                         )
                       })}
 
-                      {isMusical && (
-                        <button className="bc-add-btn" onClick={() => handleAddToGroup(group)}>
-                          <Plus size={11} /> Adicionar música
-                        </button>
-                      )}
+                      {/* Drop zone — visible for all blocks, highlights on drag-over */}
+                      <div
+                        className={`bc-drop-zone${dragOverGroupTime === group.time ? ' bc-drop-zone--active' : ''}`}
+                        onDragOver={e => handleDragOverGroup(e, group)}
+                        onDrop={e => handleDropOnGroup(e, group)}
+                        onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverGroupTime(null) }}
+                        onClick={() => handleAddToGroup(group)}
+                      >
+                        <Plus size={12} />
+                        <span>{dragOverGroupTime === group.time ? 'Solte para adicionar' : 'Adicionar item'}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2010,10 +2125,9 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
           key={`picker-${addGroupModal.group.time}`}
           groupTime={addGroupModal.group.time}
           onClose={() => setAddGroupModal(null)}
-          onFile={() => {
-            handleAddItemFile(addGroupModal.group)
-            setAddGroupModal(null)
-          }}
+          onMusic={() => { setAddGroupModal(null); void handleAddItemFile(addGroupModal.group, 'spot') }}
+          onVinheta={() => { setAddGroupModal(null); void handleAddItemFile(addGroupModal.group, 'vinheta') }}
+          onVideo={() => { setAddGroupModal(null); void handleAddItemFile(addGroupModal.group, 'programa') }}
           onVmixAction={() => setAddGroupModal(current => current ? { ...current, mode: 'vmix_action' } : null)}
           onVmixInput={() => setAddGroupModal(current => current ? { ...current, mode: 'vmix_input' } : null)}
         />

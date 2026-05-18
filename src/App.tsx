@@ -151,9 +151,9 @@ export default function App() {
           id: crypto.randomUUID(),
           order: selected.order + 0.5,
           status: 'pending',
-          scheduledTime: selected.scheduledTime,
           manuallyAdded: true,
           ...item,
+          scheduledTime: item.scheduledTime ?? selected.scheduledTime,
         }
         const sorted = [...schedItems, newItem]
           .sort((a, b) => a.order - b.order)
@@ -167,9 +167,9 @@ export default function App() {
           id: crypto.randomUUID(),
           order: (lastItem?.order ?? 0) + 1,
           status: 'pending',
-          scheduledTime: lastItem?.scheduledTime,
           manuallyAdded: true,
           ...item,
+          scheduledTime: item.scheduledTime ?? lastItem?.scheduledTime,
         }
         dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: scheduleDate, items: [...sorted, newItem] } })
       }

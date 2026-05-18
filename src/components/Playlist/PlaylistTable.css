@@ -129,6 +129,7 @@
 
 .playlist-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
@@ -136,6 +137,15 @@
   font-size: 0.9rem;
   text-align: center;
   padding: 40px;
+  transition: background 0.15s, border-color 0.15s;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+}
+
+.playlist-empty.drag-insert-above {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .playlist-table {
@@ -311,7 +321,7 @@
 
 .progress-track {
   position: relative;
-  height: 6px;
+  height: 14px;
   background: color-mix(in srgb, var(--bg-hover) 80%, var(--border));
   overflow: visible;
 }
@@ -348,13 +358,12 @@
   border-radius: 3px;
   line-height: 1;
   white-space: nowrap;
-  /* Only visible if the track is tall enough — shown as overlay */
-  display: none;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
 
-/* Show label if user hovers the progress row */
-.progress-bar-row:hover .progress-track { height: 14px; }
-.progress-bar-row:hover .progress-label { display: block; }
+/* Show label on hover — sem alterar o layout (sem mudar height) */
+.progress-bar-row:hover .progress-label { opacity: 1; }
 .progress-bar-row:hover .progress-fill  { border-radius: 0 2px 2px 0; }
 
 /* ── Time remaining in duration cell when playing ── */
