@@ -148,4 +148,6 @@ contextBridge.exposeInMainWorld('spotmaster', {
     ipcRenderer.invoke('open-data-folder'),
   pruneBackups: (keepDays?: number) =>
     ipcRenderer.invoke('prune-backups', keepDays),
+  factoryReset: () =>
+    ipcRenderer.invoke('factory-reset'),
 })

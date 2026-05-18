@@ -1193,3 +1193,12 @@ ipcMain.handle('prune-backups', (_event, keepDays: number = 7) => {
   }
   return { removed }
 })
+
+ipcMain.handle('factory-reset', async () => {
+  const dataDir = getUserDataPath()
+  try {
+    rmSync(dataDir, { recursive: true, force: true })
+  } catch { /* ignore */ }
+  app.relaunch()
+  app.exit(0)
+})

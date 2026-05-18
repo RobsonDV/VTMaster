@@ -77,6 +77,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [dataSizes, setDataSizes] = useState<Record<string, number> | null>(null)
   const [loadingSizes, setLoadingSizes] = useState(false)
   const [maintenanceMsg, setMaintenanceMsg] = useState<string | null>(null)
+  const [resetConfirm, setResetConfirm] = useState(false)
 
   useEffect(() => {
     window.spotmaster?.getVersion().then(v => setAppVersion(v)).catch(() => {})
@@ -248,6 +249,10 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     saveToStorage('musicLibrary', [])
     setMaintenanceMsg('✅ Biblioteca Musical limpa. Reindexe as pastas no AutoProg.')
     void loadDataSizes()
+  }
+
+  const doFactoryReset = async () => {
+    await window.spotmaster?.factoryReset?.()
   }
 
   const defaultCaptureHint = [...navigator.getGamepads()].some(Boolean)
@@ -508,6 +513,31 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           <div className="ui-card-note">
             {updateStatus.message}
             {typeof updateStatus.percent === 'number' && ` (${updateStatus.percent}%)`}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Zona de Perigo">
+        <div className="ui-field-hint" style={{ marginBottom: 10 }}>
+          Apaga todos os dados do aplicativo (playlist, programação, clientes, logs, biblioteca musical, configurações) e reinicia o VTMaster do zero. Use para testes ou quando quiser começar do início.
+        </div>
+        {!resetConfirm ? (
+          <Button variant="danger" size="sm" onClick={() => setResetConfirm(true)}>
+            Resetar para Configurações de Fábrica
+          </Button>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: '0.84rem', color: 'var(--danger, #e53e3e)', fontWeight: 600 }}>
+              Isso apagará TUDO e reiniciará o app. Não há como desfazer.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="danger" size="sm" onClick={doFactoryReset}>
+                Confirmar e Resetar Agora
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setResetConfirm(false)}>
+                Cancelar
+              </Button>
+            </div>
           </div>
         )}
       </Section>

@@ -708,6 +708,7 @@ export interface SpotMasterAPI {
   getDataSizes: () => Promise<Record<string, number>>
   openDataFolder: () => Promise<boolean>
   pruneBackups: (keepDays?: number) => Promise<{ removed: number }>
+  factoryReset: () => Promise<void>
 }
 
 declare global {
