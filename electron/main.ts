@@ -483,7 +483,6 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
-      sandbox: false,
     },
     icon: app.isPackaged
       ? join(process.resourcesPath, 'icon.ico')
