@@ -31,6 +31,7 @@ let mainWindow: BrowserWindow | null = null
 let registeredTriggerKey: string | null = null
 let updateDownloaded = false
 let powerSaveBlockerId: number | null = null
+let updateCheckInterval: ReturnType<typeof setInterval> | null = null
 
 // In-memory vmixCommandLog — loaded once at startup, appended in memory,
 // written to disk async. Avoids blocking synchronous reads on every command.
@@ -546,7 +547,7 @@ app.whenReady().then(() => {
   createWindow()
   if (app.isPackaged && !isPortable) {
     setTimeout(() => { void checkForAppUpdates() }, 12_000)
-    setInterval(() => { void checkForAppUpdates() }, 6 * 60 * 60 * 1000)
+    updateCheckInterval = setInterval(() => { void checkForAppUpdates() }, 6 * 60 * 60 * 1000)
   }
 
   app.on('activate', () => {
@@ -561,6 +562,10 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
     powerSaveBlocker.stop(powerSaveBlockerId)
+  }
+  if (updateCheckInterval) {
+    clearInterval(updateCheckInterval)
+    updateCheckInterval = null
   }
   globalShortcut.unregisterAll()
   stopVmixPolling()

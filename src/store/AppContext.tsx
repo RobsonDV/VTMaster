@@ -5,6 +5,7 @@
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   type ReactNode,
 } from 'react'
@@ -214,7 +215,9 @@ type Action =
   | { type: 'UPDATE_SCHEDULE_ITEM';   payload: { date: string; item: PlaylistItem } }
   | { type: 'DELETE_SCHEDULE_ITEM';   payload: { date: string; id: string } }
   | { type: 'REORDER_DATE_SCHEDULE';  payload: { date: string; items: PlaylistItem[] } }
-  | { type: 'ADD_DATE_SCHEDULE_ITEM'; payload: { date: string; item: Omit<PlaylistItem, 'order'> & { groupTime?: string } } }
+  | { type: 'ADD_DATE_SCHEDULE_ITEM'; payload: { date: string; item: Omit<PlaylistItem, 'id' | 'order'> & { groupTime?: string } } }
+  | { type: 'INSERT_ITEM_AFTER';      payload: { date: string; afterId: string; item: Omit<PlaylistItem, 'id' | 'order'> } }
+  | { type: 'INSERT_ITEM_BEFORE';     payload: { date: string; beforeId: string; item: Omit<PlaylistItem, 'id' | 'order'> } }
   | { type: 'UPSERT_MEDIA_DURATIONS'; payload: Record<string, number> }
   | { type: 'ADD_MUSIC_STYLE';             payload: MusicStyle }
   | { type: 'UPDATE_MUSIC_STYLE';          payload: MusicStyle }
@@ -504,7 +507,7 @@ function reducer(state: AppState, action: Action): AppState {
         : (current.length > 0 ? Math.max(...current.map(i => i.order ?? 0)) : 0)
       const newItem: PlaylistItem = {
         ...itemFields,
-        id: itemFields.id ?? crypto.randomUUID(),
+        id: crypto.randomUUID(),
         order: maxGroupOrder + 0.5,
       }
       const reindexed = [...current, newItem]
@@ -517,6 +520,34 @@ function reducer(state: AppState, action: Action): AppState {
           [action.payload.date]: reindexed,
         },
       }
+    }
+    case 'INSERT_ITEM_AFTER': {
+      const current = state.dateSchedules[action.payload.date] ?? []
+      const anchor = current.find(i => i.id === action.payload.afterId)
+      const anchorOrder = anchor?.order ?? (current.length > 0 ? Math.max(...current.map(i => i.order ?? 0)) : 0)
+      const newItem: PlaylistItem = {
+        ...action.payload.item,
+        id: crypto.randomUUID(),
+        order: anchorOrder + 0.5,
+      }
+      const reindexed = [...current, newItem]
+        .sort((a, b) => a.order - b.order)
+        .map((i, n) => ({ ...i, order: n + 1 }))
+      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: reindexed } }
+    }
+    case 'INSERT_ITEM_BEFORE': {
+      const current = state.dateSchedules[action.payload.date] ?? []
+      const anchor = current.find(i => i.id === action.payload.beforeId)
+      const anchorOrder = anchor?.order ?? 1
+      const newItem: PlaylistItem = {
+        ...action.payload.item,
+        id: crypto.randomUUID(),
+        order: anchorOrder - 0.5,
+      }
+      const reindexed = [...current, newItem]
+        .sort((a, b) => a.order - b.order)
+        .map((i, n) => ({ ...i, order: n + 1 }))
+      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: reindexed } }
     }
     case 'UPSERT_MEDIA_DURATIONS': {
       const merged = { ...state.mediaDurationCache, ...action.payload }
@@ -674,7 +705,7 @@ const AppContext = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
-  const t = getTranslations(state.settings.language)
+  const t = useMemo(() => getTranslations(state.settings.language), [state.settings.language])
 
   const saveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const saveToStorage = useCallback((key: string, data: unknown) => {
@@ -708,6 +739,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const abortRef = useRef<boolean>(false)
   // Guarda o canal de overlay ativado pelo AudioStyle placeholder para desativar ao parar
   const activeAudioPlaceholderRef = useRef<{ channel: number } | null>(null)
+  // Timers pendentes do GC Musical (delay inicial + hide). Limpos em stopPlayback.
+  const gcMusicTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   // Evita duplicar snapshot para o mesmo adBreakId (tira apenas no primeiro item do bloco)
   const lastSnapshotAdBreakRef = useRef<string | null>(null)
   // When true, the abort was triggered by the schedule (not the user).
@@ -1822,7 +1855,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         !abortRef.current
       ) {
         const delayMs = (gc.gcMusicDelaySeconds ?? 5) * 1000
-        setTimeout(async () => {
+        const outerTimer = setTimeout(async () => {
           if (abortRef.current) return
           const s = stateRef.current.settings
           const rawTitle = item.title ?? ''
@@ -1842,13 +1875,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
             await executeVmixCommand(`OverlayInput${ch}In`, { input: inp, meta: gcMeta })
             const hide = s.gcMusicHideDuration ?? 0
             if (hide > 0) {
-              setTimeout(async () => {
+              const hideTimer = setTimeout(async () => {
                 if (abortRef.current) return
                 await executeVmixCommand(`OverlayInput${ch}Off`, { meta: gcMeta })
               }, hide * 1000)
+              gcMusicTimersRef.current.push(hideTimer)
             }
           }
         }, delayMs)
+        gcMusicTimersRef.current.push(outerTimer)
       }
     }
 
@@ -2201,7 +2236,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
-  }, [dispatch, playItem, loadNewInput, cleanupInputs, removeOwnedInput]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, playItem, cleanupInputs, removeOwnedInput])
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
@@ -2457,6 +2492,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     commInterruptTimeRef.current = ''
     minOrderRef.current = -1
     stopAfterCurrentRef.current = false
+    // Cancela timers pendentes do GC Musical (delay inicial + hide aninhado).
+    // Sem isto, comandos SetText/OverlayOff podem disparar segundos após Stop.
+    gcMusicTimersRef.current.forEach(t => clearTimeout(t))
+    gcMusicTimersRef.current = []
+    // Limpa o histórico de posição fast-poll para evitar acúmulo entre sessões longas.
+    lastFastPosRef.current = {}
     // Desativar placeholder visual de AudioStyle se houver um ativo
     if (activeAudioPlaceholderRef.current) {
       const { channel } = activeAudioPlaceholderRef.current
@@ -2851,7 +2892,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { triggerEnabled, triggerKey } = state.settings
     const isKeyboard = triggerKey && !triggerKey.startsWith('GAMEPAD:') && !triggerKey.startsWith('MIDI:')
     if (triggerEnabled && isKeyboard) {
-      window.spotmaster.registerTrigger(triggerKey!)
+      window.spotmaster.registerTrigger(triggerKey!).then(ok => {
+        if (!ok) console.warn(`[disparo] Falha ao registrar tecla "${triggerKey}" — pode estar em uso por outro aplicativo.`)
+      })
     } else {
       window.spotmaster.unregisterTrigger()
     }
@@ -3065,7 +3108,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.isLoading, expandBlockItems, dispatch])
 
   // ── Load all data on startup ───────────────────────────────────────────────
+  const loadAllStartedRef = useRef(false)
   useEffect(() => {
+    if (loadAllStartedRef.current) return  // StrictMode/dev re-mount guard — load once
+    loadAllStartedRef.current = true
     const loadAll = async () => {
       if (!window.spotmaster) {
         dispatch({ type: 'SET_LOADING', payload: false })
