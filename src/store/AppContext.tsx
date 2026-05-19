@@ -779,6 +779,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const minOrderRef = useRef(-1)
   // When true, runSequence breaks after the current item finishes (Stop Next button).
   const stopAfterCurrentRef = useRef(false)
+  // Flipped to true assim que runSequence sai do while-loop (qualquer caminho).
+  // Usado por callbacks .then() de preloads em voo para descartar inputs que
+  // chegariam tarde demais (sequência já parou ou trocou de fila). Evita input
+  // "fantasma" no vMix quando o usuário aciona Stop Next durante o preload.
+  const sequenceEndedRef = useRef(true)
 
   // Tracks which queue (playlist or daySchedule) runSequence is reading from.
   // Changed by startSequence() and startSchedule() before invoking runSequence().
@@ -2026,7 +2031,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Inicia o carregamento do próximo item 2s após o atual começar a tocar,
         // ou no máximo 3s antes do fim (o que vier primeiro). Assim vinhetas
         // curtas (< 5s) ainda têm tempo de preload antes de acabar.
-        if (!preloadTriggered && nextFilePath && window.spotmaster) {
+        //
+        // Guards de NÃO-preload:
+        //  - stopAfterCurrentRef armado: usuário pediu Stop Next; carregar o
+        //    próximo só geraria input fantasma no vMix que ninguém vai tocar.
+        if (!preloadTriggered && nextFilePath && window.spotmaster && !stopAfterCurrentRef.current) {
           const remaining = totalMs - elapsed
           if (elapsed >= 2000 || remaining <= 3000) {
             preloadTriggered = true
@@ -2037,8 +2046,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
               queue: activeQueueRef.current === 'schedule' ? 'schedule' : 'playlist',
             }).then(preGuid => {
               if (!preGuid) return
-              if (abortRef.current) {
-                // Playback was stopped while we were loading — discard immediately
+              // Sequência terminou (Stop, Stop Next, fim natural ou erro) durante
+              // o load — descarta imediatamente para evitar input fantasma.
+              if (abortRef.current || sequenceEndedRef.current || stopAfterCurrentRef.current) {
                 removeOwnedInput(preGuid, { source: 'discard-aborted-preload', queue: 'system' })
               } else {
                 preloadedInputRef.current = { guid: preGuid, filePath: fpToLoad }
@@ -2075,6 +2085,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   //   - The sequence only stops when there are genuinely no more pending items
   //     (or stopPlayback() sets abortRef).
   const runSequence = useCallback(async () => {
+    sequenceEndedRef.current = false  // sinaliza que estamos ativos para preloads em voo
     while (true) {
       // ── Handle abort ─────────────────────────────────────────────────────
       if (abortRef.current) {
@@ -2210,6 +2221,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     // Sequence fully ended — clean up
+    sequenceEndedRef.current = true  // sinaliza preloads em voo para se descartarem
     scheduleInterruptTimeRef.current = ''
     commInterruptTimeRef.current = ''
     minOrderRef.current = -1
@@ -2532,6 +2544,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const stopPlayback = useCallback(async () => {
     abortRef.current = true
+    sequenceEndedRef.current = true  // descarta preloads tardios fora do runSequence
     scheduleInterruptRef.current = false
     scheduleInterruptTimeRef.current = ''
     commInterruptTimeRef.current = ''
@@ -2605,7 +2618,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     const nextMeta = vmixMetaForItem(nextPending, 'manual-next')
-    const nextGuid = await loadNewInput(nextPending.filePath, nextMeta)
+
+    // ── Reaproveita o preload antecipatório se disponível ────────────────────
+    // playItem dispara um preload do próximo arquivo ~2s após o item atual
+    // começar. Quando o operador clica Next, o input já pode estar carregado
+    // no vMix. Carregar de novo geraria um input duplicado/fantasma.
+    let nextGuid: string | null
+    const cached = preloadedInputRef.current
+    if (cached?.filePath === nextPending.filePath) {
+      nextGuid = cached.guid
+      preloadedInputRef.current = null
+      console.log(`[skipToNext] reaproveitando preload existente para "${nextPending.title}" (guid=${cached.guid})`)
+    } else {
+      if (cached) {
+        // Preload é de outro arquivo (operador reordenou a fila depois) — descarta
+        console.warn(`[skipToNext] descartando preload obsoleto "${cached.filePath}" (esperava "${nextPending.filePath}")`)
+        const staleGuid = cached.guid
+        preloadedInputRef.current = null
+        removeOwnedInput(staleGuid, { ...nextMeta, source: 'next-discard-stale-preload' })
+      }
+      nextGuid = await loadNewInput(nextPending.filePath, nextMeta)
+    }
+
     if (!nextGuid) {
       disparoInterruptRef.current = true
       abortRef.current = true
