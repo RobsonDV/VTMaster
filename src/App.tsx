@@ -143,35 +143,23 @@ export default function App() {
     const panel = state.activePanel
 
     if (panel === 'programacao') {
-      // Inserir na Programação do Dia
       const schedItems = state.dateSchedules[scheduleDate] ?? []
       if (selected && schedItems.find(i => i.id === selected.id)) {
-        // Inserir logo abaixo do item selecionado, herdando o horário do bloco
-        const newItem: PlaylistItem = {
-          id: crypto.randomUUID(),
-          order: selected.order + 0.5,
-          status: 'pending',
-          manuallyAdded: true,
-          ...item,
-          scheduledTime: item.scheduledTime ?? selected.scheduledTime,
-        }
-        const sorted = [...schedItems, newItem]
-          .sort((a, b) => a.order - b.order)
-          .map((i, n) => ({ ...i, order: n + 1 }))
-        dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: scheduleDate, items: sorted } })
+        // Insert below selected item — INSERT_ITEM_AFTER reads state in reducer (no stale closure)
+        dispatch({
+          type: 'INSERT_ITEM_AFTER',
+          payload: {
+            date: scheduleDate,
+            afterId: selected.id,
+            item: { status: 'pending', manuallyAdded: true, ...item, scheduledTime: item.scheduledTime ?? selected.scheduledTime },
+          },
+        })
       } else {
-        // Sem seleção: adicionar no final do último grupo
-        const sorted = [...schedItems].sort((a, b) => a.order - b.order)
-        const lastItem = sorted[sorted.length - 1]
-        const newItem: PlaylistItem = {
-          id: crypto.randomUUID(),
-          order: (lastItem?.order ?? 0) + 1,
-          status: 'pending',
-          manuallyAdded: true,
-          ...item,
-          scheduledTime: item.scheduledTime ?? lastItem?.scheduledTime,
-        }
-        dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: scheduleDate, items: [...sorted, newItem] } })
+        // No selection: append at end — ADD_DATE_SCHEDULE_ITEM reads state in reducer
+        dispatch({
+          type: 'ADD_DATE_SCHEDULE_ITEM',
+          payload: { date: scheduleDate, item: { status: 'pending', manuallyAdded: true, ...item } },
+        })
       }
     } else {
       // Inserir na Playlist

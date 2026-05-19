@@ -908,22 +908,20 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   }
 
   // Helper: insere um item externo (mídia ou pasta-aleatória) antes de targetItem
+  // Uses INSERT_ITEM_BEFORE (reads state in reducer) to avoid stale closure overwriting items.
   const insertExternalBefore = useCallback((
     fields: Omit<PlaylistItem, 'id' | 'order'>,
     targetItem: PlaylistItem,
   ) => {
-    const newItem: PlaylistItem = {
-      id: crypto.randomUUID(),
-      order: targetItem.order - 0.5,
-      manuallyAdded: true,
-      scheduledTime: targetItem.scheduledTime,
-      ...fields,
-    }
-    const newSchedule = [...schedule, newItem]
-      .sort((a, b) => a.order - b.order)
-      .map((i, n) => ({ ...i, order: n + 1 }))
-    dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
-  }, [dispatch, schedule, selectedDate])
+    dispatch({
+      type: 'INSERT_ITEM_BEFORE',
+      payload: {
+        date: selectedDate,
+        beforeId: targetItem.id,
+        item: { manuallyAdded: true, scheduledTime: targetItem.scheduledTime, ...fields },
+      },
+    })
+  }, [dispatch, selectedDate])
 
   const handleDrop = (e: React.DragEvent, targetItem: PlaylistItem) => {
     e.preventDefault()
@@ -1103,11 +1101,10 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   }
 
   const insertAfterItem = (targetItem: PlaylistItem, fields: Omit<PlaylistItem, 'id' | 'order'>) => {
-    const newItem: PlaylistItem = { id: crypto.randomUUID(), order: targetItem.order + 0.5, manuallyAdded: true, ...fields }
-    const newSchedule = [...schedule, newItem]
-      .sort((a, b) => a.order - b.order)
-      .map((i, n) => ({ ...i, order: n + 1 }))
-    dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+    dispatch({
+      type: 'INSERT_ITEM_AFTER',
+      payload: { date: selectedDate, afterId: targetItem.id, item: { manuallyAdded: true, ...fields } },
+    })
   }
 
   // ── Scroll ───────────────────────────────────────────────────────────────
@@ -1294,16 +1291,14 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   }
 
   const handleInsertAfter = (item: PlaylistItem) => {
-    const newItem: PlaylistItem = {
-      id: crypto.randomUUID(), order: item.order + 0.5,
-      title: item.title, type: item.type,
-      status: 'pending', scheduledTime: item.scheduledTime, duration: 0,
-      manuallyAdded: true,
-    }
-    const newSchedule = [...schedule, newItem]
-      .sort((a, b) => a.order - b.order)
-      .map((i, n) => ({ ...i, order: n + 1 }))
-    dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+    dispatch({
+      type: 'INSERT_ITEM_AFTER',
+      payload: {
+        date: selectedDate,
+        afterId: item.id,
+        item: { title: item.title, type: item.type, status: 'pending', scheduledTime: item.scheduledTime, duration: 0, manuallyAdded: true },
+      },
+    })
   }
 
   const handleInsertPause = (afterItem: PlaylistItem) => {
@@ -1327,7 +1322,6 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
         item: {
           manuallyAdded: true,
           ...fields,
-          id: crypto.randomUUID(),
           scheduledTime: fields.scheduledTime ?? (group.time + ':00'),
           groupTime: group.time,
         },
