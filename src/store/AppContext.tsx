@@ -214,6 +214,7 @@ type Action =
   | { type: 'UPDATE_SCHEDULE_ITEM';   payload: { date: string; item: PlaylistItem } }
   | { type: 'DELETE_SCHEDULE_ITEM';   payload: { date: string; id: string } }
   | { type: 'REORDER_DATE_SCHEDULE';  payload: { date: string; items: PlaylistItem[] } }
+  | { type: 'ADD_DATE_SCHEDULE_ITEM'; payload: { date: string; item: Omit<PlaylistItem, 'order'> & { groupTime?: string } } }
   | { type: 'UPSERT_MEDIA_DURATIONS'; payload: Record<string, number> }
   | { type: 'ADD_MUSIC_STYLE';             payload: MusicStyle }
   | { type: 'UPDATE_MUSIC_STYLE';          payload: MusicStyle }
@@ -489,6 +490,34 @@ function reducer(state: AppState, action: Action): AppState {
           ),
         },
       }
+    case 'ADD_DATE_SCHEDULE_ITEM': {
+      // Always reads from current state — avoids stale closure when items are
+      // added rapidly (each dispatch sees the latest schedule, not the render's copy)
+      const current = state.dateSchedules[action.payload.date] ?? []
+      const { groupTime, ...itemFields } = action.payload.item
+      // Order: place after the last item of the same group (by scheduledTime prefix)
+      const groupItems = groupTime
+        ? current.filter(i => i.scheduledTime?.slice(0, 5) === groupTime)
+        : current
+      const maxGroupOrder = groupItems.length > 0
+        ? Math.max(...groupItems.map(i => i.order ?? 0))
+        : (current.length > 0 ? Math.max(...current.map(i => i.order ?? 0)) : 0)
+      const newItem: PlaylistItem = {
+        ...itemFields,
+        id: itemFields.id ?? crypto.randomUUID(),
+        order: maxGroupOrder + 0.5,
+      }
+      const reindexed = [...current, newItem]
+        .sort((a, b) => a.order - b.order)
+        .map((i, n) => ({ ...i, order: n + 1 }))
+      return {
+        ...state,
+        dateSchedules: {
+          ...state.dateSchedules,
+          [action.payload.date]: reindexed,
+        },
+      }
+    }
     case 'UPSERT_MEDIA_DURATIONS': {
       const merged = { ...state.mediaDurationCache, ...action.payload }
       const entries = Object.entries(merged)

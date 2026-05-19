@@ -1317,20 +1317,22 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
   }
 
   // ── Insert item at end of a group ─────────────────────────────────────────
+  // Uses ADD_DATE_SCHEDULE_ITEM (reads state in reducer) to avoid stale closure
+  // overwriting items when multiple adds happen before a re-render.
   const insertItemAtGroupEnd = (group: BlockGroup, fields: Omit<PlaylistItem, 'id' | 'order'>) => {
-    const groupSorted = [...group.items].sort((a, b) => a.order - b.order)
-    const lastItem = groupSorted[groupSorted.length - 1]
-    const newItem: PlaylistItem = {
-      manuallyAdded: true,
-      ...fields,
-      id: crypto.randomUUID(),
-      order: lastItem ? lastItem.order + 0.5 : (sorted[sorted.length - 1]?.order ?? 0) + 1,
-      scheduledTime: fields.scheduledTime ?? (group.time + ':00'),
-    }
-    const newSchedule = [...schedule, newItem]
-      .sort((a, b) => a.order - b.order)
-      .map((i, n) => ({ ...i, order: n + 1 }))
-    dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: selectedDate, items: newSchedule } })
+    dispatch({
+      type: 'ADD_DATE_SCHEDULE_ITEM',
+      payload: {
+        date: selectedDate,
+        item: {
+          manuallyAdded: true,
+          ...fields,
+          id: crypto.randomUUID(),
+          scheduledTime: fields.scheduledTime ?? (group.time + ':00'),
+          groupTime: group.time,
+        },
+      },
+    })
   }
 
   // ── Add file to a group via file browser ──────────────────────────────────
