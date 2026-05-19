@@ -754,6 +754,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const commInterruptTimeRef = useRef<string>('')
   // Tracks last fast-poll position per input — guards progress bar against regression on audio end
   const lastFastPosRef = useRef<Record<string, number>>({})
+  // Conjunto de GUIDs cujo position já alcançou (ou ultrapassou) a duração no
+  // fast-poll. Permite que o playItem.wait quebre cedo quando o operador
+  // adianta manualmente no vMix (scrub) — sem isto, o wall-clock continua
+  // contando a duração original e o vMix fica ocioso esperando.
+  const activeInputEndedRef = useRef<Set<string>>(new Set())
   // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
   const preloadedInputRef = useRef<{ guid: string; filePath: string; alreadyOnAir?: boolean } | null>(null)
   // Tracks ALL GUIDs loaded by SpotMaster via AddInput during this session.
@@ -2012,12 +2017,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       // Absolute minimum 3 s so a misconfigured item doesn't flash past.
       const totalMs = Math.max(durationSec * 1000, 3000)
+      // Garante que o flag de "ended" do vMix começa zerado para este input
+      // — evita falso positivo se o GUID foi reutilizado (ex.: skipToNext
+      // marcou preloadedInputRef.alreadyOnAir e o input já tocou antes).
+      if (onAirInput) activeInputEndedRef.current.delete(onAirInput)
       console.log(`[SpotMaster] playing "${item.title}" — duration: ${durationSec}s (${totalMs}ms)`)
       const start = Date.now()
       let preloadTriggered = false
       while (Date.now() - start < totalMs) {
         if (abortRef.current) break
         const elapsed = Date.now() - start
+
+        // ── Detecta fim do item no vMix (scrub manual ou fim natural) ──────
+        // O fast-poll registra em activeInputEndedRef quando o position do
+        // input alcança a duração. Aqui quebramos o wait sem esperar o
+        // wall-clock — sem isto, o operador adiantando o arquivo no vMix
+        // deixa a sequência travada esperando minutos com o vMix ocioso.
+        // Mínimo de 1.5s evita falso positivo no startup do input (estado
+        // transiente onde position pode estar próximo de duration).
+        if (onAirInput && elapsed >= 1500 && activeInputEndedRef.current.has(onAirInput)) {
+          console.log(`[playItem] "${item.title}" terminou no vMix (scrub ou fim natural) — avançando antes do wall-clock.`)
+          activeInputEndedRef.current.delete(onAirInput)
+          break
+        }
+
         // Só atualiza a barra pelo wall-clock quando não há input vMix ativo (ex: pausa).
         // Quando há input, o fast-polling é a única fonte de progresso — evita oscilação.
         if (!onAirInput) {
@@ -2556,6 +2579,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     gcMusicTimersRef.current = []
     // Limpa o histórico de posição fast-poll para evitar acúmulo entre sessões longas.
     lastFastPosRef.current = {}
+    // Limpa o flag de "ended" dos inputs — próxima sequência começa fresca.
+    activeInputEndedRef.current.clear()
     // Desativar placeholder visual de AudioStyle se houver um ativo
     if (activeAudioPlaceholderRef.current) {
       const { channel } = activeAudioPlaceholderRef.current
@@ -2943,6 +2968,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!num) return
       const inp = status.inputs?.find(i => i.key === num || i.number === num)
       if (!inp || inp.duration <= 0) return
+      // Detecta fim no vMix (natural ou via scrub manual): position chegou na
+      // duração. Registra ANTES do guard de regressão — alguns drivers do vMix
+      // resetam position para 0 logo após o fim, e perderíamos o sinal.
+      // Janela de 500ms para tolerar granularidade do XML (~100ms).
+      if (inp.position > 0 && inp.position >= inp.duration - 500) {
+        activeInputEndedRef.current.add(num)
+      }
       const lastKnown = lastFastPosRef.current[num] ?? 0
       // Guard: position regressed by more than 2 s = audio ended and vMix reset it — skip
       if (inp.position < lastKnown - 2000) {
