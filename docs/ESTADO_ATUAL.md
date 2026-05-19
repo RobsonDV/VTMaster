@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **16/05/2026** — Versão **5.3.0** — Redesign broadcast UI + Drag & Drop MediaBank + Sidebar colapsável + Diferenciação visual por tipo + Correção cleanup de áudio no vMix
+> Atualizado em **19/05/2026** — Versão **5.5.29** — Ciclo de auditoria QA aplicado + Retomada de programação após queda de luz + Pausa pré-programada em bloco comercial + Detecção de scrub manual no vMix + Fim do erro NullReferenceException no Stop
 
 ---
 
@@ -31,6 +31,7 @@
 23. [Complementos 15/05/2026](#23-complementos-15052026)
 24. [v5.3.0 — Redesign Broadcast UI e melhorias de UX (16/05/2026)](#24-v530--redesign-broadcast-ui-e-melhorias-de-ux-16052026)
 25. [Backlog](#25-backlog)
+26. [Ciclo de auditoria QA e endurecimento — v5.5.24 a v5.5.29 (19/05/2026)](#26-ciclo-de-auditoria-qa-e-endurecimento--v5524-a-v5529-19052026)
 
 ---
 
@@ -1947,3 +1948,174 @@ await executeVmixCommand('RemoveInput', { input: guid, ... })
 | Distribuição aleatória pode mudar entre cliques | Cada clique no botão "Distribuir" faz novo shuffle | Confirmar na primeira tentativa |
 | `preloadMinutes` afeta apenas o preloader de 20s, não o scheduler de 1s | Bloco pode entrar na fila até 20s depois do preloadMinutes | Margem desprezível na prática |
 | Data Sources serve apenas `127.0.0.1` | vMix na mesma máquina funciona; máquinas diferentes na rede não acessam | Previsto para a Fase 7 (multiestação) |
+
+---
+
+## 26. Ciclo de auditoria QA e endurecimento — v5.5.24 a v5.5.29 (19/05/2026)
+
+Ciclo dedicado a fechar lacunas estruturais identificadas em auditoria forense estática. Cinco releases consecutivas, cada uma com foco em uma classe de bug. Nada das funcionalidades existentes foi reescrito — só endurecimento.
+
+### 26.1 Metodologia da auditoria (Fases 0–2)
+
+A auditoria foi conduzida em três fases read-only antes de qualquer edição:
+
+| Fase | Saída |
+|------|------|
+| **0 — Reconhecimento** | Mapa de pastas, contagem de linhas dos 60 arquivos `.ts/.tsx`, validação de `package.json`/`tsconfig`/`vite.config`, identificação dos 5 deus-arquivos: `AppContext.tsx` (3244), `DaySchedulePanel.tsx` (2189), `electron/main.ts` (1067), `CampaignsPanel.tsx` (990), `AutoProg/LibraryTab.tsx` (794) |
+| **1 — Inventário F01–F12** | 12 features auditadas por 4 perguntas cada: onde, está completa, trata erro, dependências externas. Resultado: 14 anomalias documentadas com `arquivo:linha` |
+| **2 — Risco cruzado** | Greps sistemáticos: `setInterval×clearInterval` (todos pareados), `JSON.parse` (12 ocorrências, todas em try/catch), `ipcMain.handle` (40 canais únicos, sem duplicação), `addEventListener×removeEventListener` (10×10 pareados), mutações diretas em `state.*` (zero), imports circulares (zero) |
+
+### 26.2 v5.5.24 — 8 correções de auditoria
+
+| ID | Arquivo:linha | Correção |
+|----|---|---|
+| **R01** | `electron/preload.cts` (deletado) | Arquivo órfão coexistia com `preload.ts` (com 19 APIs a menos) — armadilha de manutenção. Tsc compilava ambos mas `build-preload-cjs.cjs` sobrescrevia `preload.cjs` do `preload.ts`. Edição em `.cts` era silenciosamente descartada. |
+| **R03** | `AppContext.tsx:2884` | `registerTrigger` agora consome o `Promise<boolean>` retornado pelo IPC e emite `console.warn` quando a tecla está ocupada por outro app. Antes a falha era silenciosa. |
+| **R05** | `AppContext.tsx:2234` | Removida dep `loadNewInput` não usada das deps de `runSequence`. Removido o `eslint-disable react-hooks/exhaustive-deps`. |
+| **R08+R12** | `AppContext.tsx` (gcMusicTimersRef + lastFastPosRef) | Timers do GC Musical (delay inicial + hide overlay aninhado) agora são rastreados e cancelados em `stopPlayback`. Sem isto, comandos `SetText`/`OverlayInputXOff` podiam disparar segundos após Stop. `lastFastPosRef` é resetado no Stop para evitar acúmulo entre sessões longas. |
+| **R10** | `AppContext.tsx:3099` | Novo `loadAllStartedRef` evita disparo duplo dos 26 IPC `loadData` em StrictMode/dev re-mount. |
+| **R11** | `AppContext.tsx:708` | `t` (traduções) memoizado com `useMemo([state.settings.language])` para evitar re-criação a cada render. |
+| **R15** | `electron/main.ts:33, 549, 568` | `setInterval` do auto-update (6 h) agora tem `clearInterval` no `will-quit`. |
+
+### 26.3 v5.5.25 — Sequência continua em falha de 1 arquivo + guard contra wipe de dateSchedules
+
+**Bug 1 — "Toca uma música e para":** quando `loadNewInput` retornava `null` (arquivo movido, vMix em `state="Loading"`, AddInput rejeitado), `playItem` em `AppContext.tsx:1813` setava `abortRef.current = true` e `runSequence` interpretava como Stop deliberado → `break` do `while(true)` → sequência morria.
+
+**Fix:** Removido `abortRef.current = true` do path "file failed to load". Item fica `error`, `console.warn` no DevTools explica, sequência continua para o próximo item. O guard de "vMix offline" (linha 1687) é mantido — nesse caso TODOS os próximos itens vão falhar igual e parar é o comportamento correto.
+
+**Bug 2 — "Programação totalmente vazia ao reabrir":** auto-save de `dateSchedules` em `AppContext.tsx:3346` persistia `{}` no disco sem guard. Race transiente no startup sobrescrevia dados legítimos.
+
+**Fix:** Guard em `AppContext.tsx:3347-3355` que nunca persiste `{}`. Save é skipado e logado quando o objeto está vazio. Na próxima mudança legítima de `state.dateSchedules`, o save dispara normal.
+
+**Instrumentação:** `loadAll` agora loga no console quantos dias foram carregados do disco, se today tem dados, contagem de grid keys e blocos comerciais — facilita diagnóstico via DevTools.
+
+### 26.4 v5.5.26 — Retomada de programação após queda de luz
+
+A detecção de sessão anterior em `AppContext.tsx:3207-3283` já existia, mas só funcionava no cenário onde o vMix tinha sobrevivido ao crash do app (input ainda `state="Running"`). No cenário clássico de queda de luz — PC, vMix e app reiniciam juntos — o input some do vMix e o código antigo marcava o item como `'done'` silenciosamente, sem mostrar o banner.
+
+**Dois modos de retomada agora:**
+
+| Modo | Cenário | O que acontece |
+|------|--------|----------------|
+| `'live'` | App crashou, vMix sobreviveu tocando | Banner "Retomar controle" — assume timer sem reenviar Cut/PlayInput |
+| `'reload'` (NOVO) | Queda de luz — vMix e app reiniciaram | Banner "Retomar Programação — foi interrompido (queda de luz?). Posso recarregar e retomar do ponto MM:SS (MM:SS restantes)." Ao clicar: `loadNewInput` + `SetPosition(elapsed*1000ms)` + `Cut` + `PlayInput`, então `startScheduleFromItem` com duração ajustada |
+
+**Critérios para oferecer reload:**
+1. `lastPlaybackSnapshot.json` existe e tem **< 4 h**
+2. `snapshot.scheduleDate === today`
+3. Item ainda existe em `dateSchedules[today]` com `status='playing'`
+4. vMix conecta, mas o input está com `state !== 'Running'`
+5. Wall-clock indica que ainda sobra **mais de 5 s** do item
+6. `snapshot.filePath` presente (não funciona para inputs vMix permanentes)
+
+Tipo `ResumeCandidate` ganhou campos opcionais `mode: 'live' | 'reload'` e `filePath?: string` — mudança aditiva, retro-compatível.
+
+### 26.5 v5.5.27 — Next reaproveita preload + Stop Next sem ghost
+
+**Bug Next:** `skipToNext` em `AppContext.tsx:2621` **sempre** chamava `loadNewInput`, ignorando que o preload antecipatório (em `playItem` ~2 s após o item começar) já tinha colocado o mesmo arquivo no vMix. Input duplicado, o antigo virava fantasma.
+
+**Fix:** `skipToNext` segue o mesmo padrão de `playItem`:
+- Se `preloadedInputRef.current.filePath === nextPending.filePath` → reaproveita o GUID, não chama AddInput.
+- Se o preload é de outro arquivo (operador reordenou a fila) → descarta o stale via `removeOwnedInput` e carrega fresh.
+
+**Bug Stop Next "trava":** o preload antecipatório usa `loadNewInput(...).then(...)` fire-and-forget. Se o operador armava Stop Next durante o preload, a sequência terminava antes do `.then` resolver, e quando o `preGuid` chegava era gravado em `preloadedInputRef.current` APÓS o cleanup já ter passado. Input ficava no vMix sem dono.
+
+**Fix duplo:**
+1. **Pula o preload se Stop Next armado** em `playItem`: se `stopAfterCurrentRef.current === true`, nem inicia o preload.
+2. **Novo `sequenceEndedRef`**: flipado para `true` no fim de `runSequence` E em `stopPlayback`. O `.then` do preload checa esse ref — se a sequência já terminou, remove o input recém-carregado em vez de gravá-lo.
+
+### 26.6 v5.5.28 — Detecção de scrub manual no vMix
+
+**Bug:** `playItem.wait` esperava o item terminar usando **só wall-clock** (`Date.now() - start < totalMs`). Não olhava o que o vMix estava fazendo. Quando o operador adiantava manualmente o arquivo no vMix (scrub de 0:30 para 4:30 numa música de 5:00), o vMix terminava em segundos mas o wall-clock continuava por 4 minutos — vMix ocioso, ON AIR continuava no item finalizado.
+
+**Fix em 3 partes:**
+
+| Mudança | Onde | O que faz |
+|---|---|---|
+| Novo `activeInputEndedRef: Set<string>` | `AppContext.tsx:758` | Guarda GUIDs cujo `position` já alcançou `duration` no vMix |
+| Fast-poll marca o Set | `AppContext.tsx:2870` | Antes do guard de regressão, se `position >= duration - 500ms`, marca o GUID. Margem de 500 ms cobre granularidade do XML (~100 ms) |
+| `playItem.wait` checa o Set | `AppContext.tsx:2027` | A cada tick (300 ms), se o GUID atual está marcado E já passou 1.5 s do início do item, quebra o wait e a sequência avança |
+
+**Garantias preservadas:** wall-clock continua sendo fallback para items sem GUID (pausa, vmix_action), loops infinitos no vMix (`SetLoop`) não são afetados (position nunca alcança duration), imagens cuidadas pelo wall-clock como antes.
+
+### 26.7 v5.5.29 — Pausa pré-programada em bloco comercial + fim do erro NullReferenceException
+
+#### Pausa pré-programada
+
+Operador pode agora planejar dentro de um bloco comercial um ponto de parada: "ao chegar aqui, pare e espere meu próximo disparo manual".
+
+**Implementação:**
+- `CommercialBlockItemType` ganha `'pause'` em `types/index.ts:88`
+- `expandBlockItems` em `AppContext.tsx` ganha novo branch que gera `PlaylistItem` com `type: 'pause'`, `duration: 0`, `adBreakId` herdado
+- `runSequence` em `AppContext.tsx:~2150` **já tratava** `type === 'pause'`: marca como `done` e quebra o while-loop. Reprodução só retoma com novo disparo (botão, atalho, gamepad, MIDI)
+- UI em `AdBreaksPanel.tsx`: novo botão **⏸ Pausa** ao lado de Spot/Ação/Input. `BlockItemRow` renderiza pause com cor `#94a3b8` (slate-400), rótulo editável, tag "⏸ Para aqui — espera novo disparo". `ItemTypeBadge` (visualização colapsada) renderiza pílula de pausa
+
+**Uso típico:**
+1. Bloco "Comercial das 18h" tem 3 anunciantes + 1 vinheta de encerramento
+2. Após a vinheta, operador insere uma Pausa
+3. Quando o bloco rodar na grade, ao terminar a vinheta o motor para
+4. Operador volta da intervenção e dispara o próximo trecho do dia
+
+#### Fim do erro "Referência de objeto não definida" no Stop
+
+**Causa:** `stopPlayback` (e o cleanup do fim natural de `runSequence`) faziam dupla remoção do mesmo GUID:
+1. `removeOwnedInput(preloadedGuid, delay=0)` — descarte explícito do preload
+2. `cleanupInputs(0)` → `removeOwnedInput(activeGuid, delay=0)`
+3. **Sweep** itera `spotmasterGuidsRef` que ainda contém AMBOS os GUIDs → `removeOwnedInput` de novo para cada
+
+Resultado: 4 setTimeouts para 2 GUIDs. Cada GUID sofria StopInput/RemoveInput duas vezes. A segunda chegava no vMix com o input já removido → `NullReferenceException`.
+
+**Fix em `removeOwnedInput` (`AppContext.tsx:1540`):**
+
+```typescript
+// Novo pendingRemovalRef: Map<guid, timer>
+const existing = pendingRemovalRef.current.get(guid)
+if (existing) clearTimeout(existing)  // cancela anterior
+
+const timer = setTimeout(async () => {
+  // Re-checa: ainda sou o timer registrado?
+  if (pendingRemovalRef.current.get(guid) !== timer) return
+  pendingRemovalRef.current.delete(guid)
+  // ... StopInput, sleep 120ms, RemoveInput
+  spotmasterGuidsRef.current.delete(guid)  // sempre, sucesso OU falha
+}, delayMs)
+pendingRemovalRef.current.set(guid, timer)
+```
+
+Resultado: cada GUID só tem UMA remoção pendente por vez. Chamadas urgentes (Stop, delay=0) sobrescrevem cleanups gentle (delay=5000). `spotmasterGuidsRef.delete` roda sempre — se a remoção falhou porque o input não existia mais, é desejável esquecer dele também.
+
+### 26.8 Cadeia de releases e validação
+
+Todas as 5 releases tiveram o mesmo pipeline:
+
+1. `npm run build` (tsc + vite + electron:compile)
+2. `npm run lint` (zero erros)
+3. `git commit -m "fix(vX.Y.Z): ..."` (mensagens detalhadas com causa-raiz, fix, garantias preservadas)
+4. `git push origin main`
+5. `GH_TOKEN=$(gh auth token) npm run release:github` (electron-builder publica NSIS Setup, Portable e blockmap)
+6. `gh release view` confirma upload dos 4 assets (`latest.yml`, `Setup.exe`, `Setup.exe.blockmap`, `Portable.exe`)
+
+Auto-update via `electron-updater` traz a nova versão para instalações existentes em até 6 h (intervalo configurado em `electron/main.ts:550`). Botão Configurações → Verificar atualização força imediato.
+
+### 26.9 Garantias acumuladas no ciclo
+
+Nenhuma release deste ciclo tocou em código que não fosse necessário ao bug específico tratado. Em particular, ao fim do ciclo continuam intactos:
+
+- ✅ `runSequence` / `playItem` no caminho normal (apenas adicionados guards de borda)
+- ✅ Resume detection lógica (v5.5.26 só **adicionou** caminho `'reload'`, sem alterar o `'live'`)
+- ✅ Autoplay schedulers (programa + comercial)
+- ✅ Preflight, AutoProg, AudioPro, VideoPro, Grafismos, Reports
+- ✅ Persistência atômica de todos os 27 JSONs
+- ✅ Auto-update via GitHub Releases
+- ✅ Tipos do MediaBank, drag-and-drop interno/externo
+- ✅ Crossfade Fade/Merge configurável
+- ✅ Snapshot Comercial
+
+### 26.10 Itens identificados em auditoria que NÃO foram aplicados (decisão deliberada)
+
+| ID | Motivo |
+|----|------|
+| R02 — guards `window.spotmaster` em todos os call-sites | Falso positivo: `window.spotmaster` é setado pelo preload no startup e nunca é desfeito. Adicionar guards seria ruído sem ganho de runtime. |
+| R04 — `ipcRenderer.removeAllListeners(channel)` no preload | Hoje só há 1 consumer por canal — refatorar seria reescrita arquitetural maior. Marcado como armadilha de extensibilidade futura. |
+| R06–R20 — dívida arquitetural, perf marginal, cosméticos | Fora do escopo "consertar bugs de runtime sem refactor". Documentado em sessão de auditoria. |
+
