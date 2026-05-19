@@ -1428,10 +1428,12 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
           <span className="resume-banner-text">
             Sessão anterior detectada —{' '}
             <strong>{resumeCandidate.inputTitle}</strong>{' '}
-            ainda está no ar ({fmtSec(resumeCandidate.remainingSeconds)} restantes)
+            {resumeCandidate.mode === 'reload'
+              ? <>foi interrompido (queda de luz?). Posso recarregar e retomar do ponto {fmtSec(resumeCandidate.elapsedSeconds)} ({fmtSec(resumeCandidate.remainingSeconds)} restantes).</>
+              : <>ainda está no ar ({fmtSec(resumeCandidate.remainingSeconds)} restantes)</>}
           </span>
           <button className="resume-banner-btn primary" onClick={() => resumeFromSnapshot()}>
-            Retomar controle
+            {resumeCandidate.mode === 'reload' ? 'Retomar Programação' : 'Retomar controle'}
           </button>
           <button className="resume-banner-btn ghost" onClick={ignoreResume}>
             Ignorar

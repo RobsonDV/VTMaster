@@ -1,7 +1,7 @@
 {
   "name": "vtmaster",
   "private": true,
-  "version": "5.5.25",
+  "version": "5.5.26",
   "description": "VTMaster - Software de Playout para TV/Rádio com integração vMix",
   "author": "RobsonCostaDV",
   "repository": {

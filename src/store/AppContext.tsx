@@ -2365,11 +2365,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [dispatch, runSequence])
 
   // ── resumeFromSnapshot ───────────────────────────────────────────────────────
-  // Retoma o controle sobre um item que ainda está rodando no vMix após um restart.
-  // Não envia nenhum comando ao vMix — apenas reinicia o timer de countdown.
+  // Retoma a programação após um restart. Dois cenários:
+  //  • mode='live'   → o input ainda está rodando no vMix; o app só assume o
+  //                     controle do timer sem reenviar Cut/PlayInput.
+  //  • mode='reload' → o vMix também reiniciou e perdeu o input (típico em
+  //                     queda de luz). O app carrega o arquivo fresco no vMix,
+  //                     faz SetPosition para a posição calculada por wall-clock,
+  //                     e dá Play. Em seguida marca alreadyOnAir=true para que
+  //                     playItem só fique aguardando o restante do tempo.
   const resumeFromSnapshot = useCallback(async () => {
     if (!resumeCandidate) return
-    const { itemId, queue, scheduleDate, inputGuid, remainingSeconds } = resumeCandidate
+    const { itemId, queue, scheduleDate, inputGuid, elapsedSeconds, remainingSeconds, mode, filePath: snapshotFilePath } = resumeCandidate
 
     // Encontra o item
     const todayStr = today()
@@ -2386,12 +2392,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const adjustedItem: PlaylistItem = { ...item, duration: Math.max(5, Math.round(remainingSeconds)), status: 'pending' }
 
     if (queue === 'schedule' && (scheduleDate === todayStr || !scheduleDate)) {
+      let effectiveGuid = inputGuid
+
+      if (mode === 'reload') {
+        // ── Recarrega o arquivo no vMix e seeka para a posição estimada ──
+        // Cenário: o vMix também reiniciou (queda de luz) — input não existe.
+        // Calcula o filePath: prioriza o do snapshot (sobrevive a remontes
+        // da grade), com fallback no item atual.
+        const fp = snapshotFilePath ?? item.filePath
+        if (!fp) {
+          // Sem arquivo, não conseguimos recarregar. Aborta resume.
+          console.warn('[resume] modo reload solicitado mas item não tem filePath — abortando.')
+          setResumeCandidate(null)
+          window.spotmaster?.clearPlaybackSnapshot?.()
+          return
+        }
+        const resumeMeta: VmixCommandMeta = { source: 'resume-reload', queue: 'schedule', itemId: item.id, itemTitle: item.title }
+        const loadedGuid = await loadNewInput(fp, resumeMeta)
+        if (!loadedGuid) {
+          console.error('[resume] falha ao recarregar arquivo no vMix — abortando resume.')
+          setResumeCandidate(null)
+          window.spotmaster?.clearPlaybackSnapshot?.()
+          return
+        }
+        effectiveGuid = loadedGuid
+        // SetPosition em ms — pula direto para onde a música estava (estimado por wall-clock)
+        const seekMs = String(Math.max(0, elapsedSeconds * 1000))
+        await executeVmixCommand('SetPosition', { input: loadedGuid, value: seekMs, meta: resumeMeta, validate: false })
+        await executeVmixCommand('PreviewInput', { input: loadedGuid, meta: resumeMeta })
+        await new Promise(r => setTimeout(r, 120))
+        await executeVmixCommand('Cut', { meta: resumeMeta })
+        await new Promise(r => setTimeout(r, 120))
+        await executeVmixCommand('PlayInput', { input: loadedGuid, meta: resumeMeta })
+        console.log(`[resume] reload: arquivo "${item.title}" recarregado, seek=${elapsedSeconds}s, faltam ${remainingSeconds}s`)
+      }
+
       // Configura activeInputRef para que o cleanup saiba qual input remover depois
-      activeInputRef.current = inputGuid
-      spotmasterGuidsRef.current.add(inputGuid)
+      activeInputRef.current = effectiveGuid
+      spotmasterGuidsRef.current.add(effectiveGuid)
 
       // Sinaliza ao playItem que o input já está no ar (pula load + cut)
-      preloadedInputRef.current = { guid: inputGuid, filePath: item.filePath ?? '', alreadyOnAir: true }
+      preloadedInputRef.current = { guid: effectiveGuid, filePath: item.filePath ?? snapshotFilePath ?? '', alreadyOnAir: true }
 
       setResumeCandidate(null)
       window.spotmaster?.clearPlaybackSnapshot?.()
@@ -2405,7 +2446,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setResumeCandidate(null)
       window.spotmaster?.clearPlaybackSnapshot?.()
     }
-  }, [resumeCandidate, dispatch, startScheduleFromItem])
+  }, [resumeCandidate, dispatch, startScheduleFromItem, loadNewInput])
 
   const ignoreResume = useCallback(() => {
     if (!resumeCandidate) return
@@ -3281,15 +3322,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
         (snapshot.inputName && i.title === snapshot.inputName)
       )
       if (!inp || inp.state !== 'Running') {
-        // Item terminou enquanto app estava fechado — marca como done silenciosamente
-        if (item) {
-          if (snapshot.queue === 'schedule') {
-            dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: snapshot.scheduleDate ?? todayStr, item: { ...item, status: 'done' } } })
-          } else {
-            dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
+        // ── vMix esqueceu o input ────────────────────────────────────────
+        // Aconteceu uma de duas coisas:
+        //  (a) o item terminou de tocar enquanto o app estava fechado;
+        //  (b) o vMix também reiniciou (queda de luz / kill geral) e
+        //      simplesmente perdeu o input.
+        //
+        // Para distinguir: calculamos por wall-clock quanto tempo se passou
+        // desde `snapshot.startedAt`. Se já passou TUDO (+5 s de folga),
+        // assumimos (a) e marcamos como done. Se ainda sobra tempo e temos
+        // um filePath, oferecemos resume no modo 'reload' — o app vai
+        // recarregar o arquivo no vMix e SetPosition para o ponto calculado.
+        const wallElapsedSec = Math.round((Date.now() - new Date(snapshot.startedAt).getTime()) / 1000)
+        const wallRemainingSec = snapshot.totalDuration - wallElapsedSec
+
+        if (wallRemainingSec <= 5 || !snapshot.filePath) {
+          // Já passou o tempo todo OU é um input permanente vMix (sem arquivo
+          // pra recarregar). Marca como done e segue.
+          if (item) {
+            if (snapshot.queue === 'schedule') {
+              dispatch({ type: 'UPDATE_SCHEDULE_ITEM', payload: { date: snapshot.scheduleDate ?? todayStr, item: { ...item, status: 'done' } } })
+            } else {
+              dispatch({ type: 'UPDATE_PLAYLIST_ITEM', payload: { ...item, status: 'done' } })
+            }
           }
+          window.spotmaster?.clearPlaybackSnapshot?.()
+          return
         }
-        window.spotmaster?.clearPlaybackSnapshot?.()
+
+        // Item foi interrompido a meio (queda de luz típica). Oferece
+        // retomada via recarga do arquivo + seek na posição wall-clock.
+        setResumeCandidate({
+          itemId: item.id,
+          queue: snapshot.queue,
+          scheduleDate: snapshot.scheduleDate,
+          inputGuid: '',                       // vai ser preenchido no resumeFromSnapshot
+          elapsedSeconds: wallElapsedSec,
+          remainingSeconds: wallRemainingSec,
+          inputTitle: item.title,
+          mode: 'reload',
+          filePath: snapshot.filePath,
+        })
         return
       }
 
@@ -3301,6 +3374,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      // Modo 'live': o input ainda está rodando no vMix, o app só vai
+      // assumir o controle do timer sem re-enviar Cut/PlayInput.
       setResumeCandidate({
         itemId: item.id,
         queue: snapshot.queue,
@@ -3309,6 +3384,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         elapsedSeconds,
         remainingSeconds,
         inputTitle: item.title,
+        mode: 'live',
+        filePath: snapshot.filePath,
       })
     })()
   }, [state.vmixStatus.connected, state.isLoading])

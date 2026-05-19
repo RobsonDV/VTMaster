@@ -299,6 +299,16 @@ export interface ResumeCandidate {
   elapsedSeconds: number
   remainingSeconds: number
   inputTitle: string
+  /**
+   * Estratégia de retomada:
+   * - 'live'   → o input ainda está no vMix tocando; o app só assume o controle do timer.
+   * - 'reload' → vMix também reiniciou e perdeu o input; o app recarrega o arquivo,
+   *              faz SetPosition para a posição calculada por wall-clock e dá Play.
+   *              Usado em quedas de luz / restart completo.
+   */
+  mode?: 'live' | 'reload'
+  /** Caminho do arquivo, copiado do snapshot — usado no modo 'reload'. */
+  filePath?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
