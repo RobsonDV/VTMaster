@@ -1791,7 +1791,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           onAirInput = guid
         } else {
           // File failed to load (not found or vMix rejected AddInput).
-          // Log immediately as error and return — no dead-air wait, no false 'aired' entry.
+          // Log immediately as error — sequence continues to the NEXT item instead
+          // of aborting the whole queue. Setting abortRef here in prior versions
+          // caused the bug "para após o primeiro item": uma única falha de
+          // loadNewInput (arquivo movido, vMix em estado Loading, etc.) parava
+          // toda a Programação.
+          console.warn(`[playout] Falha ao carregar item "${item.title}" no vMix — file=${item.filePath}. Marcando como erro e continuando para o próximo item.`)
           dispatch({
             type: 'ADD_LOG',
             payload: {
@@ -1810,7 +1815,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             } as PlayLog,
           })
           updateQueueItem({ ...item, status: 'error' })
-          abortRef.current = true
           return
         }
 
@@ -3152,6 +3156,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             window.spotmaster.loadData('audioStyles'),
             window.spotmaster.loadData('vmixOutputProfiles'),
           ])
+        // Diagnóstico: log do que veio do disco para o usuário poder
+        // identificar via DevTools (Ctrl+Shift+I) se algum arquivo está null
+        // ou vazio quando o problema "programação não carrega" reaparecer.
+        const _datesCount = dateSchedulesRaw && typeof dateSchedulesRaw === 'object'
+          ? Object.keys(dateSchedulesRaw).length
+          : 0
+        const _todayHasData = dateSchedulesRaw && typeof dateSchedulesRaw === 'object'
+          ? Array.isArray((dateSchedulesRaw as Record<string, unknown>)[today()])
+          : false
+        console.log(`[loadAll] disk → ${_datesCount} dia(s) salvo(s), today (${today()}) ${_todayHasData ? 'tem' : 'NÃO tem'} dados | grid keys: ${Object.keys((gridRaw as object) ?? {}).length} | blocos: ${((blocksRaw as unknown[]) ?? []).length}`)
+
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
           if (b.items?.length) return b
@@ -3358,6 +3373,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const pruned = Object.fromEntries(
       Object.entries(state.dateSchedules).filter(([date]) => date >= cutoffStr),
     )
+    // Guard: nunca persiste {} no disco. Se o state ficou vazio por race
+    // transitória durante startup (LOAD_ALL com disk vazio, ou erro em
+    // generatePlaylistFromGrid antes de popular today), o save de {}
+    // sobrescreve dados legítimos do dia anterior e o usuário abre o app
+    // achando que o dia "sumiu". Pular o save é seguro: na próxima mudança
+    // legítima de dateSchedules o save dispara normal.
+    if (Object.keys(pruned).length === 0) {
+      console.warn('[persist] dateSchedules vazio — save ignorado (proteção contra wipe acidental)')
+      return
+    }
     saveToStorage('dateSchedules', pruned)
   }, [state.dateSchedules, state.isLoading, saveToStorage])
 
