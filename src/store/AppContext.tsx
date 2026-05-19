@@ -759,6 +759,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // adianta manualmente no vMix (scrub) — sem isto, o wall-clock continua
   // contando a duração original e o vMix fica ocioso esperando.
   const activeInputEndedRef = useRef<Set<string>>(new Set())
+  // Map de GUID → timer pendente em removeOwnedInput. Garante que o mesmo input
+  // não tenha duas remoções agendadas ao mesmo tempo (stopPlayback + sweep
+  // costumavam disparar StopInput/RemoveInput no mesmo GUID 2-3 vezes, fazendo
+  // o vMix gerar "Referência de objeto não definida" na tentativa redundante).
+  const pendingRemovalRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
   const preloadedInputRef = useRef<{ guid: string; filePath: string; alreadyOnAir?: boolean } | null>(null)
   // Tracks ALL GUIDs loaded by SpotMaster via AddInput during this session.
@@ -919,6 +924,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           adBreakId: block.id,
           scheduledTime: block.scheduledTime,
           inputName: bi.inputName,
+        })
+        offset++
+      } else if (bi.type === 'pause') {
+        // Ponto de pausa pré-programado: ao chegar neste item, runSequence
+        // marca como 'done' e quebra o while-loop. Reprodução continua só
+        // após o operador disparar manualmente (botão, atalho ou gamepad).
+        // Útil para "parar depois deste bloco e esperar próximo trigger do dia".
+        items.push({
+          id: crypto.randomUUID(),
+          order: startOrder + offset,
+          title: bi.title ?? 'Pausa',
+          duration: 0,
+          type: 'pause' as const,
+          status: 'pending' as const,
+          adBreakId: block.id,
+          scheduledTime: block.scheduledTime,
         })
         offset++
       }
@@ -1536,7 +1557,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     delayMs = 0,
   ) => {
     if (!guid || !window.spotmaster) return
-    setTimeout(async () => {
+    // Dedup: se já existe uma remoção pendente para este GUID, cancela e
+    // reagenda com o novo delay. Garante que uma chamada urgente (delay=0
+    // em stopPlayback) sobrescreve uma remoção mais "gentil" (delay=5000 do
+    // sequence-end). Sem isto, dois ou três setTimeouts diferentes
+    // disparavam StopInput/RemoveInput sequencialmente no MESMO GUID —
+    // a primeira removia o input e a segunda recebia
+    // "Referência de objeto não definida" do vMix.
+    const existing = pendingRemovalRef.current.get(guid)
+    if (existing) clearTimeout(existing)
+
+    const timer = setTimeout(async () => {
+      // Re-checa: outra chamada substituiu este timer enquanto estava na fila?
+      // Se sim, deixa a outra fazer o trabalho.
+      if (pendingRemovalRef.current.get(guid) !== timer) return
+      pendingRemovalRef.current.delete(guid)
       if (!window.spotmaster) return
       // StopInput garante que áudios em estado Running (AudioFile) sejam
       // encerrados antes da remoção. Para vídeos é inofensivo pois já saíram
@@ -1552,8 +1587,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         input: guid,
         meta: { source: 'remove-owned-input', queue: 'system', ...meta },
       })
-      if (result.success) spotmasterGuidsRef.current.delete(guid)
+      // Deleta de spotmasterGuidsRef SEMPRE — se a remoção falhou porque o
+      // input já não existia, é desejável esquecer dele também.
+      spotmasterGuidsRef.current.delete(guid)
+      if (!result.success) {
+        console.debug(`[vmix] RemoveInput falhou para ${guid} (provavelmente já removido): ${result.error ?? 'sem detalhe'}`)
+      }
     }, delayMs)
+    pendingRemovalRef.current.set(guid, timer)
   }, [])
 
   // Loads a file as a new input in vMix.
@@ -2581,6 +2622,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     lastFastPosRef.current = {}
     // Limpa o flag de "ended" dos inputs — próxima sequência começa fresca.
     activeInputEndedRef.current.clear()
+    // Map de remoções pendentes — quem ainda tinha timer aí vai sobrescrever
+    // os antigos pelos novos imediatos abaixo. A dedup interna do removeOwnedInput
+    // cuida do clearTimeout. Aqui só registramos a intenção: depois deste stop,
+    // não há mais nada útil esperando.
     // Desativar placeholder visual de AudioStyle se houver um ativo
     if (activeAudioPlaceholderRef.current) {
       const { channel } = activeAudioPlaceholderRef.current

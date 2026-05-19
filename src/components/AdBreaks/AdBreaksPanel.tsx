@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   Plus, Trash2, Clock, ToggleLeft, ToggleRight,
-  RefreshCw, ChevronUp, ChevronDown, Zap, Monitor, User, ChevronDown as ExpandIcon, Megaphone,
+  RefreshCw, ChevronUp, ChevronDown, Zap, Monitor, User, ChevronDown as ExpandIcon, Megaphone, Pause,
 } from 'lucide-react'
 import { useApp } from '../../store/AppContext'
 import type { CommercialBlock, CommercialBlockItem, Client } from '../../types'
@@ -29,9 +29,12 @@ function BlockItemRow({
   isLast: boolean
 }) {
   const borderColor = item.type === 'spot_client' ? '#f59e0b'
-    : item.type === 'vmix_action' ? '#7c3aed' : '#0ea5e9'
+    : item.type === 'vmix_action' ? '#7c3aed'
+    : item.type === 'pause' ? '#94a3b8'
+    : '#0ea5e9'
   const bgColor = item.type === 'spot_client' ? 'color-mix(in srgb, #f59e0b 8%, var(--bg-primary))'
     : item.type === 'vmix_action' ? 'color-mix(in srgb, #7c3aed 8%, var(--bg-primary))'
+    : item.type === 'pause' ? 'color-mix(in srgb, #94a3b8 8%, var(--bg-primary))'
     : 'color-mix(in srgb, #0ea5e9 8%, var(--bg-primary))'
 
   return (
@@ -44,6 +47,7 @@ function BlockItemRow({
       <span style={{ color: borderColor, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         {item.type === 'spot_client' ? <User size={13} />
           : item.type === 'vmix_action' ? <Zap size={13} />
+          : item.type === 'pause' ? <Pause size={13} />
           : <Monitor size={13} />}
       </span>
 
@@ -116,6 +120,20 @@ function BlockItemRow({
         </>
       )}
 
+      {item.type === 'pause' && (
+        <>
+          <input
+            value={item.title ?? ''}
+            onChange={e => onUpdate({ ...item, title: e.target.value })}
+            placeholder="Rótulo (ex: Aguardar próximo trigger)"
+            style={{ flex: 1, padding: '3px 6px', fontSize: '0.8rem', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)' }}
+          />
+          <span style={{ fontSize: '0.72rem', color: borderColor, flexShrink: 0, fontWeight: 600 }}>
+            ⏸ Para aqui — espera novo disparo
+          </span>
+        </>
+      )}
+
       <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
         <button onClick={onMoveUp} disabled={isFirst} style={{ width: 22, height: 22, border: 'none', background: 'transparent', cursor: isFirst ? 'default' : 'pointer', color: isFirst ? 'transparent' : 'var(--text-secondary)', borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <ChevronUp size={12} />
@@ -157,6 +175,15 @@ function ItemTypeBadge({ item, clients, nextSpotTitle }: {
       </span>
     )
   }
+  if (item.type === 'pause') {
+    return (
+      <span className="ab-slot-pill" style={{ borderColor: '#94a3b860', background: 'color-mix(in srgb, #94a3b8 8%, transparent)' }}>
+        <Pause size={10} style={{ color: '#94a3b8', marginRight: 3 }} />
+        <strong style={{ color: '#94a3b8' }}>Pausa</strong>
+        {item.title && <span className="ab-next-spot"> · {item.title}</span>}
+      </span>
+    )
+  }
   return (
     <span className="ab-slot-pill" style={{ borderColor: '#0ea5e960', background: 'color-mix(in srgb, #0ea5e9 8%, transparent)' }}>
       <Monitor size={10} style={{ color: '#38bdf8', marginRight: 3 }} />
@@ -189,6 +216,7 @@ function InlineBlockEditor({ draft, setDraft, onSave, onCancel, clients, isNew }
       ...(type === 'spot_client' ? { clientId: '', spotsCount: 1 } : {}),
       ...(type === 'vmix_action' ? { vmixAction: { function: 'AudioOff' } } : {}),
       ...(type === 'vmix_input'  ? { inputName: '', duration: 10 } : {}),
+      ...(type === 'pause'       ? { title: 'Aguardar próximo trigger' } : {}),
     }
     setDraft(d => d ? { ...d, items: [...d.items, newItem] } : d)
   }
@@ -272,6 +300,9 @@ function InlineBlockEditor({ draft, setDraft, onSave, onCancel, clients, isNew }
           </Button>
           <Button className="ab-add-btn ab-add-btn--input" size="sm" variant="ghost" onClick={() => addItem('vmix_input')} icon={<Monitor size={11} />}>
             Input vMix
+          </Button>
+          <Button className="ab-add-btn ab-add-btn--pause" size="sm" variant="ghost" onClick={() => addItem('pause')} icon={<Pause size={11} />} title="Pausa pré-programada: ao chegar aqui o motor para e aguarda o próximo disparo manual">
+            Pausa
           </Button>
         </div>
       </div>

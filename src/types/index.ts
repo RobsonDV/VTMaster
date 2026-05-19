@@ -85,7 +85,7 @@ export interface BlockClientSlot {
 }
 
 /** Tipo de item dentro de um bloco comercial */
-export type CommercialBlockItemType = 'spot_client' | 'vmix_action' | 'vmix_input'
+export type CommercialBlockItemType = 'spot_client' | 'vmix_action' | 'vmix_input' | 'pause'
 
 /** Item ordenado dentro de um bloco comercial (mini-playlist) */
 export interface CommercialBlockItem {
