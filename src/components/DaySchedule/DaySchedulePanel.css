@@ -194,7 +194,8 @@
   border-radius: 999px;
   background: linear-gradient(90deg, var(--error), var(--accent));
   box-shadow: 0 0 8px color-mix(in srgb, var(--error) 45%, transparent);
-  transition: width 0.35s linear;
+  /* 0.55s > fast-poll interval (500ms) — movimento contínuo sem "step". */
+  transition: width 0.55s linear;
 }
 
 .cockpit-summary {
@@ -415,7 +416,8 @@
   top: 0;
   height: 100%;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
-  transition: width 0.3s linear;
+  /* 0.55s > fast-poll interval (500ms) — movimento contínuo sem "step". */
+  transition: width 0.55s linear;
 }
 
 .day-progress-label {
@@ -1616,7 +1618,8 @@
     color-mix(in srgb, var(--bc-ao-ar) 18%, transparent) 70%,
     color-mix(in srgb, var(--bc-ao-ar) 6%,  transparent) 100%
   );
-  transition: width 0.4s linear;
+  /* 0.55s > fast-poll interval (500ms) — movimento contínuo sem "step". */
+  transition: width 0.55s linear;
   border-right: 2px solid color-mix(in srgb, var(--bc-ao-ar) 55%, transparent);
   box-shadow: 2px 0 8px color-mix(in srgb, var(--bc-ao-ar) 25%, transparent);
 }

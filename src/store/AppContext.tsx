@@ -3361,6 +3361,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           && scheduledDue.some(i => i.filePath === armed.filePath))
         if (armedMatch && armed) {
           console.log(`[autoplay-com] usando arming pré-carregado para "${armed.blockName}" (filePath match)`)
+          // ── Importante: descartar preload musical antigo se houver ─────
+          // Cenário: música tocando, playItem disparou anticipatory preload
+          // do próximo musical (preloadedInputRef = guid_Y). Aí o bloco
+          // comercial chega — vamos sobrescrever preloadedInputRef com o
+          // guid do arming. Se não removermos guid_Y do vMix primeiro, ele
+          // fica fantasma no projeto sem dono.
+          const existingPreload = preloadedInputRef.current
+          if (existingPreload && existingPreload.guid !== armed.guid) {
+            console.log(`[autoplay-com] descartando preload musical "${existingPreload.filePath}" (guid=${existingPreload.guid}) — bloco comercial assumiu o slot`)
+            removeOwnedInput(existingPreload.guid, { source: 'arming-replaces-musical-preload', queue: 'system' })
+          }
           preloadedInputRef.current = {
             guid: armed.guid,
             filePath: armed.filePath,
@@ -3386,7 +3397,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule, expandBlockItems, dispatch, setArmedCommercial])
+  }, [state.isLoading, startSchedule, expandBlockItems, dispatch, setArmedCommercial, removeOwnedInput])
 
   // ── Scheduler: Pre-arming de bloco comercial (v5.5.31) ─────────────────────
   // A cada 2s, varre dateSchedules procurando items adBreakId pending cujo

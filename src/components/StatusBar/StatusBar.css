@@ -204,6 +204,8 @@
 .statusbar-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--error), var(--accent));
-  transition: width 0.4s linear;
+  /* 0.55s > fast-poll interval (500ms) — garante overlap entre updates e
+     elimina o "step" visual de ~100ms parado entre cada tick. */
+  transition: width 0.55s linear;
 }
 
