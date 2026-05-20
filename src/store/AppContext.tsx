@@ -1700,7 +1700,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    // ── Safeguard contra "items playing fantasma" ────────────────────────────
+    // Antes de marcar o item atual como playing, varre a fila e marca como
+    // done qualquer outro item que esteja em status='playing'. Cobre o caso
+    // onde um playItem anterior foi abortado/interrompido sem chegar na linha
+    // final de marcação de done (ex.: erro silencioso, race com auto-sync que
+    // regenera o schedule, dispatch de status='done' não persistido por
+    // mergeRuntimeStatus). Sem este safeguard, a UI mostra dois ou mais items
+    // com badge "AO AR" simultaneamente (sintoma visual reportado).
+    {
+      const stale = getQueue().filter(i => i.status === 'playing' && i.id !== item.id)
+      if (stale.length > 0) {
+        console.warn(`[playItem] Safeguard: limpando ${stale.length} item(s) em 'playing' órfão(s) antes de tocar "${item.title}":`, stale.map(i => `${i.title} (${i.id.slice(0, 8)})`))
+        stale.forEach(i => updateQueueItem({ ...i, status: 'done' }))
+      }
+    }
+
     updateQueueItem({ ...item, status: 'playing' })
+    console.log(`[playItem] ▶ "${item.title}" → playing (queue=${activeQueueRef.current}, order=${item.order}, adBreakId=${item.adBreakId ? 'sim' : 'não'})`)
     const actualTime = now()
 
     // ── Ação vMix (comando instantâneo, sem mídia) ───────────────────────────
@@ -2172,7 +2189,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // playout always moves forward, never returns to what was playing.
     const fresh = getQueue().find(i => i.id === item.id)
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
+      console.log(`[playItem] ✓ "${item.title}" → done (status anterior: ${fresh.status})`)
       updateQueueItem({ ...fresh, status: 'done' })
+    } else if (!fresh) {
+      // Item sumiu da queue entre o início e o fim do playItem — auto-sync
+      // regenerou o schedule com IDs novos. Loga para diagnóstico.
+      console.warn(`[playItem] ⚠ "${item.title}" (id=${item.id.slice(0, 8)}) sumiu da queue ao terminar — schedule foi regenerado durante playback. Item pode ter ficado 'playing' órfão.`)
+    } else {
+      console.log(`[playItem] = "${item.title}" já estava ${fresh.status}, não muda`)
     }
   }, [dispatch, loadNewInput, removeOwnedInput, waitForInputPlaying, vmixMetaForItem])
 
@@ -2366,6 +2390,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const allGuids = [...spotmasterGuidsRef.current]
       for (const g of allGuids) {
         removeOwnedInput(g, { source: 'sequence-full-sweep', queue: 'system' })
+      }
+    }
+
+    // ── Safeguard final: limpa items 'playing' órfãos restantes ──────────
+    // A sequência terminou (break, fim natural, erro). Qualquer item ainda
+    // em 'playing' é fantasma — playItem não chegou a marcar como done
+    // (interrupt + race / dispatch perdido). Marca como done agora pra UI
+    // não mostrar badge "AO AR" eternamente.
+    {
+      const stale = getQueue().filter(i => i.status === 'playing')
+      if (stale.length > 0) {
+        console.warn(`[runSequence] Safeguard final: limpando ${stale.length} item(s) órfão(s) em 'playing':`, stale.map(i => i.title))
+        stale.forEach(i => updateQueueItem({ ...i, status: 'done' }))
       }
     }
 
