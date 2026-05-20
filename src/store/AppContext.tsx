@@ -700,6 +700,9 @@ interface AppContextValue {
   resumeCandidate: ResumeCandidate | null
   resumeFromSnapshot: () => Promise<void>
   ignoreResume: () => void
+  /** Bloco comercial pre-carregado em PVW do vMix, prestes a disparar (v5.5.31).
+   *  Mostra o banner de "BLOCO ARMADO" no StatusBar. */
+  armedCommercial: { blockId: string; blockName: string; firstItemId: string; guid: string; filePath: string; fireAt: string; scheduleDate: string } | null
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -765,6 +768,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // costumavam disparar StopInput/RemoveInput no mesmo GUID 2-3 vezes, fazendo
   // o vMix gerar "Referência de objeto não definida" na tentativa redundante).
   const pendingRemovalRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  // ── Pre-arming de bloco comercial (v5.5.31) ───────────────────────────────
+  // 30s antes do horário de um bloco comercial, o app carrega o primeiro item
+  // playable no vMix (AddInput + PreviewInput → PVW). Quando chega a hora, o
+  // scheduler usa o GUID já armado para fazer Cut imediato — elimina a janela
+  // de risco onde o AddInput "sob pressão" podia falhar (vMix lento, codec
+  // pesado) e fazer o bloco inteiro pular.
+  //
+  // Ref pra leitura síncrona no scheduler (state seria stale por 1 tick).
+  // State pra UI consumir e renderizar o banner.
+  type ArmedCommercial = {
+    blockId: string
+    blockName: string
+    firstItemId: string
+    guid: string
+    filePath: string
+    fireAt: string         // HH:MM:SS do bloco
+    scheduleDate: string   // YYYY-MM-DD
+  }
+  const armedCommercialRef = useRef<ArmedCommercial | null>(null)
+  const [armedCommercial, setArmedCommercialState] = useState<ArmedCommercial | null>(null)
+  const setArmedCommercial = useCallback((val: ArmedCommercial | null) => {
+    armedCommercialRef.current = val
+    setArmedCommercialState(val)
+  }, [])
+  const armingFiringRef = useRef(false)
   // Holds a preloaded next input (GUID + filePath) ready to go on-air without delay
   const preloadedInputRef = useRef<{ guid: string; filePath: string; alreadyOnAir?: boolean } | null>(null)
   // Tracks ALL GUIDs loaded by SpotMaster via AddInput during this session.
@@ -2643,6 +2672,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     lastFastPosRef.current = {}
     // Limpa o flag de "ended" dos inputs — próxima sequência começa fresca.
     activeInputEndedRef.current.clear()
+    // Descarta o arming pendente (se houver) — usuário parou tudo, não faz sentido
+    // manter um input em PVW esperando o disparo automático que não vai acontecer.
+    if (armedCommercialRef.current) {
+      const armed = armedCommercialRef.current
+      console.log(`[arming] Stop manual — descartando arming de "${armed.blockName}"`)
+      removeOwnedInput(armed.guid, { source: 'arming-stop-discard', queue: 'system' })
+      setArmedCommercial(null)
+    }
     // Map de remoções pendentes — quem ainda tinha timer aí vai sobrescrever
     // os antigos pelos novos imediatos abaixo. A dedup interna do removeOwnedInput
     // cuida do clearTimeout. Aqui só registramos a intenção: depois deste stop,
@@ -2684,7 +2721,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       )
       dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: todayStr, items: fixed } })
     }
-  }, [dispatch, cleanupInputs, removeOwnedInput])
+  }, [dispatch, cleanupInputs, removeOwnedInput, setArmedCommercial])
 
   // ── skipToNext ───────────────────────────────────────────────────────────────
   // Manual "Next" button: loads the next pending item into vMix Preview, lets
@@ -3263,13 +3300,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.warn(`[autoplay-com] bloco @${triggerTime} ignorado: passou ${Math.round((sessionSec - graceSec - triggerSec) / 60)} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s.`)
           return
         }
+        // ── Reaproveita o arming pré-carregado, se for o mesmo bloco ──────
+        // O scheduler de arming (2s) já colocou o GUID em PVW do vMix 30s antes.
+        // Aqui transferimos pra preloadedInputRef para que o playItem use
+        // diretamente via Cut, sem AddInput sob pressão.
+        const armed = armedCommercialRef.current
+        const armedMatch = armed
+          && armed.scheduleDate === todayStr
+          && armed.firstItemId === scheduledDue[0].id
+        if (armedMatch && armed) {
+          console.log(`[autoplay-com] usando arming pré-carregado para "${armed.blockName}"`)
+          preloadedInputRef.current = {
+            guid: armed.guid,
+            filePath: armed.filePath,
+            // alreadyOnAir false: ainda está só em PVW, playItem faz Cut normal
+            alreadyOnAir: false,
+          }
+          setArmedCommercial(null)
+        }
+
         if (!stateRef.current.isSequencePlaying) {
-          console.log(`[autoplay-com] disparando bloco @${triggerTime} (app idle → startSchedule)`)
+          console.log(`[autoplay-com] disparando bloco @${triggerTime} (app idle → startSchedule)${armedMatch ? ' [com arming]' : ''}`)
           commInterruptTimeRef.current = triggerTime
           startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
         } else {
           // Já está tocando a Programação — interrompe para saltar ao bloco devido
-          console.log(`[autoplay-com] interrompendo sequência para bloco @${triggerTime}`)
+          console.log(`[autoplay-com] interrompendo sequência para bloco @${triggerTime}${armedMatch ? ' [com arming]' : ''}`)
           commInterruptTimeRef.current = triggerTime
           scheduleInterruptRef.current = true
           abortRef.current = true
@@ -3279,7 +3335,139 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule, expandBlockItems, dispatch])
+  }, [state.isLoading, startSchedule, expandBlockItems, dispatch, setArmedCommercial])
+
+  // ── Scheduler: Pre-arming de bloco comercial (v5.5.31) ─────────────────────
+  // A cada 2s, varre dateSchedules procurando items adBreakId pending cujo
+  // scheduledTime esteja entre +1s e +ARMING_LEAD_SEC (30s). Para o mais
+  // próximo, pre-carrega o primeiro item playable no vMix e coloca em PVW.
+  // Quando o scheduler comercial dispara, transfere o GUID armado para
+  // preloadedInputRef e o playItem usa direto via Cut — sem AddInput de novo.
+  // Elimina a janela de risco "AddInput sob pressão na hora exata".
+  useEffect(() => {
+    if (state.isLoading) return
+    const ARMING_LEAD_SEC = 30
+    const interval = setInterval(async () => {
+      if (armingFiringRef.current) return
+      armingFiringRef.current = true
+      try {
+        if (!stateRef.current.settings.autoplayComerciais) {
+          // autoplayComerciais desligado: descarta arming pendente
+          if (armedCommercialRef.current) {
+            const old = armedCommercialRef.current
+            console.log(`[arming] autoplayComerciais OFF — descartando bloco "${old.blockName}"`)
+            removeOwnedInput(old.guid, { source: 'arming-discard-autoplay-off', queue: 'system' })
+            setArmedCommercial(null)
+          }
+          return
+        }
+        // Se a Playlist manual está tocando, não arma (mesmo escopo do scheduler comercial)
+        if (stateRef.current.isSequencePlaying && activeQueueRef.current === 'playlist') return
+
+        const todayStr = today()
+        const currentTime = now()
+        const [cH, cM, cS] = currentTime.split(':').map(Number)
+        const currentSec = cH * 3600 + cM * 60 + (cS ?? 0)
+
+        const schedule = stateRef.current.dateSchedules[todayStr] ?? []
+
+        // Procura item comercial pending cuja janela [+1s, +30s] cobre o agora
+        const upcomingByTime = schedule
+          .filter(i => {
+            if (i.status !== 'pending') return false
+            if (!i.adBreakId) return false
+            if (!i.scheduledTime) return false
+            return true
+          })
+          .map(i => {
+            const [bH, bM, bS] = i.scheduledTime!.split(':').map(Number)
+            const itemSec = bH * 3600 + bM * 60 + (bS ?? 0)
+            return { item: i, sec: itemSec, diff: itemSec - currentSec }
+          })
+          .filter(x => x.diff > 0 && x.diff <= ARMING_LEAD_SEC)
+          .sort((a, b) => a.diff - b.diff)
+
+        const firstUpcoming = upcomingByTime[0]?.item
+
+        // ── Casos de descarte do arming atual ──────────────────────────────
+        if (armedCommercialRef.current) {
+          const armed = armedCommercialRef.current
+          // 1. O bloco armado já passou da hora há > 1min — vMix scheduler ainda
+          //    não tocou; algo deu errado. Descarta.
+          const [aH, aM, aS] = armed.fireAt.split(':').map(Number)
+          const armedSec = aH * 3600 + aM * 60 + (aS ?? 0)
+          const armedPassedTooLong = currentSec > armedSec + 60
+          // 2. O item armado não está mais em schedule (operador editou bloco / dia)
+          const armedItemStillExists = schedule.some(i => i.id === armed.firstItemId && i.status === 'pending')
+          // 3. Trocou o dia
+          const stale = armed.scheduleDate !== todayStr
+
+          if (armedPassedTooLong || !armedItemStillExists || stale) {
+            console.warn(`[arming] descartando "${armed.blockName}" @${armed.fireAt} — passedTooLong=${armedPassedTooLong} itemMissing=${!armedItemStillExists} stale=${stale}`)
+            removeOwnedInput(armed.guid, { source: 'arming-discard-stale', queue: 'system' })
+            setArmedCommercial(null)
+          } else if (firstUpcoming && firstUpcoming.id !== armed.firstItemId) {
+            // 4. Apareceu um bloco MAIS PRÓXIMO que o armado — descarta e re-arma o novo
+            console.log(`[arming] re-armando: bloco mais próximo "${firstUpcoming.title}" substitui "${armed.blockName}"`)
+            removeOwnedInput(armed.guid, { source: 'arming-discard-replaced', queue: 'system' })
+            setArmedCommercial(null)
+          } else {
+            // Arming válido, segue
+            return
+          }
+        }
+
+        // ── Cria novo arming ──────────────────────────────────────────────
+        if (!firstUpcoming) return
+        if (!window.spotmaster) return
+
+        // Encontra o primeiro item playable do bloco (pode haver vmix_action
+        // antes do primeiro arquivo)
+        const blockId = firstUpcoming.adBreakId!
+        const blockItems = schedule
+          .filter(i => i.adBreakId === blockId && i.status === 'pending')
+          .sort((a, b) => a.order - b.order)
+        const firstPlayable = blockItems.find(i => i.filePath)
+        if (!firstPlayable?.filePath) {
+          // Bloco só tem vmix_action ou inputs vMix permanentes — nada pra pré-carregar.
+          return
+        }
+
+        const blockName = stateRef.current.commercialBlocks.find(b => b.id === blockId)?.name ?? 'Bloco'
+        const armingMeta: VmixCommandMeta = {
+          source: 'arming-pre-load',
+          queue: 'schedule',
+          itemId: firstPlayable.id,
+          itemTitle: firstPlayable.title,
+          scheduledTime: firstPlayable.scheduledTime,
+        }
+
+        console.log(`[arming] pre-carregando "${blockName}" @${firstUpcoming.scheduledTime} (em ${upcomingByTime[0].diff}s) → primeiro item: "${firstPlayable.title}"`)
+        const guid = await loadNewInput(firstPlayable.filePath, armingMeta)
+        if (!guid) {
+          console.warn(`[arming] falha em loadNewInput para "${firstPlayable.title}" — vMix não respondeu. Tentará de novo no próximo tick.`)
+          return
+        }
+
+        // Marca em PVW pra operador ver visualmente que o bloco está armado
+        await executeVmixCommand('PreviewInput', { input: guid, meta: armingMeta })
+
+        setArmedCommercial({
+          blockId,
+          blockName,
+          firstItemId: firstPlayable.id,
+          guid,
+          filePath: firstPlayable.filePath,
+          fireAt: firstUpcoming.scheduledTime!,
+          scheduleDate: todayStr,
+        })
+        console.log(`[arming] ✓ "${blockName}" ARMADO em PVW (guid=${guid})`)
+      } finally {
+        armingFiringRef.current = false
+      }
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [state.isLoading, loadNewInput, removeOwnedInput, setArmedCommercial])
 
   // ── Scheduler: Pré-carregamento de blocos comerciais ──────────────────────
   // Lê commercialBlocks diretamente (sem depender de Programação do Dia) e
@@ -3814,7 +4002,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume, armedCommercial }}>
       {children}
     </AppContext.Provider>
   )
