@@ -634,6 +634,82 @@ Redesign anterior (pos-entrega inicial):
   - **Pastas**: mesmo grid de cards que Videos, mas filtrando arquivos de audio (mp3/wav/flac/m4a/aac/ogg/opus). Fontes atuais: estilos cadastrados no AudioPro (`state.audioStyles`) + `settings.audioFolders`. Browser com auto-scan ao abrir.
   - **Biblioteca**: gestao completa de faixas cadastradas (`musicLibrary`). Botao "Importar Pasta" (lote com progresso), "Adicionar Arquivo" (individual com leitura de metadados), busca, botao de edicao rapida de metadados (titulo/artista/genero/duracao) via modal inline, botao "+" para inserir na programacao.
 
+### Fase 9 - Ciclo de auditoria e endurecimento operacional (v5.5.24 a v5.5.34)
+
+> **Status: ENTREGUE em 19/05/2026 a 20/05/2026.** Onze releases consecutivas focadas em transformar o VTMaster em um motor de playout que opera 24h sem intervencao manual, com diagnostico observavel e zero "estado fantasma".
+
+**Contexto:** apos uma auditoria forense estatica (Fases 0-2 read-only documentadas em docs/ESTADO_ATUAL.md seção 26), o operador comecou a usar o app em producao real e identificou bugs operacionais nao cobertos por testes de bancada — todos relacionados ao motor de playout em sequencias longas, retomada apos eventos inesperados, e disparo automatico de blocos comerciais sob pressao.
+
+#### Entregas v5.5.24 (Auditoria QA)
+- 8 correcoes estruturais: preload.cts orfao removido, feedback de falha em registerTrigger, deps de runSequence, clear de timers do GC Musical em stopPlayback, reset de lastFastPosRef, guard de duplo loadAll em StrictMode, memoizacao de `t`, clearInterval do auto-update no will-quit.
+
+#### Entregas v5.5.25
+- Sequencia continua em falha de 1 arquivo (item vira `error` e segue, antes parava tudo).
+- Guard contra `dateSchedules = {}` no auto-save (evita wipe acidental em race transiente).
+- Instrumentacao no loadAll com log de quantos dias foram lidos do disco.
+
+#### Entregas v5.5.26 (Resume apos queda de luz)
+- Novo modo `'reload'` para resumeFromSnapshot. Quando o vMix tambem reinicia, o app:
+  1. Calcula tempo decorrido por wall-clock desde `snapshot.startedAt`.
+  2. `loadNewInput` recarrega o arquivo no vMix.
+  3. `SetPosition(elapsed*1000ms)` faz seek para a posicao estimada.
+  4. `Cut + PlayInput` retoma a programacao do ponto exato.
+- Banner adaptado: "Retomar Programacao - foi interrompido (queda de luz?). Posso recarregar e retomar do ponto MM:SS (MM:SS restantes)."
+
+#### Entregas v5.5.27 (Next + Stop Next)
+- skipToNext reaproveita preloadedInputRef se o filePath bater (antes gerava input duplicado/fantasma no vMix).
+- playItem pula o preload antecipatorio quando stopAfterCurrentRef esta armado.
+- Novo `sequenceEndedRef`: faz `.then()` de preloads em voo descartarem o input se a sequencia ja terminou. Catch-all contra race do Stop Next.
+
+#### Entregas v5.5.28 (Scrub detection)
+- Novo `activeInputEndedRef: Set<string>` atualizado pelo fast-poll quando `position >= duration - 500ms`.
+- `playItem.wait` quebra cedo se o GUID atual esta marcado e ja passou 1.5s, eliminando o "vMix ocioso esperando wall-clock" quando o operador adianta manualmente um arquivo no vMix.
+
+#### Entregas v5.5.29 (Pausa pre-programada + erro no Stop)
+- `CommercialBlockItemType` ganha `'pause'`. Operador pode planejar dentro de um bloco comercial um ponto de parada: "ao chegar aqui, pare e espere meu proximo disparo".
+- UI no AdBreaksPanel: novo botao Pausa com cor cinza-azulada, renderizacao na linha e na pilula colapsada.
+- Fim do erro "Referencia de objeto nao definida" no Stop: novo `pendingRemovalRef: Map<guid, timer>` em removeOwnedInput. Chamadas redundantes (sweep + cleanupInputs explicito) agora sao dedupadas via clearTimeout do timer anterior.
+
+#### Entregas v5.5.30 (Playlist Continua + failsafe Autoplay Comercial)
+- Nova settings.continuousPlayback (toggle persistente na Toolbar). Quando ON, o motor NAO para apos o bloco comercial — continua tocando o proximo item pending por ordem.
+- Failsafe no scheduler comercial: quando dateSchedules nao tem o bloco mas commercialBlocks tem na janela atual, injeta inline via expandBlockItems (resolve casos de preload de 20s nao ter rodado).
+- Logging detalhado em cada caminho: `[autoplay-com] FAILSAFE: N bloco(s)...`, `disparando bloco @HH:MM`, `interrompendo sequencia`, etc.
+
+#### Entregas v5.5.31 (Pre-arming de bloco comercial)
+- Novo scheduler dedicado de arming (2s tick, 30s lead time). Carrega o primeiro item playable do bloco no vMix via AddInput + PreviewInput (vai pra PVW do vMix).
+- Banner novo no StatusBar: "🎯 BLOCO Nome @HH:MM ARMADO em Ns" com countdown a cada segundo.
+- Quando o scheduler comercial dispara, transfere o GUID armado para preloadedInputRef. playItem usa direto via Cut, sem AddInput sob pressao na hora exata.
+- Acoes vMix (AudioOff, OverlayInput, etc.) e inputs vMix permanentes NAO sao pre-armados — sao executados pelo motor na ordem natural do bloco.
+
+#### Entregas v5.5.32 (Banner estavel)
+- Arming usa chave (blockId + filePath) em vez de item.id como identidade. Sobrevive a re-geracoes de schedule causadas por auto-sync.
+- MARK_BLOCK_LOADED so dispatcha quando `block.lastLoadedDate !== today`. Elimina o jitter de re-renders que fazia o banner piscar e o input entrar/sair do vMix.
+
+#### Entregas v5.5.33 (Safeguards anti-fantasma)
+- Safeguard em `playItem`: antes de marcar item como playing, varre a fila e marca como done qualquer outro item em playing (invariante "no maximo 1 item playing por queue").
+- Safeguard em `runSequence` end: ao terminar, limpa items playing orfaos restantes.
+- Logs detalhados de cada transicao de status: `[playItem] ▶ X → playing`, `✓ X → done`, `⚠ X sumiu da queue`.
+
+#### Entregas v5.5.34 (Barra suave + preload limpo)
+- Transitions CSS das barras de progresso ajustadas para 0.55s > 500ms (fast-poll interval), eliminando o "step" visivel.
+- Quando o arming sobrescreve preloadedInputRef (musica preloadada -> comercial), o GUID antigo e removido do vMix imediatamente para nao virar fantasma.
+
+#### Impacto operacional
+- Operador agora consegue:
+  - Deixar o app idle e ele inicia sozinho quando chega a hora do primeiro bloco comercial do dia.
+  - Ver visualmente, 30s antes, que o bloco vai disparar (banner + input em PVW do vMix).
+  - Ter playlist musical continua entre os blocos (toggle Playlist Continua).
+  - Sobreviver a queda de luz com retomada automatica do ponto exato da musica/clipe.
+  - Adicionar pausas planejadas dentro de blocos comerciais.
+- Bugs eliminados: input duplicado no vMix, input fantasma, blocos com items pulados, NullReferenceException no Stop, banner piscando, barra de progresso travada.
+
+#### Garantias preservadas
+- Nenhuma das 11 releases mexe em codigo nao-necessario ao bug especifico tratado.
+- Auto-update via electron-updater funcionando — instalacoes existentes pegam a v5.5.34 em ate 6h.
+- Auditoria documentada em docs/ESTADO_ATUAL.md secao 26 e 27.
+
+---
+
 ### Fase 8 - Produto multiestacao e continuidade
 
 Objetivo: preparar uso por emissoras maiores.

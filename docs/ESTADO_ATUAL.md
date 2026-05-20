@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **19/05/2026** — Versão **5.5.29** — Ciclo de auditoria QA aplicado + Retomada de programação após queda de luz + Pausa pré-programada em bloco comercial + Detecção de scrub manual no vMix + Fim do erro NullReferenceException no Stop
+> Atualizado em **20/05/2026** — Versão **5.5.34** — Ciclo completo de auditoria + endurecimento operacional aplicado (v5.5.24 a v5.5.34): Playlist Contínua, pre-arming de bloco comercial, retomada após queda de luz, safeguards anti-fantasma, barra de progresso suave
 
 ---
 
@@ -32,6 +32,7 @@
 24. [v5.3.0 — Redesign Broadcast UI e melhorias de UX (16/05/2026)](#24-v530--redesign-broadcast-ui-e-melhorias-de-ux-16052026)
 25. [Backlog](#25-backlog)
 26. [Ciclo de auditoria QA e endurecimento — v5.5.24 a v5.5.29 (19/05/2026)](#26-ciclo-de-auditoria-qa-e-endurecimento--v5524-a-v5529-19052026)
+27. [Continuidade operacional — v5.5.30 a v5.5.34 (20/05/2026)](#27-continuidade-operacional--v5530-a-v5534-20052026)
 
 ---
 
@@ -2118,4 +2119,211 @@ Nenhuma release deste ciclo tocou em código que não fosse necessário ao bug e
 | R02 — guards `window.spotmaster` em todos os call-sites | Falso positivo: `window.spotmaster` é setado pelo preload no startup e nunca é desfeito. Adicionar guards seria ruído sem ganho de runtime. |
 | R04 — `ipcRenderer.removeAllListeners(channel)` no preload | Hoje só há 1 consumer por canal — refatorar seria reescrita arquitetural maior. Marcado como armadilha de extensibilidade futura. |
 | R06–R20 — dívida arquitetural, perf marginal, cosméticos | Fora do escopo "consertar bugs de runtime sem refactor". Documentado em sessão de auditoria. |
+
+---
+
+## 27. Continuidade operacional — v5.5.30 a v5.5.34 (20/05/2026)
+
+Sequência de 5 releases focada nos bugs operacionais reportados pelo operador testando o app em produção real. Cada bug identificado, diagnosticado via console log do DevTools, fix mínimo aplicado, release publicada.
+
+### 27.1 v5.5.30 — Playlist Contínua + failsafe Autoplay Comercial
+
+**Problema reportado:**
+- Cliente: "ele não iniciou o disparo na hora certa, ele não estartou a programação com o programa parado, inativo, apenas aberto."
+- Cliente: "depois de iniciada a programação manualmente, ele foi para o bloco comercial na hora certa, mas ao final do bloco ele parou a execução, não seguiu a playlist!"
+
+**Causa do "para após bloco":**
+[AppContext.tsx:~2210](VTMaster/src/store/AppContext.tsx#L2210) tinha break "scheduledDue empty + interrupt flag setada". Intenção original: tocar só o bloco devido e parar até o próximo agendamento. Quebrava o caso "playlist musical entre blocos".
+
+**Fix Playlist Contínua:** nova `settings.continuousPlayback: boolean` (default false). Toggle persistente na Toolbar (ícone Repeat, ao lado de Autoplay Comerciais). Quando ON:
+- O break no runSequence é skipado quando `continuousPlayback === true`
+- `commInterruptTimeRef.current = ''` é resetado para que próximos blocos comerciais possam disparar
+
+**Fix Autoplay Comercial não disparar com programa parado:**
+[AppContext.tsx:~3170](VTMaster/src/store/AppContext.tsx#L3170) — failsafe novo. Quando `scheduledDue.length === 0` (nenhum item comercial em dateSchedules está due), varre `commercialBlocks` direto:
+
+```ts
+const overdueBlocks = commercialBlocks.filter(b => {
+  if (!b.enabled || !b.scheduledTime) return false
+  if (b.daysOfWeek && !b.daysOfWeek.includes(todayDow)) return false
+  // janela [hora - preloadMin, hora + 10min grace]
+  if (currentSec < windowStart || currentSec > windowEnd) return false
+  return !schedule.some(i => i.adBreakId === b.id)
+})
+if (overdueBlocks.length > 0) {
+  // inject inline via expandBlockItems + dispatch SET_DATE_SCHEDULE
+}
+```
+
+Garante que o disparo aconteça mesmo se o preload de 20s ainda não rodou.
+
+**Logging detalhado em cada caminho de rejeição/disparo:** `[autoplay-com] FAILSAFE...`, `disparando bloco @HH:MM`, `interrompendo sequência`, `bloco @HH:MM ignorado: passou X min antes do sessionStart`.
+
+### 27.2 v5.5.31 — Pre-arming de bloco comercial
+
+**Problema reportado:**
+- Cliente: "ele disparou o bloco mas em um deles ele simplesmente pulou todos os comerciais, e no outro ele pulou um dos arquivos executou só um."
+- Sugestão do cliente: "quando se aproxima do bloco comercial carrega ele já como próximo item a ser executado, assim visualmente sei que funcionou e ele não vai pular nada".
+
+**Causa:** o motor anterior não pré-carregava nada para blocos disparados do zero (app idle). Cada item era carregado sequencialmente na hora exata — primeira falha de `AddInput` (vMix lento, codec pesado, race interno) já causava skip; falhas em cascata viravam "bloco vazio".
+
+**Solução:** novo scheduler dedicado de arming (2s tick, 30s lead time):
+
+```ts
+useEffect(() => {
+  if (state.isLoading) return
+  const ARMING_LEAD_SEC = 30
+  const interval = setInterval(async () => {
+    // varre dateSchedules procurando item adBreakId pending com diff entre +1s e +30s
+    // do horário atual; se achar, loadNewInput + PreviewInput no vMix
+    // armedCommercialRef = { blockId, guid, filePath, fireAt, ... }
+  }, 2000)
+  ...
+}, ...)
+```
+
+Banner novo no StatusBar (`src/components/StatusBar/StatusBar.tsx`):
+```
+🎯 BLOCO Comercial 21:00 @21:00 ARMADO em 25s
+```
+
+Quando o scheduler comercial dispara o bloco:
+```ts
+const armed = armedCommercialRef.current
+const armedMatch = ...
+if (armedMatch && armed) {
+  preloadedInputRef.current = { guid: armed.guid, filePath: armed.filePath, alreadyOnAir: false }
+  setArmedCommercial(null)
+}
+```
+
+Item armado transferido para `preloadedInputRef`. `playItem` usa direto via Cut (sem AddInput de novo).
+
+**Ações vMix e inputs vMix permanentes não são pré-armados** — `firstPlayable = blockItems.find(i => i.filePath)` filtra por filePath. Apenas arquivos têm pre-arming; ações são executadas pelo motor na ordem natural do bloco (~150ms cada).
+
+**Cleanup robusto do arming:**
+- `autoplayComerciais` OFF → discard via `removeOwnedInput`
+- Bloco passou >1min sem disparar → discard
+- Item armado sumiu do schedule → discard
+- Trocou o dia → discard
+- Bloco mais próximo apareceu → re-arma o novo
+- `stopPlayback` manual → discard
+
+### 27.3 v5.5.32 — Banner de arming estável
+
+**Problema reportado:**
+- Cliente: "o banner ficou aparecendo e saindo piscando e quando ele piscava o item saia e voltava, porem quando executou ele pulou o primeiro video, e rodou só o segundo."
+
+**Causa raiz — cascata de regenerações:**
+1. Preload de 20s, failsafe v5.5.30 e `generatePlaylistFromGrid` dispatchavam `MARK_BLOCK_LOADED` **mesmo quando `block.lastLoadedDate === today`**. Reducer cria novo array de `commercialBlocks` via `.map()`, mudando referência.
+2. Auto-sync `useEffect [state.commercialBlocks]` detectava mudança → `generatePlaylistFromGrid(today, merge=true)` → items pending regenerados com **UUIDs novos**.
+3. Scheduler de arming usava `item.id` como chave de identidade. A cada regen, id antigo sumia, `armedItemStillExists = false` → arming descartava input → banner sumia. 2s depois, detectava `firstUpcoming` com id novo → re-armava → banner voltava. Loop.
+4. No disparo, `armed.firstItemId !== scheduledDue[0].id` → `armedMatch = false` → primeiro item carregado sob pressão → falha → segundo tocou limpo.
+
+**Fix tripla:**
+1. **Dispatch redundante eliminado**: 3 locais (generatePlaylistFromGrid, failsafe scheduler comercial, preload 20s) agora têm `if (b.lastLoadedDate !== dateStr) dispatch(...)`. Elimina o jitter de re-renders.
+2. **Arming usa chave `(blockId + filePath)` em vez de `item.id`**: sobrevive a regenerações que mantenham bloco e arquivo. Refresh defensivo do `firstItemId` quando o id muda mas item logicamente continua o mesmo.
+3. **Scheduler comercial match arming por filePath**: `armedMatch = scheduledDue.some(i => i.filePath === armed.filePath)`. Pipeline coerente — `playItem` já consome `preloadedInputRef` baseado em filePath.
+
+### 27.4 v5.5.33 — Safeguards anti-fantasma
+
+**Problema reportado:** screenshot do operador mostrava DOIS items com badge "AO AR" simultaneamente — um musical (sendo tocado) e um comercial (já encerrado, com `status='playing'` pendurado).
+
+**Causa suspeita:** `playItem` do segundo item do bloco não chegou na linha final `updateQueueItem({...status: 'done'})`. Pode ter sido por:
+- `getQueue().find(i.id)` retornando undefined porque auto-sync regenerou schedule durante playItem
+- Exception silenciosa no fim do playItem
+- Race entre dispatch UPDATE_SCHEDULE_ITEM e auto-sync
+
+**Três safeguards independentes:**
+
+1. **playItem início** ([AppContext.tsx:~1690](VTMaster/src/store/AppContext.tsx#L1690)): antes de marcar item atual como playing, varre `getQueue()` e marca como done QUALQUER outro item em playing. Console.warn lista os órfãos limpos. Garante invariante "no máximo 1 item playing por queue".
+
+2. **runSequence end**: na saída final (break/erro/fim natural), faz limpeza similar.
+
+3. **Logs detalhados de cada transição de status**:
+   - `[playItem] ▶ "X" → playing (queue=schedule, order=N, adBreakId=sim/não)`
+   - `[playItem] ✓ "X" → done (status anterior: playing)`
+   - `[playItem] ⚠ "X" sumiu da queue ao terminar — schedule regenerado`
+   - `[playItem] Safeguard: limpando N item(s) em 'playing' órfão(s)`
+   - `[runSequence] Safeguard final: limpando N item(s) órfão(s)`
+
+### 27.5 v5.5.34 — Barra suave + preload limpo
+
+**Dois pontos reportados:**
+
+1. **Barra de progresso "travando segundo a segundo"**: todas as barras tinham `transition: width` entre 0.30s e 0.40s — menor que o intervalo do fast-poll do vMix (500ms). Cada animação terminava 100-200ms antes do próximo update chegar, criando "step" visível.
+
+   **Fix:** todas as 4 barras (`.statusbar-progress-fill`, `.cockpit-progress-fill`, `.day-progress-fill`, `.bc-item-bg-fill`) agora `transition: width 0.55s linear`. > 500ms = overlap garantido entre updates consecutivos = movimento contínuo perceptível.
+
+2. **Preload musical orfanado quando arming substitui**: cenário "música tocando + bloco se aproximando":
+   - `playItem` da música X disparou anticipatory preload da música Y (preloadedInputRef = guid_Y)
+   - Scheduler de arming carrega 1º item comercial em separado (armedCommercialRef = guid_C)
+   - Na hora do bloco, `preloadedInputRef` é sobrescrito com guid_C
+   - Mas guid_Y nunca foi removido do vMix → input fantasma
+
+   **Fix em [AppContext.tsx:~3170](VTMaster/src/store/AppContext.tsx#L3170):** antes de sobrescrever `preloadedInputRef` com o arming, checa se havia um GUID diferente. Se sim, `removeOwnedInput` descarta imediatamente. Log: `descartando preload musical "X" (guid=...) — bloco comercial assumiu o slot`.
+
+### 27.6 Comportamento operacional consolidado (v5.5.34 final)
+
+**Fluxo completo com música + bloco comercial:**
+
+```
+13:59:30 — Música X tocando em PGM do vMix
+           playItem(X) disparou anticipatory preload da Música Y
+           preloadedInputRef = { guid_Y } ← em background, parado
+
+           Scheduler de arming detecta bloco @14:00 em 30s
+           loadNewInput do 1º item comercial → guid_C
+           PreviewInput → guid_C vai pra PVW (visível pro operador)
+           armedCommercialRef = { guid_C }
+           Banner: "🎯 BLOCO @14:00 ARMADO em 30s"
+
+           Estado do vMix:
+           - PGM: Música X tocando
+           - PVW: 1º item comercial (parado)
+           - BG: Música Y (preload, parado)
+
+14:00:00 — Scheduler comercial dispara
+           "descartando preload musical 'Y' (guid_Y) — bloco assumiu o slot"
+           removeOwnedInput(guid_Y) — limpo do vMix
+           preloadedInputRef ← guid_C (transferido do arming)
+           abortRef = true → playItem(X) quebra wait
+           playItem marca Música X como done
+
+14:00:00 — runSequence pega 1º item do bloco
+           Se ações vMix (AudioOff, OverlayInput1) vierem primeiro:
+             playItem detecta type='vmix_action'
+             executeVmixAction(...) — comando HTTP instantâneo
+             marca done, ~150ms
+             próximo
+           Quando chega no 1º arquivo:
+             playItem detecta preloadedInputRef.filePath === item.filePath
+             USA guid_C direto → PreviewInput + Cut + PlayInput
+             Cut instantâneo, sem AddInput
+           Continua com items 2, 3, 4...
+
+14:01:15 — Bloco termina (último item done)
+           continuousPlayback ON → motor NÃO para
+           commInterruptTimeRef = '' (resetado)
+           candidatePending = items pending após o bloco
+           next = próximo item musical → playItem → toca
+```
+
+### 27.7 Resumo de garantias operacionais
+
+Após o ciclo completo v5.5.24–34, o VTMaster garante:
+
+- **App idle inicia sozinho** quando chega a hora do primeiro bloco comercial do dia (autoplayComerciais ON)
+- **Visualização antecipada** de qual bloco está armado (banner + input em PVW do vMix 30s antes)
+- **Playlist musical contínua** entre blocos (toggle Playlist Contínua)
+- **Sobrevive a queda de luz** com retomada automática do ponto exato (snapshot + reload + seek)
+- **Pausas planejadas** dentro de blocos comerciais (`type: 'pause'` no bloco)
+- **Sequência segue após falha de 1 item** (item vira `error`, motor continua)
+- **Stop e Next limpos** (sem input fantasma, sem NullReferenceException, sem duplicação no vMix)
+- **Scrub manual no vMix** detectado (motor avança a sequência sem esperar wall-clock)
+- **Banner estável** (não pisca, mesmo com auto-sync regenerando schedule)
+- **Barra de progresso suave** (transition CSS otimizada para overlap com fast-poll)
+- **Logs detalhados** em todos os caminhos críticos — diagnóstico via DevTools quando qualquer estranheza aparecer
+
+Documentação completa do ciclo em `PLANOGPT.MD` seção "Fase 9 — Ciclo de auditoria e endurecimento operacional".
 

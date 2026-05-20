@@ -1,4 +1,4 @@
-# VTMaster v5.5.29
+# VTMaster v5.5.34
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -13,7 +13,9 @@ O VTMaster automatiza a execução da grade de programação diária, incluindo:
 - Banco de Mídia (vídeos/áudios/inputs/ações vMix) com pin no layout e drag-and-drop para a programação
 - StatusBar com badge ON AIR, countdown e barra de progresso em tempo real (fast polling 500 ms)
 - Disparo global via tecla configurável (funciona minimizado), Gamepad e MIDI
-- Autoplay por horário agendado (programas e comerciais separados)
+- Autoplay por horário agendado (programas e comerciais separados) com **failsafe** que injeta blocos overdue mesmo sem preload (v5.5.30)
+- **Playlist Contínua** (v5.5.30): após o bloco comercial, a playlist musical retoma automaticamente
+- **Pre-arming de bloco comercial** (v5.5.31): 30s antes do horário, o app carrega o primeiro item em PVW do vMix com banner visual
 - Comercial Pro: campanhas (padrão e rotativo), distribuição automática, relatório por campanha
 - Log de veiculação, relatórios PDF/CSV
 - Auto-update via GitHub Releases (electron-updater)
@@ -31,7 +33,7 @@ Stack principal:
 
 - [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.5.29
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.5.34
 - [docs/ATUALIZACOES.md](docs/ATUALIZACOES.md): como publicar releases e testar atualização automática
 
 ## Requisitos
