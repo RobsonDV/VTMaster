@@ -74,6 +74,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   triggerKey: null,
   autoplayComerciais: false,
   preloadMinutes: 5,
+  continuousPlayback: false,
   gcMusicEnabled: false,
   gcMusicDelaySeconds: 5,
   gcMusicInputName: '',
@@ -2206,13 +2207,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // the items that are due now. Once none are due, stop and wait for the
       // next scheduler tick. This prevents empty musical placeholders from
       // being skipped until future commercial blocks play before their time.
+      //
+      // EXCEÇÃO: settings.continuousPlayback (Playlist Contínua) faz o motor
+      // CONTINUAR tocando o próximo pending por ordem após o bloco comercial
+      // terminar, em vez de parar e esperar o próximo agendamento. Útil quando
+      // a Programação tem playlist musical entre os blocos e o operador quer
+      // que ela toque ininterrupta.
       if (
         activeQueueRef.current === 'schedule' &&
         (autoPlay || autoplayComerciais) &&
         scheduledDue.length === 0 &&
-        (scheduleInterruptTimeRef.current !== '' || commInterruptTimeRef.current !== '')
+        (scheduleInterruptTimeRef.current !== '' || commInterruptTimeRef.current !== '') &&
+        !stateRef.current.settings.continuousPlayback
       ) {
         break
+      }
+      // Quando continuousPlayback está ON e o bloco comercial terminou,
+      // limpa o flag de interrupt pra que o próximo bloco comercial possa
+      // ser disparado mais tarde (caso contrário, commInterruptTimeRef
+      // ainda guarda o triggerTime do bloco que acabou de tocar e bloqueia
+      // detecção de novos blocos com o mesmo horário em outras execuções).
+      if (
+        activeQueueRef.current === 'schedule' &&
+        scheduledDue.length === 0 &&
+        commInterruptTimeRef.current !== '' &&
+        stateRef.current.settings.continuousPlayback
+      ) {
+        commInterruptTimeRef.current = ''
       }
 
       // Apply high-water mark: only consider items at or above the mark.
@@ -3146,6 +3167,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── Scheduler: Autoplay Comerciais (blocos com adBreakId) ──────────────────
   // Dispara EXCLUSIVAMENTE blocos comerciais da Programação do Dia.
   // A Playlist é manual — este scheduler não a inicia e não a interrompe.
+  //
+  // FAILSAFE Bug 1 (v5.5.30): se nenhum item adBreakId está em
+  // dateSchedules[today] mas há um commercialBlocks habilitado com horário
+  // próximo do agora, injeta o bloco inline em vez de confiar no preload de
+  // 20s — garante que o disparo automático aconteça mesmo se o preload
+  // ainda não rodou.
   useEffect(() => {
     if (state.isLoading) return
     const interval = setInterval(() => {
@@ -3156,14 +3183,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Se a Playlist está tocando manualmente, não interrompe nem dispara nada
         if (stateRef.current.isSequencePlaying && activeQueueRef.current === 'playlist') return
         const currentTime = now()
+        const todayStr = today()
+        const todayDow = new Date().getDay()
         // Lê SEMPRE a Programação do dia, ignorando activeQueueRef (que poderia ser playlist em idle)
-        const schedule = stateRef.current.dateSchedules[today()] ?? []
-        const scheduledDue = schedule.filter(
+        let schedule = stateRef.current.dateSchedules[todayStr] ?? []
+        let scheduledDue = schedule.filter(
           i => i.status === 'pending' && !!i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
         )
+
+        // ── FAILSAFE: bloco devido SEM estar em dateSchedules ──────────────
+        // Se não há items comerciais due no schedule, varre commercialBlocks
+        // diretamente atrás de blocos cuja janela cobre o agora. Se achar,
+        // injeta inline e re-filtra. Resolve o Bug 1: preload de 20s pode
+        // não ter rodado ainda, mas o operador conta com o autoplay.
+        if (scheduledDue.length === 0) {
+          const [cH, cM, cS] = currentTime.split(':').map(Number)
+          const currentSec = cH * 3600 + cM * 60 + (cS ?? 0)
+          const preloadMin = stateRef.current.settings.preloadMinutes ?? 5
+          const { commercialBlocks } = stateRef.current
+          const overdueBlocks = commercialBlocks.filter(b => {
+            if (!b.enabled || !b.scheduledTime) return false
+            if (b.daysOfWeek && !b.daysOfWeek.includes(todayDow)) return false
+            const [bH, bM, bS] = b.scheduledTime.split(':').map(Number)
+            const blockSec = bH * 3600 + bM * 60 + (bS ?? 0)
+            // Janela: [horário - preloadMin, horário + grace]
+            const windowStart = blockSec - preloadMin * 60
+            const windowEnd   = blockSec + COMMERCIAL_CATCH_UP_GRACE_SECONDS
+            if (currentSec < windowStart || currentSec > windowEnd) return false
+            // Já está no schedule do dia? Pula.
+            return !schedule.some(i => i.adBreakId === b.id)
+          })
+          if (overdueBlocks.length > 0) {
+            console.warn(`[autoplay-com] FAILSAFE: ${overdueBlocks.length} bloco(s) na janela atual mas ausente(s) de dateSchedules. Injetando inline.`, overdueBlocks.map(b => `${b.name}@${b.scheduledTime}`))
+            let workingSchedule = schedule
+            let workingRotation = stateRef.current.spotRotation
+            for (const block of overdueBlocks) {
+              const maxOrder = workingSchedule.length > 0
+                ? Math.max(...workingSchedule.map(i => i.order))
+                : 0
+              const [items, newRotation] = expandBlockItems(block, maxOrder + 1, workingRotation)
+              if (items.length === 0) {
+                console.warn(`[autoplay-com] bloco "${block.name}" expandido para zero items — verificar spots dos clientes.`)
+                continue
+              }
+              workingSchedule = [...workingSchedule, ...items]
+              workingRotation = newRotation
+            }
+            if (workingSchedule.length > schedule.length) {
+              dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: workingSchedule } })
+              dispatch({ type: 'SET_SPOT_ROTATION', payload: workingRotation })
+              for (const b of overdueBlocks) {
+                dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: todayStr } })
+              }
+              schedule = workingSchedule
+              scheduledDue = schedule.filter(
+                i => i.status === 'pending' && !!i.adBreakId && i.scheduledTime && i.scheduledTime <= currentTime
+              )
+            }
+          }
+        }
+
         if (scheduledDue.length === 0) return
         const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
-        if (commInterruptTimeRef.current === triggerTime) return
+        if (commInterruptTimeRef.current === triggerTime) {
+          // Já disparamos para este horário nesta sessão. Comum acontecer
+          // várias vezes por tick enquanto o bloco toca. Não loga pra não poluir.
+          return
+        }
         // Permite catch-up comercial por uma janela curta apos o horario, mesmo se
         // sessionStart bloquearia itens antigos. Depois disso, evita disparar
         // comerciais muito atrasados sem intervencao do operador.
@@ -3173,12 +3259,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const [sH, sM, sS] = sessionStart.split(':').map(Number)
         const triggerSec = tH * 3600 + tM * 60 + (tS ?? 0)
         const sessionSec = sH * 3600 + sM * 60 + (sS ?? 0)
-        if (triggerSec < sessionSec - graceSec) return  // bloco muito antigo, ignorar
+        if (triggerSec < sessionSec - graceSec) {
+          console.warn(`[autoplay-com] bloco @${triggerTime} ignorado: passou ${Math.round((sessionSec - graceSec - triggerSec) / 60)} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s.`)
+          return
+        }
         if (!stateRef.current.isSequencePlaying) {
+          console.log(`[autoplay-com] disparando bloco @${triggerTime} (app idle → startSchedule)`)
           commInterruptTimeRef.current = triggerTime
           startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
         } else {
           // Já está tocando a Programação — interrompe para saltar ao bloco devido
+          console.log(`[autoplay-com] interrompendo sequência para bloco @${triggerTime}`)
           commInterruptTimeRef.current = triggerTime
           scheduleInterruptRef.current = true
           abortRef.current = true
@@ -3188,7 +3279,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule])
+  }, [state.isLoading, startSchedule, expandBlockItems, dispatch])
 
   // ── Scheduler: Pré-carregamento de blocos comerciais ──────────────────────
   // Lê commercialBlocks diretamente (sem depender de Programação do Dia) e

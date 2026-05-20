@@ -238,6 +238,15 @@ export interface AppSettings {
   triggerKey: string | null
   autoplayComerciais: boolean
   preloadMinutes: number
+  /**
+   * Playlist Contínua: quando true, ao terminar um bloco comercial
+   * disparado pelo Autoplay Comerciais, o motor NÃO para — continua
+   * tocando o próximo item pending da Programação (musical ou outro).
+   * Quando false (default), o motor para após o bloco e aguarda o
+   * próximo agendamento (comportamento legado, útil para operação
+   * 100% por horário fixo).
+   */
+  continuousPlayback: boolean
   // ── GC Musical automático ─────────────────────────────────────────────────
   gcMusicEnabled: boolean
   gcMusicDelaySeconds: number    // delay após o início (padrão: 5)

@@ -8,6 +8,7 @@ import {
   Moon,
   Plus,
   Radio,
+  Repeat,
   Save,
   Settings,
   Sun,
@@ -46,6 +47,12 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
 
   const toggleAutoplayComerciais = () => {
     const next: AppSettings = { ...settings, autoplayComerciais: !settings.autoplayComerciais }
+    dispatch({ type: 'SET_SETTINGS', payload: next })
+    saveToStorage('settings', next)
+  }
+
+  const toggleContinuousPlayback = () => {
+    const next: AppSettings = { ...settings, continuousPlayback: !settings.continuousPlayback }
     dispatch({ type: 'SET_SETTINGS', payload: next })
     saveToStorage('settings', next)
   }
@@ -210,6 +217,18 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
                 icon={<Radio size={14} />}
               >
                 {settings.autoplayComerciais ? t.toolbar.autoplayComerciaisOn : t.toolbar.autoplayComerciaisOff}
+              </Button>
+
+              <Button
+                className="toolbar-btn"
+                variant={settings.continuousPlayback ? 'success' : 'secondary'}
+                onClick={toggleContinuousPlayback}
+                title={settings.continuousPlayback
+                  ? 'Playlist Contínua ON — após o bloco comercial a playlist musical continua tocando'
+                  : 'Playlist Contínua OFF — após o bloco comercial o motor para até o próximo agendamento'}
+                icon={<Repeat size={14} />}
+              >
+                {settings.continuousPlayback ? 'Playlist Contínua ✓' : 'Playlist Contínua'}
               </Button>
             </div>
           )}
