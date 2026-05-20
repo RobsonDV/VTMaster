@@ -1441,8 +1441,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // within the 60-minute grace window.
     if (dateStr === today()) {
       const allUsedBlockIds = new Set([...linkedBlockIds, ...blocksForDay.map(b => b.id)])
+      // Só dispatch MARK_BLOCK_LOADED para blocos cuja lastLoadedDate ainda é diferente
+      // de hoje. Dispatchs redundantes mudam a referência de state.commercialBlocks e
+      // disparam o auto-sync useEffect, que regenera o schedule com novos UUIDs nos
+      // items pending — fazia o banner de arming "piscar" e o motor pular itens.
       commercialBlocks
-        .filter(b => allUsedBlockIds.has(b.id))
+        .filter(b => allUsedBlockIds.has(b.id) && b.lastLoadedDate !== dateStr)
         .forEach(b => {
           dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: dateStr } })
         })
@@ -3269,8 +3273,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (workingSchedule.length > schedule.length) {
               dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: workingSchedule } })
               dispatch({ type: 'SET_SPOT_ROTATION', payload: workingRotation })
+              // Mesma proteção do generatePlaylistFromGrid: só MARK_BLOCK_LOADED se
+              // ainda não estiver marcado hoje, pra não disparar auto-sync inútil.
               for (const b of overdueBlocks) {
-                dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: todayStr } })
+                if (b.lastLoadedDate !== todayStr) {
+                  dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: b.id, date: todayStr } })
+                }
               }
               schedule = workingSchedule
               scheduledDue = schedule.filter(
@@ -3304,12 +3312,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // O scheduler de arming (2s) já colocou o GUID em PVW do vMix 30s antes.
         // Aqui transferimos pra preloadedInputRef para que o playItem use
         // diretamente via Cut, sem AddInput sob pressão.
+        //
+        // Match por (blockId + filePath) — não por item.id, que pode ter sido
+        // regenerado por algum auto-sync entre o arming e o disparo. O playItem
+        // já consome preloadedInputRef baseado em filePath ([AppContext:~1696]),
+        // então isso é coerente em todo o pipeline.
         const armed = armedCommercialRef.current
-        const armedMatch = armed
+        const armedMatch = !!(armed
           && armed.scheduleDate === todayStr
-          && armed.firstItemId === scheduledDue[0].id
+          && armed.blockId === scheduledDue[0].adBreakId
+          && scheduledDue.some(i => i.filePath === armed.filePath))
         if (armedMatch && armed) {
-          console.log(`[autoplay-com] usando arming pré-carregado para "${armed.blockName}"`)
+          console.log(`[autoplay-com] usando arming pré-carregado para "${armed.blockName}" (filePath match)`)
           preloadedInputRef.current = {
             guid: armed.guid,
             filePath: armed.filePath,
@@ -3390,6 +3404,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const firstUpcoming = upcomingByTime[0]?.item
 
         // ── Casos de descarte do arming atual ──────────────────────────────
+        // IMPORTANTE: usamos (blockId + filePath) como chave de identidade.
+        // item.id era instável — qualquer re-geração de schedule (MERGE mode
+        // do generatePlaylistFromGrid, executado pelo auto-sync useEffect)
+        // criava UUIDs novos para os items pending, fazendo o check
+        // "item.id ainda existe" falhar a cada 2-20s. Banner piscava sem fim,
+        // input do vMix entrava/saia, e na hora do disparo o GUID armado
+        // não casava com o item.id de scheduledDue → primeiro item do bloco
+        // pulava. Chave (block + arquivo) é estável entre regenerações.
         if (armedCommercialRef.current) {
           const armed = armedCommercialRef.current
           // 1. O bloco armado já passou da hora há > 1min — vMix scheduler ainda
@@ -3397,22 +3419,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const [aH, aM, aS] = armed.fireAt.split(':').map(Number)
           const armedSec = aH * 3600 + aM * 60 + (aS ?? 0)
           const armedPassedTooLong = currentSec > armedSec + 60
-          // 2. O item armado não está mais em schedule (operador editou bloco / dia)
-          const armedItemStillExists = schedule.some(i => i.id === armed.firstItemId && i.status === 'pending')
-          // 3. Trocou o dia
+          // 2. Trocou o dia
           const stale = armed.scheduleDate !== todayStr
+          // 3. Item logicamente equivalente ainda no schedule? Casa por
+          //    (blockId + filePath + status pending) — sobrevive a regens.
+          const matchedItem = schedule.find(i =>
+            i.adBreakId === armed.blockId &&
+            i.filePath === armed.filePath &&
+            i.status === 'pending'
+          )
+          const armedItemStillExists = !!matchedItem
 
           if (armedPassedTooLong || !armedItemStillExists || stale) {
             console.warn(`[arming] descartando "${armed.blockName}" @${armed.fireAt} — passedTooLong=${armedPassedTooLong} itemMissing=${!armedItemStillExists} stale=${stale}`)
             removeOwnedInput(armed.guid, { source: 'arming-discard-stale', queue: 'system' })
             setArmedCommercial(null)
-          } else if (firstUpcoming && firstUpcoming.id !== armed.firstItemId) {
-            // 4. Apareceu um bloco MAIS PRÓXIMO que o armado — descarta e re-arma o novo
+          } else if (firstUpcoming && firstUpcoming.adBreakId !== armed.blockId) {
+            // 4. Apareceu um bloco DIFERENTE mais próximo — descarta e re-arma
+            //    (compara blockId, não item.id, pra ignorar regens).
             console.log(`[arming] re-armando: bloco mais próximo "${firstUpcoming.title}" substitui "${armed.blockName}"`)
             removeOwnedInput(armed.guid, { source: 'arming-discard-replaced', queue: 'system' })
             setArmedCommercial(null)
           } else {
-            // Arming válido, segue
+            // Arming ainda válido (mesmo bloco, mesmo arquivo) — só refreshamos
+            // o firstItemId pra que o scheduler comercial possa fazer match por
+            // id também (defensive — match principal agora é por filePath).
+            if (matchedItem && matchedItem.id !== armed.firstItemId) {
+              setArmedCommercial({ ...armed, firstItemId: matchedItem.id })
+            }
             return
           }
         }
@@ -3523,7 +3557,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         workingRotation = newRotation
         dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: workingSchedule } })
         dispatch({ type: 'SET_SPOT_ROTATION', payload: workingRotation })
-        dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: todayStr } })
+        // Só MARK_BLOCK_LOADED se a data ainda for diferente — dispatch redundante
+        // muda referência de commercialBlocks e dispara auto-sync que regenera o
+        // schedule com novos UUIDs (era a causa do banner de arming "piscar").
+        if (block.lastLoadedDate !== todayStr) {
+          dispatch({ type: 'MARK_BLOCK_LOADED', payload: { blockId: block.id, date: todayStr } })
+        }
 
         // Persiste imediatamente para sobreviver reload
         if (window.spotmaster) {
