@@ -1311,14 +1311,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Placeholders (no filePath, no inputName, not a vmix_action) are ALWAYS
       // removed when fresh data is available — even if skipped or done — because
       // they are stubs, not actual aired content.
-      // bloco_musical placeholders are also removed when AutoProg generated new content.
+      //
+      // Para items musicais (sem adBreakId) em horários com freshMusic do AutoProg:
+      //   - Placeholders sem conteúdo: removidos (substituídos pela nova geração)
+      //   - Items PENDING com conteúdo: removidos (a nova sequência aplica)
+      //   - Items DONE/SKIPPED com conteúdo: MANTIDOS (prova de veiculação real)
+      //   - Items playing: mantidos (não interromper o que está no ar agora)
+      // Sem isto, clicar "Regenerar Programação" após editar a sequência do AutoProg
+      // não tinha efeito — items musicais antigos permaneciam, bloqueando os novos.
       const keptExisting = existing.filter(item => {
         if (!item.adBreakId) {
-          // Remove bloco_musical placeholder when AutoProg generated real content
           const hhmm = item.scheduledTime?.slice(0, 5)
           if (hhmm && freshMusicTimes.has(hhmm)) {
             const hasContent = !!(item.filePath || item.inputName || item.type === 'vmix_action')
-            if (!hasContent) return false  // remove placeholder, replaced by AutoProg items
+            if (!hasContent) return false  // placeholder vazio: remove
+            if (item.status === 'pending') return false  // pending: substituído pela nova sequência
+            // done/skipped/playing com conteúdo: mantém (já aconteceu)
+            return true
           }
           return true
         }
@@ -1333,8 +1342,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true
       })
 
-      // Times still covered by the kept items (used to avoid duplicating non-commercial items)
-      const coveredTimes = new Set(keptExisting.map(i => i.scheduledTime?.slice(0, 5)).filter(Boolean))
+      // Times still covered by the kept items (used to avoid duplicating non-commercial items).
+      // Excluímos os horários com freshMusic — assim os items NOVOS da nova sequência podem
+      // ser adicionados ao mesmo horário onde sobraram done/skipped antigos.
+      const coveredTimes = new Set(
+        keptExisting
+          .map(i => i.scheduledTime?.slice(0, 5))
+          .filter((t): t is string => !!t)
+          .filter(t => !freshMusicTimes.has(t))
+      )
 
       // Horários onde já existem itens comerciais não-pendentes com conteúdo real
       // (tocaram ou estão tocando). Impede adicionar duplicatas ao clicar Atualizar.
@@ -1368,6 +1384,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       finalItems = [...keptExisting, ...toAdd]
         .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))
         .map((item, idx) => ({ ...item, order: idx + 1 }))
+
+      // Log diagnóstico do merge — facilita confirmar visualmente se o regen
+      // funcionou quando o operador editar AutoProg/blocos e clicar Regenerar.
+      const removed = existing.length - keptExisting.length
+      const addedMusic = toAdd.filter(i => !i.adBreakId).length
+      const addedCommercial = toAdd.filter(i => !!i.adBreakId).length
+      console.log(`[regenerar] merge: ${existing.length} antes → ${finalItems.length} depois (mantidos=${keptExisting.length}, removidos=${removed}, adicionados=${toAdd.length} [musical=${addedMusic}, comercial=${addedCommercial}]). freshMusicTimes=[${[...freshMusicTimes].join(',')}], freshCommercialTimes=[${[...freshCommercialTimes].join(',')}]`)
     } else {
       // ── Replace mode: build fresh schedule from scratch ────────────────────
       // Mesmo no replace, respeita deleções intencionais do operador para a data.
@@ -3225,6 +3248,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (scheduledDue.length === 0) return
         const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
         if (scheduleInterruptTimeRef.current === triggerTime) return
+        // Detecção de relógio ajustado pra trás: se sessionStart > now,
+        // resetar pra now (mesmo fix do scheduler comercial). Sem isto,
+        // o filtro "triggerTime < sessionStart" abaixo bloqueava qualquer
+        // item musical após o operador corrigir o relógio do Windows.
+        if (sessionStartRef.current > currentTime) {
+          console.warn(`[autoplay] relógio voltou pra trás (sessionStart=${sessionStartRef.current} > now=${currentTime}). Resetando sessionStart.`)
+          sessionStartRef.current = currentTime
+        }
         if (triggerTime < sessionStartRef.current) return  // não dispara blocos vencidos antes do startup
         if (!stateRef.current.isSequencePlaying) {
           scheduleInterruptTimeRef.current = triggerTime
@@ -3341,7 +3372,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const [sH, sM, sS] = sessionStart.split(':').map(Number)
         const triggerSec = tH * 3600 + tM * 60 + (tS ?? 0)
         const sessionSec = sH * 3600 + sM * 60 + (sS ?? 0)
-        if (triggerSec < sessionSec - graceSec) {
+        const [cH2, cM2, cS2] = currentTime.split(':').map(Number)
+        const nowSecLocal = cH2 * 3600 + cM2 * 60 + (cS2 ?? 0)
+        // ── Detecção de relógio ajustado para trás ──────────────────────────
+        // Se sessionStart > now atual, o relógio do Windows foi ajustado pra
+        // trás depois do app abrir (comum em rádios sem internet, onde o
+        // operador corrige o relógio manualmente após o sistema drifrar).
+        // Sem este reset, o filtro abaixo bloqueia QUALQUER bloco da próxima
+        // hora (porque o sessionStart fica "no futuro" em relação ao now).
+        if (sessionSec > nowSecLocal) {
+          console.warn(`[autoplay-com] relógio voltou pra trás (sessionStart=${sessionStart} > now=${currentTime}). Resetando sessionStart para now.`)
+          sessionStartRef.current = currentTime
+          // Não retorna — segue o tick com o sessionStart corrigido.
+        } else if (triggerSec < sessionSec - graceSec) {
           console.warn(`[autoplay-com] bloco @${triggerTime} ignorado: passou ${Math.round((sessionSec - graceSec - triggerSec) / 60)} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s.`)
           return
         }
@@ -3634,6 +3677,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (loadAllStartedRef.current) return  // StrictMode/dev re-mount guard — load once
     loadAllStartedRef.current = true
+    // Log de startup: deixa registrado no console DevTools o exato horário em
+    // que o app foi aberto e o sessionStart gravado. Útil para diagnosticar
+    // depois se um bloco não disparou por causa de relógio do sistema voltando
+    // pra trás (NTP, DST, suspender/retomar, etc.). O scheduler já corrige
+    // automaticamente — este log só facilita análise.
+    console.log(`[startup] App aberto às ${sessionStartRef.current} — sessionStart anotado.`)
     const loadAll = async () => {
       if (!window.spotmaster) {
         dispatch({ type: 'SET_LOADING', payload: false })
@@ -4038,12 +4087,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Cleared once the sync actually runs.
   const needsScheduleSyncRef = useRef(false)
 
-  // ── Auto-sync schedule when commercial blocks are configured or modified ─────
+  // ── Auto-sync schedule when commercial blocks OR AutoProg config muda ───────
   // Replaces pending commercial items with refreshed content as soon as the
   // operator saves a block edit. When the sequence is playing we defer the merge
   // to avoid async status overwrites — the deferred-retry effect picks it up.
   // Safe to run immediately when minOrderRef = -1 (no commercial has fired yet,
   // so no high-water-mark to corrupt).
+  //
+  // Inclui agora musicSequences e autoBlocoAssignments para que edições no
+  // AutoProg (regerar bloco musical, trocar sequência atribuída a um slot)
+  // regenerem automaticamente a Programação do Dia — antes era preciso
+  // deletar+recriar manualmente para a mudança ser refletida.
   useEffect(() => {
     if (state.isLoading) return
     const todayStr = today()
@@ -4057,7 +4111,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     needsScheduleSyncRef.current = false
     generatePlaylistFromGrid(todayStr, true, undefined, false)  // auto-sync: no backup
-  }, [state.commercialBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.commercialBlocks, state.musicSequences, state.autoBlocoAssignments]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Deferred-retry: sync schedule as soon as the sequence stops ─────────────
   // Picks up updates that were deferred while a commercial had already fired.

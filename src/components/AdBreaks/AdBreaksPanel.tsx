@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import {
   Plus, Trash2, Clock, ToggleLeft, ToggleRight,
   RefreshCw, ChevronUp, ChevronDown, Zap, Monitor, User, ChevronDown as ExpandIcon, Megaphone, Pause,
@@ -16,7 +16,12 @@ const ALL_DAYS   = [0, 1, 2, 3, 4, 5, 6]
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 // ─── Block Item Row (inline editor) ──────────────────────────────────────────
-function BlockItemRow({
+// Memoized: re-renderiza apenas quando suas próprias props mudam. Sem isto,
+// adicionar/editar QUALQUER item do bloco re-renderizava TODOS os BlockItemRow
+// (porque o parent InlineBlockEditor re-renderiza a cada keystroke). Em blocos
+// com 3+ items, o churn de DOM chegava a travar os inputs em alguns ambientes
+// (operador reportou "ao adicionar 3 vezes, perde a possibilidade de digitar").
+const BlockItemRow = memo(function BlockItemRow({
   item, clients, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst, isLast,
 }: {
   item: CommercialBlockItem
@@ -147,7 +152,7 @@ function BlockItemRow({
       </div>
     </div>
   )
-}
+})
 
 // ─── Item type badges (collapsed view) ───────────────────────────────────────
 function ItemTypeBadge({ item, clients, nextSpotTitle }: {
@@ -249,7 +254,6 @@ function InlineBlockEditor({ draft, setDraft, onSave, onCancel, clients, isNew }
             value={draft.name}
             onChange={e => setDraft(d => d ? { ...d, name: e.target.value } : d)}
             placeholder="ex: Intervalo das 14h"
-            autoFocus={isNew}
           />
         </div>
         <div className="form-group-sm" style={{ marginBottom: 0 }}>
