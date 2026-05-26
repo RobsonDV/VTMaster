@@ -3404,6 +3404,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
               workingRotation = newRotation
             }
             if (workingSchedule.length > schedule.length) {
+              // CRÍTICO: atualiza stateRef.current ANTES do dispatch.
+              // dispatch() é assíncrono — o React só processa na próxima render.
+              // startScheduleFromItem() lê stateRef.current; sem este update o
+              // item injetado não é encontrado e a sequência nunca inicia.
+              stateRef.current = {
+                ...stateRef.current,
+                dateSchedules: { ...stateRef.current.dateSchedules, [todayStr]: workingSchedule },
+                spotRotation: workingRotation,
+              }
               dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: workingSchedule } })
               dispatch({ type: 'SET_SPOT_ROTATION', payload: workingRotation })
               // Mesma proteção do generatePlaylistFromGrid: só MARK_BLOCK_LOADED se
@@ -3512,13 +3521,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         if (!stateRef.current.isSequencePlaying) {
-          const msg = `disparando bloco @${triggerTime} (idle → startSchedule)${armedMatch ? ' [armado]' : ''}`
+          // Inicia a Programação a partir do primeiro item do bloco comercial.
+          // Usa startScheduleFromItem (não startSchedule) para:
+          //  1. Ser explícito sobre de onde inicia (não depende de scheduledDue interno)
+          //  2. Marcar itens anteriores como 'skipped' deixando o estado limpo
+          //  3. Funcionar mesmo quando o schedule foi populado só agora pelo FAILSAFE
+          //     (stateRef.current já foi atualizado acima antes do dispatch)
+          const firstItem = scheduledDue[0]
+          if (!firstItem) return  // segurança extra — scheduledDue verificado em line acima
+          const msg = `disparando bloco @${triggerTime} (idle → startScheduleFromItem "${firstItem.title}")${armedMatch ? ' [armado]' : ''}`
           if (isDev) console.log(`[autoplay-com] ${msg}`)
           addSchedulerLog('info', msg)
           firedCommercialTimesRef.current.add(triggerTime)
           persistFiredTimes()
           commInterruptTimeRef.current = triggerTime
-          startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
+          void startScheduleFromItem(firstItem.id)
         } else {
           // Já está tocando a Programação — interrompe para saltar ao bloco devido
           const msg = `interrompendo sequência para bloco @${triggerTime}${armedMatch ? ' [armado]' : ''}`
@@ -3535,7 +3552,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule, expandBlockItems, dispatch, setArmedCommercial, removeOwnedInput, addSchedulerLog, persistFiredTimes])
+  }, [state.isLoading, startScheduleFromItem, expandBlockItems, dispatch, setArmedCommercial, removeOwnedInput, addSchedulerLog, persistFiredTimes])
 
   // ── Scheduler: Pre-arming de bloco comercial (v5.5.31) ─────────────────────
   // A cada 2s, varre dateSchedules procurando items adBreakId pending cujo

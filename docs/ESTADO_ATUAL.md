@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **20/05/2026** — Versão **5.5.34** — Ciclo completo de auditoria + endurecimento operacional aplicado (v5.5.24 a v5.5.34): Playlist Contínua, pre-arming de bloco comercial, retomada após queda de luz, safeguards anti-fantasma, barra de progresso suave
+> Atualizado em **26/05/2026** — Versão **5.5.37** — Hotfix crítico: Autoplay Comercial agora inicia a programação do zero quando o app está idle e chega a hora do bloco
 
 ---
 
@@ -2405,4 +2405,78 @@ Todas as garantias do ciclo v5.5.24–34 mais:
 - **App não trava** ao varrer pastas de mídia grandes (I/O assíncrono)
 - **Itens não ficam presos em "tocando"** após fechamento forçado
 - **Console silencioso em produção** — apenas warnings reais aparecem
+
+---
+
+### 28.6 v5.5.37 — Hotfix crítico: Autoplay Comercial inicia programação do zero
+
+**Data:** 26/05/2026
+
+#### Comportamento esperado (e que não funcionava)
+
+O botão **Autoplay Comerciais ON** deve:
+1. Quando a programação estiver **rodando**: sincronizar o bloco comercial na hora marcada
+2. Quando a programação estiver **parada/idle**: **iniciar a programação** a partir do primeiro item do bloco comercial que venceu
+
+O comportamento 2 nunca funcionou. O app permanecia idle mesmo com arquivos no bloco.
+
+#### Causa raiz — dois bugs encadeados
+
+**Bug 1 — FAILSAFE com `stateRef.current` stale:**
+
+O FAILSAFE do scheduler comercial (`AppContext.tsx:~3200`) injetava os itens do bloco via `dispatch(SET_DATE_SCHEDULE)`, mas imediatamente depois chamava `startSchedule()`, que lê `stateRef.current.dateSchedules[today]` para encontrar itens pendentes.
+
+Problema: `dispatch()` é **assíncrono** em React — o state só é atualizado após a próxima render. `stateRef.current` ainda estava vazio/sem o bloco. `startSchedule()` encontrava `hasPending = false` e retornava sem iniciar.
+
+Para piorar: `firedCommercialTimesRef.current.add(triggerTime)` era chamado **antes** da tentativa de iniciar, então o guard idempotência impedia qualquer retry — o bloco ficava **permanentemente bloqueado no dia**.
+
+**Bug 2 — `startSchedule()` errado para o caso idle:**
+
+`startSchedule()` inicia do primeiro item pendente da programação — músicas, programas, tudo. No cenário idle com bloco comercial, o correto é iniciar **do primeiro item do bloco comercial** especificamente, marcando tudo anterior como `skipped`.
+
+#### Fix aplicado
+
+**Fix 1** — Atualização imediata de `stateRef.current` antes do dispatch:
+
+```typescript
+// CRÍTICO: atualiza stateRef.current ANTES do dispatch.
+// dispatch() é assíncrono — o React só processa na próxima render.
+stateRef.current = {
+  ...stateRef.current,
+  dateSchedules: { ...stateRef.current.dateSchedules, [todayStr]: workingSchedule },
+  spotRotation: workingRotation,
+}
+dispatch({ type: 'SET_DATE_SCHEDULE', payload: { date: todayStr, items: workingSchedule } })
+dispatch({ type: 'SET_SPOT_ROTATION', payload: workingRotation })
+schedule = workingSchedule
+scheduledDue = schedule.filter(/* ... */)
+```
+
+**Fix 2** — Substituição de `startSchedule()` por `startScheduleFromItem()` no caso idle:
+
+```typescript
+// Antes (errado):
+if (!stateRef.current.isSequencePlaying) {
+  startSchedule()
+}
+
+// Depois (correto):
+if (!stateRef.current.isSequencePlaying) {
+  const firstItem = scheduledDue[0]
+  if (!firstItem) return
+  // ...log...
+  firedCommercialTimesRef.current.add(triggerTime)  // movido para DEPOIS do guard
+  persistFiredTimes()
+  commInterruptTimeRef.current = triggerTime
+  void startScheduleFromItem(firstItem.id)
+}
+```
+
+`startScheduleFromItem` marca todos os itens anteriores como `skipped` e atualiza `stateRef.current` internamente antes de chamar `runSequence`, garantindo que a sequência arranque de fato.
+
+#### Garantia adicionada
+
+- **Autoplay Comercial ON + app idle**: quando chega a hora do bloco e há arquivos disponíveis, a programação **arranca automaticamente** a partir do primeiro item do bloco comercial
+- **`firedCommercialTimesRef.add()`** só é chamado após confirmação de que a tentativa de iniciar foi executada — sem mais bloqueio permanente por tentativa frustrada
+- **Deps de `useCallback`** do scheduler comercial: substituído `startSchedule` por `startScheduleFromItem`
 

@@ -747,6 +747,26 @@ Redesign anterior (pos-entrega inicial):
 - Em caso de problema, o widget de diagnostico mostra exatamente o que o scheduler fez nas ultimas horas.
 - App responde normalmente mesmo com pastas de midia com milhares de arquivos.
 
+#### Entregas v5.5.37 (Hotfix critico: Autoplay Comercial inicia do zero)
+
+> **Status: ENTREGUE em 26/05/2026.** Dois bugs encadeados impediam o Autoplay Comercial de iniciar a programacao quando o app estava idle.
+
+**Bug 1 — stateRef stale no FAILSAFE:**
+- O FAILSAFE injetava itens via `dispatch(SET_DATE_SCHEDULE)`, que e assincrono — React so aplica na proxima render.
+- `stateRef.current` continuava vazio quando `startSchedule()` era chamado logo em seguida.
+- `hasPending = false` → sequencia nao arrancava.
+- Pior: `firedCommercialTimesRef.add(triggerTime)` era chamado ANTES da tentativa — bloco ficava permanentemente bloqueado no dia.
+- **Fix**: `stateRef.current` atualizado imediatamente apos o FAILSAFE inject, antes do dispatch (mesmo padrao ja usado em `startScheduleFromNow` e `startScheduleFromItem`).
+
+**Bug 2 — `startSchedule()` errado para o caso idle:**
+- `startSchedule()` inicia do primeiro item pendente de toda a programacao (musicas, programas, tudo).
+- No cenario idle com bloco comercial, o correto e iniciar do primeiro item do bloco especificamente.
+- **Fix**: substituido por `startScheduleFromItem(firstItem.id)` — marca tudo anterior como `skipped` e arranca exatamente do bloco due.
+- `firedCommercialTimesRef.add()` movido para DEPOIS da tentativa de iniciar — sem mais bloqueio permanente por tentativa frustrada.
+
+**Impacto:**
+- **Autoplay Comerciais ON + app idle**: ao chegar a hora do bloco comercial, o app inicia a programacao automaticamente do primeiro item do bloco, sem intervencao do operador.
+
 ---
 
 ### Fase 8 - Produto multiestacao e continuidade
