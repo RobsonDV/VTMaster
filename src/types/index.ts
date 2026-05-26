@@ -268,6 +268,12 @@ export interface AppSettings {
   transitionDurationMs: number               // duração em ms (0 = usa o padrão do vMix)
   // ── Snapshot Comercial ────────────────────────────────────────────────────
   snapshotOnSpot: boolean         // tirar snapshot ao iniciar bloco comercial
+  // ── Scheduler Comercial ───────────────────────────────────────────────────
+  /** Janela de catch-up em minutos: blocos atrasados até N minutos ainda disparam.
+   *  0 = sem catch-up (só dispara no horário exato). Padrão 10. */
+  catchUpGraceMinutes?: number
+  /** Versão do schema de persistência — detecta dados gravados por versão incompatível. */
+  schemaVersion?: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -679,6 +685,7 @@ export interface SpotMasterAPI {
   installUpdate: () => Promise<boolean>
   onUpdateStatus: (callback: (status: UpdateStatus) => void) => void
   removeUpdateStatusListener: () => void
+  exportTextFile: (defaultName: string, content: string) => Promise<string | null>
   exportPlaylist: (data: unknown) => Promise<string | null>
   importPlaylist: () => Promise<unknown>
   exportGrid: (data: unknown) => Promise<string | null>

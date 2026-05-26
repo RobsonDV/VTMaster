@@ -63,13 +63,6 @@
   gap: 12px;
 }
 
-.ap-card-color {
-  width: 12px;
-  height: 48px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
 .ap-card-body {
   flex: 1;
   min-width: 0;
@@ -194,32 +187,6 @@
   background: var(--bg-primary);
   color: var(--text-secondary);
   border: 1px solid var(--border);
-}
-
-/* ── Color swatches ──────────────────────────────────────────────────────── */
-
-.ap-color-swatches {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.ap-color-swatch {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: transform 0.1s, border-color 0.1s;
-}
-
-.ap-color-swatch:hover {
-  transform: scale(1.15);
-}
-
-.ap-color-swatch.selected {
-  border-color: var(--text-primary);
-  transform: scale(1.15);
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */

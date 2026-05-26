@@ -3,7 +3,7 @@ import { createServer, type Server } from 'http'
 import { pathToFileURL } from 'url'
 import { join } from 'path'
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { writeFile, rename as renameAsync } from 'fs/promises'
+import { writeFile, rename as renameAsync, readdir } from 'fs/promises'
 import { createReadStream } from 'fs'
 import { createHash } from 'crypto'
 import { randomUUID } from 'crypto'
@@ -682,6 +682,21 @@ ipcMain.handle('open-external', (_event, url: string) => {
   shell.openExternal(url)
 })
 
+// Export text file (used for scheduler audit log)
+ipcMain.handle('export-text-file', async (_event, defaultName: string, content: string) => {
+  if (!mainWindow) return null
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Exportar Log',
+    defaultPath: defaultName,
+    filters: [{ name: 'Texto', extensions: ['txt'] }, { name: 'Todos', extensions: ['*'] }],
+  })
+  if (!result.canceled && result.filePath) {
+    writeFileSync(result.filePath, content, 'utf-8')
+    return result.filePath
+  }
+  return null
+})
+
 // Export playlist to JSON file
 ipcMain.handle('export-playlist', async (_event, data: unknown) => {
   if (!mainWindow) return null
@@ -806,7 +821,7 @@ ipcMain.handle('browse-folder', async () => {
   return result.canceled ? null : result.filePaths[0] ?? null
 })
 
-// Scan a folder for media files (used by AutoProg)
+// Scan a folder for media files (used by AutoProg) — async para não bloquear o main process
 ipcMain.handle('scan-music-folder', async (_event, folderPath: string, includeSubfolders: boolean) => {
   const MEDIA_EXTS = new Set([
     'mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff',
@@ -815,30 +830,25 @@ ipcMain.handle('scan-music-folder', async (_event, folderPath: string, includeSu
   type ScanResult = { filePath: string; filename: string; subfolder: string }
   const results: ScanResult[] = []
 
-  function scanDir(dir: string, relative: string) {
+  async function scanDir(dir: string, relative: string) {
     try {
-      const entries = readdirSync(dir, { withFileTypes: true })
+      const entries = await readdir(dir, { withFileTypes: true })
+      const subdirs: Array<{ path: string; rel: string }> = []
       for (const entry of entries) {
         if (entry.isDirectory() && includeSubfolders) {
-          scanDir(
-            join(dir, entry.name),
-            relative ? `${relative}/${entry.name}` : entry.name,
-          )
+          subdirs.push({ path: join(dir, entry.name), rel: relative ? `${relative}/${entry.name}` : entry.name })
         } else if (entry.isFile()) {
           const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
           if (MEDIA_EXTS.has(ext)) {
-            results.push({
-              filePath: join(dir, entry.name),
-              filename: entry.name,
-              subfolder: relative,
-            })
+            results.push({ filePath: join(dir, entry.name), filename: entry.name, subfolder: relative })
           }
         }
       }
-    } catch { /* ignore permissão negada e similares */ }
+      await Promise.all(subdirs.map(s => scanDir(s.path, s.rel)))
+    } catch { /* ignora pasta inacessível (EACCES, ENOENT) */ }
   }
 
-  scanDir(folderPath, '')
+  await scanDir(folderPath, '')
   return results
 })
 
@@ -894,23 +904,23 @@ ipcMain.handle('reconcile-music-folders', async (_event, folderPaths: string[], 
   const knownPaths = new Set(tracks.map(t => t.filePath))
   const foundPaths = new Set<string>()
 
-  function scanDir(dir: string) {
+  async function scanDir(dir: string) {
     try {
-      const entries = readdirSync(dir, { withFileTypes: true })
+      const entries = await readdir(dir, { withFileTypes: true })
+      const subdirs: string[] = []
       for (const entry of entries) {
         if (entry.isDirectory()) {
-          scanDir(join(dir, entry.name))
+          subdirs.push(join(dir, entry.name))
         } else if (entry.isFile()) {
           const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
           if (MEDIA_EXTS.has(ext)) foundPaths.add(join(dir, entry.name))
         }
       }
-    } catch { /* ignore */ }
+      await Promise.all(subdirs.map(s => scanDir(s)))
+    } catch { /* ignora pasta inacessível */ }
   }
 
-  for (const fp of folderPaths) {
-    if (fp && existsSync(fp)) scanDir(fp)
-  }
+  await Promise.all(folderPaths.filter(fp => fp && existsSync(fp)).map(fp => scanDir(fp)))
 
   // Candidatos básicos
   const newFileCandidates = [...foundPaths]

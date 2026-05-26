@@ -23,18 +23,7 @@ export function formatDuration(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-/** Same as formatDuration — alias for readability */
-export function formatTime(seconds: number): string {
-  return formatDuration(seconds)
-}
 
-/** Parses HH:MM:SS or MM:SS string to seconds */
-export function parseDuration(str: string): number {
-  const parts = str.split(':').map(Number)
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-  if (parts.length === 2) return parts[0] * 60 + parts[1]
-  return parseInt(str) || 0
-}
 
 /** Formats a date string YYYY-MM-DD to local format */
 export function formatDate(dateStr: string, lang: 'pt' | 'en' = 'pt'): string {

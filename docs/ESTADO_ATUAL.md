@@ -2327,3 +2327,82 @@ Após o ciclo completo v5.5.24–34, o VTMaster garante:
 
 Documentação completa do ciclo em `PLANOGPT.MD` seção "Fase 9 — Ciclo de auditoria e endurecimento operacional".
 
+---
+
+## Seção 28 — v5.5.35 e v5.5.36: Scheduler definitivo + hardening de produção
+
+### 28.1 v5.5.35 — Correções pontuais de campo
+
+**Relógio voltou pra trás**: guard adicional em `sessionStartRef` — quando o NTP/DST recua o clock, o scheduler comercial não re-dispara blocos que já foram para `firedCommercialTimesRef`. O log `[relógio voltou pra trás]` facilita identificação em operações noturnas.
+
+**Regenerar AutoProg**: correção no merge mode — blocos comerciais cujo `scheduledTime` já constava em `firedCommercialTimesRef` eram incorretamente removidos do schedule ao regenerar.
+
+**Input trava no AdBreaks**: fix no ciclo de vida do `preloadedInputRef` quando o primeiro item de um bloco era carregado via arming e depois o bloco era editado antes de disparar.
+
+---
+
+### 28.2 v5.5.36 — Scheduler comercial definitivo
+
+#### Problema raiz resolvido
+
+Antes da v5.5.36, o guard anti-re-disparo era `commInterruptTimeRef` (string), resetado para `''` a cada `stopPlayback` e fim de sequência. Isso causava o principal bug em produção: o scheduler re-disparava o mesmo bloco toda vez que a sequência parava.
+
+#### Solução: `firedCommercialTimesRef`
+
+- `Set<string>` — cada entry = `"HH:MM"` que já foi disparado no dia
+- Persiste no localStorage como `spotmaster_fired_YYYY-MM-DD`
+- Sobrevive a crash, reinício e abertura múltipla do app
+- `cleanupOldFiredKeys()` remove chaves com mais de 7 dias — chamado apenas no startup e na virada do dia
+- `persistFiredTimes()` só salva (sem cleanup) — chamado após cada disparo
+
+#### Guards em camadas (ordem de verificação no scheduler):
+
+1. `firedCommercialTimesRef.current.has(triggerTime)` → return (idempotência principal)
+2. `abortRef.current` → return (sequência em aborto)
+3. `scheduledDue.every(i => i.status !== 'pending')` → add + return (todos já tocados)
+4. `sessionStart` + `catchUpGraceMinutes` dinâmico (settings, padrão 10 min)
+5. `schedulerFiringRef.current` → return (mutex, evita tick concorrente)
+
+#### FAILSAFE melhorado
+
+O FAILSAFE (injeção inline quando o bloco não está no `dateSchedules`) agora verifica `firedCommercialTimesRef` antes de injetar — elimina items zombie permanentemente `pending`.
+
+---
+
+### 28.3 Widget de diagnóstico do Scheduler
+
+`SchedulerLogWidget` em `src/components/AdBreaks/SchedulerLogWidget.tsx`:
+
+- Painel colapsável na aba Blocos Comerciais
+- Ring buffer de 60 entradas (`schedulerLogRef`) — sem alocação infinita
+- Cores por nível: `info` (texto secundário), `warn` (amarelo), `error` (vermelho)
+- Badge colorido no header quando há erros ou avisos
+- Botões: **Atualizar**, **Exportar .txt** (dialog de salvar), **Limpar**
+- Controle `catchUpGraceMinutes` adicionado ao lado dos controles de preload
+
+---
+
+### 28.4 Hardening de produção (6 fixes)
+
+| Fix | Arquivo | Descrição |
+|-----|---------|-----------|
+| I/O async | `electron/main.ts` | `scan-music-folder` e `reconcile-music-folders` usam `await readdir` + `Promise.all` |
+| Retry limitado | `DaySchedulePanel.tsx` | `durationRetryCount` (Map<string, number>) — máximo 3 tentativas por item |
+| Feedback vMix | `Toolbar.tsx` | Botão "Conectando..." com ícone Loader girando; timeout 8s |
+| Startup cleanup | `AppContext.tsx` | `resetPlaying()` no LOAD_ALL: `status: 'playing'` → `'pending'` em playlist e dateSchedules |
+| Logs DEV-only | `AppContext.tsx` | `const isDev = import.meta.env.DEV`; 22 `console.log` guardados com `if (isDev)` |
+| Schema versioning | `AppContext.tsx` + `types/index.ts` | `SCHEMA_VERSION = 1`; `console.warn` no loadAll se versão do disco ≠ atual |
+
+---
+
+### 28.5 Resumo de garantias operacionais (v5.5.36)
+
+Todas as garantias do ciclo v5.5.24–34 mais:
+
+- **Nenhum bloco comercial re-dispara** após Stop, Next, pausa ou reinício do app
+- **Diagnóstico em tempo real** do scheduler via painel colapsável sem abrir DevTools
+- **Log exportável** para suporte
+- **App não trava** ao varrer pastas de mídia grandes (I/O assíncrono)
+- **Itens não ficam presos em "tocando"** após fechamento forçado
+- **Console silencioso em produção** — apenas warnings reais aparecem
+

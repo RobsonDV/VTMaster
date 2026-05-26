@@ -710,6 +710,45 @@ Redesign anterior (pos-entrega inicial):
 
 ---
 
+### Fase 10 - Scheduler definitivo + hardening de producao (v5.5.35 a v5.5.36)
+
+> **Status: ENTREGUE em 26/05/2026.** Duas releases focadas em tornar o scheduler comercial infalivel em producao real e blindar o app para operacao 24h sem supervisao.
+
+#### Entregas v5.5.35 (Correcoes pontuais de campo)
+- **Relogio voltou para tras**: guard em `sessionStartRef` — NTP/DST nao re-dispara blocos ja em `firedCommercialTimesRef`.
+- **Regenerar AutoProg**: merge mode preserva status `done` de blocos comerciais ja disparados.
+- **Input trava no AdBreaks**: fix no ciclo de vida de `preloadedInputRef` quando bloco editado apos arming.
+
+#### Entregas v5.5.36 (Scheduler definitivo + 6 hardening fixes)
+
+**Scheduler comercial infalivel:**
+- `firedCommercialTimesRef` (Set<string> persistido como `spotmaster_fired_YYYY-MM-DD` no localStorage) substitui `commInterruptTimeRef` (string que era resetada a cada Stop).
+- Sobrevive a crash, reinicio, abertura multipla do app no mesmo dia.
+- Cleanup de chaves antigas (>7 dias) apenas no startup e virada de dia — nao a cada tick de 1s.
+- Guards em camadas: firedSet → abortRef → todos-done → catchUpGrace → mutex schedulerFiringRef.
+- FAILSAFE melhorado: verifica firedSet antes de injetar — elimina items zombie permanentemente pending.
+
+**Widget de diagnostico do scheduler (`SchedulerLogWidget`):**
+- Ring buffer de 60 entradas com niveis info/warn/error.
+- Badge colorido no header sem abrir o painel.
+- Exportacao .txt via dialog de sistema para envio ao suporte.
+- Controle de `catchUpGraceMinutes` ao lado dos controles de preload.
+
+**Hardening de producao (6 fixes):**
+- I/O async: `scan-music-folder` e `reconcile-music-folders` com `readdir` + `Promise.all`.
+- Retry de duracao limitado a 3 tentativas/item (evitava loop eterno).
+- Botao vMix com estado "Conectando..." + timeout de seguranca 8s.
+- Startup cleanup: items `playing` resetados para `pending` no LOAD_ALL.
+- Console silencioso em producao: 22 `console.log` guardados com `if (isDev)`.
+- Schema versioning: `SCHEMA_VERSION = 1` com `console.warn` se disco divergir.
+
+#### Impacto operacional
+- Operador pode reiniciar o app no meio do dia sem risco de bloco comercial disparar duas vezes.
+- Em caso de problema, o widget de diagnostico mostra exatamente o que o scheduler fez nas ultimas horas.
+- App responde normalmente mesmo com pastas de midia com milhares de arquivos.
+
+---
+
 ### Fase 8 - Produto multiestacao e continuidade
 
 Objetivo: preparar uso por emissoras maiores.

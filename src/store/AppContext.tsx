@@ -55,6 +55,11 @@ import {
 } from '../utils/mediaDuration'
 import { executeVmixAction, executeVmixCommand, requestVmixXml } from '../utils/vmixCommandService'
 
+const isDev = import.meta.env.DEV
+
+// Incrementar ao introduzir migração de dados que exige código de compatibilidade.
+const SCHEMA_VERSION = 1
+
 /** Signature usada para casar item deletado com item potencialmente regerado pela grade.
  *  Igual para o mesmo slot independentemente de id (id muda a cada geração). */
 function _scheduleSignature(item: { type: string; title?: string; adBreakId?: string }): string {
@@ -88,6 +93,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   transitionType: 'cut',
   transitionDurationMs: 0,
   snapshotOnSpot: false,
+  catchUpGraceMinutes: 10,
+  schemaVersion: SCHEMA_VERSION,
 }
 
 interface AppState {
@@ -125,7 +132,6 @@ interface AppState {
 }
 
 const DEFAULT_WEEKLY_GRID: WeeklyProgramGrid = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
-const COMMERCIAL_CATCH_UP_GRACE_SECONDS = 10 * 60
 
 function sanitizeDurationCache(raw: unknown): Record<string, number> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -671,6 +677,17 @@ function reducer(state: AppState, action: Action): AppState {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Scheduler Log — ring buffer de diagnóstico do autoplay comercial
+// ─────────────────────────────────────────────────────────────────────────────
+export interface SchedulerLogEntry {
+  ts: string           // HH:MM:SS
+  level: 'info' | 'warn' | 'error'
+  msg: string
+}
+
+const SCHEDULER_LOG_MAX = 60
+
 interface AppContextValue {
   state: AppState
   dispatch: React.Dispatch<Action>
@@ -703,6 +720,8 @@ interface AppContextValue {
   /** Bloco comercial pre-carregado em PVW do vMix, prestes a disparar (v5.5.31).
    *  Mostra o banner de "BLOCO ARMADO" no StatusBar. */
   armedCommercial: { blockId: string; blockName: string; firstItemId: string; guid: string; filePath: string; fireAt: string; scheduleDate: string } | null
+  /** Retorna snapshot do ring buffer de diagnóstico do scheduler comercial (max 60 entradas). */
+  getSchedulerLog: () => SchedulerLogEntry[]
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -808,6 +827,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ignoram blocos cujo scheduledTime < sessionStartRef, evitando que o app
   // inicie automaticamente ao abrir com itens antigos ainda pendentes.
   const sessionStartRef = useRef<string>(now())
+  // Set de scheduledTimes (HH:MM:SS) de blocos comerciais já disparados hoje.
+  // Substituiu commInterruptTimeRef (string única) para impedir que um bloco
+  // re-dispare após outro bloco tocar ou após a sequência terminar naturalmente.
+  // Limpo apenas na virada do dia — não em stopPlayback nem em final de sequência.
+  // Persistido no localStorage (chave: spotmaster_fired_YYYY-MM-DD) para sobreviver
+  // a crashes: se o app reiniciar no mesmo dia, os horários já disparados são
+  // restaurados e não re-disparam.
+  const firedCommercialTimesRef = useRef<Set<string>>(
+    (() => {
+      try {
+        const key = `spotmaster_fired_${today()}`
+        const raw = localStorage.getItem(key)
+        if (raw) return new Set<string>(JSON.parse(raw) as string[])
+      } catch { /* ignore */ }
+      return new Set<string>()
+    })()
+  )
+  // Persiste firedCommercialTimesRef no localStorage após cada add/clear.
+  // Chave inclui a data para que horários de ontem não poluam o dia seguinte.
+  // A limpeza de chaves antigas NÃO fica aqui — roda apenas 1x (startup + virada do dia).
+  const persistFiredTimes = useCallback(() => {
+    try {
+      const key = `spotmaster_fired_${today()}`
+      localStorage.setItem(key, JSON.stringify([...firedCommercialTimesRef.current]))
+    } catch { /* quota exceeded, ignora */ }
+  }, [])
+
+  // Limpa chaves de dias anteriores do localStorage — roda apenas na inicialização
+  // e na virada do dia, não em cada disparo.
+  const cleanupOldFiredKeys = useCallback(() => {
+    try {
+      for (let d = 1; d <= 7; d++) {
+        const old = new Date(); old.setDate(old.getDate() - d)
+        const oldKey = `spotmaster_fired_${old.getFullYear()}-${String(old.getMonth()+1).padStart(2,'0')}-${String(old.getDate()).padStart(2,'0')}`
+        localStorage.removeItem(oldKey)
+      }
+    } catch { /* ignora */ }
+  }, [])
+  // Ring buffer de diagnóstico do scheduler comercial — max SCHEDULER_LOG_MAX entradas.
+  // Lido pela UI via getSchedulerLog(). Não causa re-renders.
+  const schedulerLogRef = useRef<SchedulerLogEntry[]>([])
+  const addSchedulerLog = useCallback((level: SchedulerLogEntry['level'], msg: string) => {
+    const entry: SchedulerLogEntry = { ts: now(), level, msg }
+    schedulerLogRef.current = [entry, ...schedulerLogRef.current].slice(0, SCHEDULER_LOG_MAX)
+  }, [])
   // Mutex: prevents both autoplay schedulers from firing simultaneously in the
   // same JS event-loop tick. The second scheduler returns immediately if the
   // first hasn't finished yet, avoiding double writes to scheduleInterruptTimeRef.
@@ -1390,7 +1454,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const removed = existing.length - keptExisting.length
       const addedMusic = toAdd.filter(i => !i.adBreakId).length
       const addedCommercial = toAdd.filter(i => !!i.adBreakId).length
-      console.log(`[regenerar] merge: ${existing.length} antes → ${finalItems.length} depois (mantidos=${keptExisting.length}, removidos=${removed}, adicionados=${toAdd.length} [musical=${addedMusic}, comercial=${addedCommercial}]). freshMusicTimes=[${[...freshMusicTimes].join(',')}], freshCommercialTimes=[${[...freshCommercialTimes].join(',')}]`)
+      if (isDev) console.log(`[regenerar] merge: ${existing.length} antes → ${finalItems.length} depois (mantidos=${keptExisting.length}, removidos=${removed}, adicionados=${toAdd.length} [musical=${addedMusic}, comercial=${addedCommercial}]). freshMusicTimes=[${[...freshMusicTimes].join(',')}], freshCommercialTimes=[${[...freshCommercialTimes].join(',')}]`)
     } else {
       // ── Replace mode: build fresh schedule from scratch ────────────────────
       // Mesmo no replace, respeita deleções intencionais do operador para a data.
@@ -1482,6 +1546,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // "Inserir Bloco Comercial" button in the Playlist tab for manual loading.
   useEffect(() => {
     if (state.isLoading) return
+    // Limpeza única na inicialização: remove chaves de dias anteriores do localStorage.
+    cleanupOldFiredKeys()
     let lastDay = today()
     const interval = setInterval(() => {
       const currentDay = today()
@@ -1493,12 +1559,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         sessionStartRef.current = '00:00:00'
         scheduleInterruptTimeRef.current = ''
         commInterruptTimeRef.current = ''
+        firedCommercialTimesRef.current.clear()
+        persistFiredTimes()
+        cleanupOldFiredKeys()
         minOrderRef.current = -1
         generatePlaylistFromGrid(currentDay)
       }
     }, 30_000)
     return () => clearInterval(interval)
-  }, [state.isLoading, generatePlaylistFromGrid])
+  }, [state.isLoading, generatePlaylistFromGrid, persistFiredTimes, cleanupOldFiredKeys])
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -1740,7 +1809,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     updateQueueItem({ ...item, status: 'playing' })
-    console.log(`[playItem] ▶ "${item.title}" → playing (queue=${activeQueueRef.current}, order=${item.order}, adBreakId=${item.adBreakId ? 'sim' : 'não'})`)
+    if (isDev) console.log(`[playItem] ▶ "${item.title}" → playing (queue=${activeQueueRef.current}, order=${item.order}, adBreakId=${item.adBreakId ? 'sim' : 'não'})`)
     const actualTime = now()
 
     // ── Ação vMix (comando instantâneo, sem mídia) ───────────────────────────
@@ -1824,7 +1893,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (cached?.filePath === item.filePath) {
           guid = cached.guid
           preloadedInputRef.current = null
-          console.log(`[SpotMaster] using preloaded input for "${item.title}"${cachedAlreadyOnAir ? ' (already on air via Next)' : ''}`)
+          if (isDev) console.log(`[SpotMaster] using preloaded input for "${item.title}"${cachedAlreadyOnAir ? ' (already on air via Next)' : ''}`)
         } else {
           if (cached) {
             // Stale preload (e.g. playlist was reordered) — discard safely
@@ -2136,7 +2205,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // — evita falso positivo se o GUID foi reutilizado (ex.: skipToNext
       // marcou preloadedInputRef.alreadyOnAir e o input já tocou antes).
       if (onAirInput) activeInputEndedRef.current.delete(onAirInput)
-      console.log(`[SpotMaster] playing "${item.title}" — duration: ${durationSec}s (${totalMs}ms)`)
+      if (isDev) console.log(`[SpotMaster] playing "${item.title}" — duration: ${durationSec}s (${totalMs}ms)`)
       const start = Date.now()
       let preloadTriggered = false
       while (Date.now() - start < totalMs) {
@@ -2151,7 +2220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Mínimo de 1.5s evita falso positivo no startup do input (estado
         // transiente onde position pode estar próximo de duration).
         if (onAirInput && elapsed >= 1500 && activeInputEndedRef.current.has(onAirInput)) {
-          console.log(`[playItem] "${item.title}" terminou no vMix (scrub ou fim natural) — avançando antes do wall-clock.`)
+          if (isDev) console.log(`[playItem] "${item.title}" terminou no vMix (scrub ou fim natural) — avançando antes do wall-clock.`)
           activeInputEndedRef.current.delete(onAirInput)
           break
         }
@@ -2178,7 +2247,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (elapsed >= 2000 || remaining <= 3000) {
             preloadTriggered = true
             const fpToLoad = nextFilePath
-            console.log(`[SpotMaster] preloading next: "${fpToLoad}" (elapsed ${(elapsed / 1000).toFixed(1)}s / ${(remaining / 1000).toFixed(1)}s remaining)`)
+            if (isDev) console.log(`[SpotMaster] preloading next: "${fpToLoad}" (elapsed ${(elapsed / 1000).toFixed(1)}s / ${(remaining / 1000).toFixed(1)}s remaining)`)
             loadNewInput(fpToLoad, {
               source: 'preload-next-input',
               queue: activeQueueRef.current === 'schedule' ? 'schedule' : 'playlist',
@@ -2212,14 +2281,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // playout always moves forward, never returns to what was playing.
     const fresh = getQueue().find(i => i.id === item.id)
     if (fresh && fresh.status !== 'done' && fresh.status !== 'skipped') {
-      console.log(`[playItem] ✓ "${item.title}" → done (status anterior: ${fresh.status})`)
+      if (isDev) console.log(`[playItem] ✓ "${item.title}" → done (status anterior: ${fresh.status})`)
       updateQueueItem({ ...fresh, status: 'done' })
     } else if (!fresh) {
       // Item sumiu da queue entre o início e o fim do playItem — auto-sync
       // regenerou o schedule com IDs novos. Loga para diagnóstico.
       console.warn(`[playItem] ⚠ "${item.title}" (id=${item.id.slice(0, 8)}) sumiu da queue ao terminar — schedule foi regenerado durante playback. Item pode ter ficado 'playing' órfão.`)
     } else {
-      console.log(`[playItem] = "${item.title}" já estava ${fresh.status}, não muda`)
+      if (isDev) console.log(`[playItem] = "${item.title}" já estava ${fresh.status}, não muda`)
     }
   }, [dispatch, loadNewInput, removeOwnedInput, waitForInputPlaying, vmixMetaForItem])
 
@@ -2302,20 +2371,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ) {
         break
       }
-      // Quando continuousPlayback está ON e o bloco comercial terminou,
-      // limpa o flag de interrupt pra que o próximo bloco comercial possa
-      // ser disparado mais tarde (caso contrário, commInterruptTimeRef
-      // ainda guarda o triggerTime do bloco que acabou de tocar e bloqueia
-      // detecção de novos blocos com o mesmo horário em outras execuções).
-      if (
-        activeQueueRef.current === 'schedule' &&
-        scheduledDue.length === 0 &&
-        commInterruptTimeRef.current !== '' &&
-        stateRef.current.settings.continuousPlayback
-      ) {
-        commInterruptTimeRef.current = ''
-      }
-
       // Apply high-water mark: only consider items at or above the mark.
       // Items below the mark stay 'pending' in the UI but are not played.
       const candidatePending = minOrderRef.current > -1
@@ -2356,6 +2411,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const stale = getQueue().find(i => i.id === next.id)
         if (stale && stale.status !== 'done' && stale.status !== 'skipped') {
           updateQueueItem({ ...stale, status: 'error' })
+        }
+        if (next.adBreakId) {
+          addSchedulerLog('error', `falha ao tocar "${next.title}" (bloco @${next.scheduledTime ?? '?'}): ${String(err)}`)
         }
         dispatch({
           type: 'ADD_LOG',
@@ -2430,7 +2488,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
-  }, [dispatch, playItem, cleanupInputs, removeOwnedInput])
+  }, [dispatch, playItem, cleanupInputs, removeOwnedInput, addSchedulerLog])
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
@@ -2614,7 +2672,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await executeVmixCommand('Cut', { meta: resumeMeta })
         await new Promise(r => setTimeout(r, 120))
         await executeVmixCommand('PlayInput', { input: loadedGuid, meta: resumeMeta })
-        console.log(`[resume] reload: arquivo "${item.title}" recarregado, seek=${elapsedSeconds}s, faltam ${remainingSeconds}s`)
+        if (isDev) console.log(`[resume] reload: arquivo "${item.title}" recarregado, seek=${elapsedSeconds}s, faltam ${remainingSeconds}s`)
       }
 
       // Configura activeInputRef para que o cleanup saiba qual input remover depois
@@ -2740,7 +2798,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // manter um input em PVW esperando o disparo automático que não vai acontecer.
     if (armedCommercialRef.current) {
       const armed = armedCommercialRef.current
-      console.log(`[arming] Stop manual — descartando arming de "${armed.blockName}"`)
+      if (isDev) console.log(`[arming] Stop manual — descartando arming de "${armed.blockName}"`)
       removeOwnedInput(armed.guid, { source: 'arming-stop-discard', queue: 'system' })
       setArmedCommercial(null)
     }
@@ -2820,7 +2878,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (cached?.filePath === nextPending.filePath) {
       nextGuid = cached.guid
       preloadedInputRef.current = null
-      console.log(`[skipToNext] reaproveitando preload existente para "${nextPending.title}" (guid=${cached.guid})`)
+      if (isDev) console.log(`[skipToNext] reaproveitando preload existente para "${nextPending.title}" (guid=${cached.guid})`)
     } else {
       if (cached) {
         // Preload é de outro arquivo (operador reordenou a fila depois) — descarta
@@ -3309,21 +3367,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const [cH, cM, cS] = currentTime.split(':').map(Number)
           const currentSec = cH * 3600 + cM * 60 + (cS ?? 0)
           const preloadMin = stateRef.current.settings.preloadMinutes ?? 5
+          const fsGraceSec = (stateRef.current.settings.catchUpGraceMinutes ?? 10) * 60
           const { commercialBlocks } = stateRef.current
           const overdueBlocks = commercialBlocks.filter(b => {
             if (!b.enabled || !b.scheduledTime) return false
             if (b.daysOfWeek && !b.daysOfWeek.includes(todayDow)) return false
+            // Não injeta se o horário já foi disparado — evita itens zombie (pending forever)
+            if (firedCommercialTimesRef.current.has(b.scheduledTime)) return false
             const [bH, bM, bS] = b.scheduledTime.split(':').map(Number)
             const blockSec = bH * 3600 + bM * 60 + (bS ?? 0)
             // Janela: [horário - preloadMin, horário + grace]
             const windowStart = blockSec - preloadMin * 60
-            const windowEnd   = blockSec + COMMERCIAL_CATCH_UP_GRACE_SECONDS
+            const windowEnd   = blockSec + fsGraceSec
             if (currentSec < windowStart || currentSec > windowEnd) return false
             // Já está no schedule do dia? Pula.
             return !schedule.some(i => i.adBreakId === b.id)
           })
           if (overdueBlocks.length > 0) {
-            console.warn(`[autoplay-com] FAILSAFE: ${overdueBlocks.length} bloco(s) na janela atual mas ausente(s) de dateSchedules. Injetando inline.`, overdueBlocks.map(b => `${b.name}@${b.scheduledTime}`))
+            const fsMsg = `FAILSAFE: ${overdueBlocks.length} bloco(s) ausente(s) do schedule. Injetando: ${overdueBlocks.map(b => `${b.name}@${b.scheduledTime}`).join(', ')}`
+            console.warn(`[autoplay-com] ${fsMsg}`)
+            addSchedulerLog('warn', fsMsg)
             let workingSchedule = schedule
             let workingRotation = stateRef.current.spotRotation
             for (const block of overdueBlocks) {
@@ -3332,7 +3395,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 : 0
               const [items, newRotation] = expandBlockItems(block, maxOrder + 1, workingRotation)
               if (items.length === 0) {
-                console.warn(`[autoplay-com] bloco "${block.name}" expandido para zero items — verificar spots dos clientes.`)
+                const zeroMsg = `FAILSAFE: bloco "${block.name}" sem spots — verifique os clientes cadastrados.`
+                console.warn(`[autoplay-com] ${zeroMsg}`)
+                addSchedulerLog('error', zeroMsg)
                 continue
               }
               workingSchedule = [...workingSchedule, ...items]
@@ -3358,16 +3423,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (scheduledDue.length === 0) return
         const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
-        if (commInterruptTimeRef.current === triggerTime) {
-          // Já disparamos para este horário nesta sessão. Comum acontecer
-          // várias vezes por tick enquanto o bloco toca. Não loga pra não poluir.
+        if (firedCommercialTimesRef.current.has(triggerTime)) {
+          // Já disparamos este horário hoje. O Set persiste até a virada do dia
+          // para impedir re-disparo após a sequência terminar ou stopPlayback.
+          return
+        }
+        // ── Guard: sequência em processo de parada ──────────────────────────
+        // Se abortRef=true, a sequência está encerrando (stopPlayback ou outro abort).
+        // Disparar agora adicionaria o triggerTime ao Set sem o bloco tocar de fato.
+        if (abortRef.current) {
+          addSchedulerLog('warn', `bloco @${triggerTime} aguardando: sequência encerrando (abortRef=true)`)
+          return
+        }
+        // ── Idempotência: verificar se há itens realmente pendentes ─────────
+        // Protege contra o caso em que o operador iniciou o bloco manualmente
+        // e todos os itens já estão done/playing — não dispara novamente.
+        if (scheduledDue.every(i => i.status !== 'pending')) {
+          addSchedulerLog('warn', `bloco @${triggerTime} ignorado: todos os itens já estão ${scheduledDue[0]?.status ?? 'sem status'}`)
+          firedCommercialTimesRef.current.add(triggerTime)
+          persistFiredTimes()
           return
         }
         // Permite catch-up comercial por uma janela curta apos o horario, mesmo se
         // sessionStart bloquearia itens antigos. Depois disso, evita disparar
         // comerciais muito atrasados sem intervencao do operador.
         const sessionStart = sessionStartRef.current
-        const graceSec = COMMERCIAL_CATCH_UP_GRACE_SECONDS
+        const graceSec = (stateRef.current.settings.catchUpGraceMinutes ?? 10) * 60
         const [tH, tM, tS] = triggerTime.split(':').map(Number)
         const [sH, sM, sS] = sessionStart.split(':').map(Number)
         const triggerSec = tH * 3600 + tM * 60 + (tS ?? 0)
@@ -3381,11 +3462,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Sem este reset, o filtro abaixo bloqueia QUALQUER bloco da próxima
         // hora (porque o sessionStart fica "no futuro" em relação ao now).
         if (sessionSec > nowSecLocal) {
-          console.warn(`[autoplay-com] relógio voltou pra trás (sessionStart=${sessionStart} > now=${currentTime}). Resetando sessionStart para now.`)
+          const msg = `relógio voltou pra trás (sessionStart=${sessionStart} > now=${currentTime}). Resetando sessionStart.`
+          console.warn(`[autoplay-com] ${msg}`)
+          addSchedulerLog('warn', msg)
           sessionStartRef.current = currentTime
           // Não retorna — segue o tick com o sessionStart corrigido.
         } else if (triggerSec < sessionSec - graceSec) {
-          console.warn(`[autoplay-com] bloco @${triggerTime} ignorado: passou ${Math.round((sessionSec - graceSec - triggerSec) / 60)} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s.`)
+          const atraso = Math.round((sessionSec - graceSec - triggerSec) / 60)
+          const msg = `bloco @${triggerTime} ignorado: ${atraso} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s.`
+          console.warn(`[autoplay-com] ${msg}`)
+          addSchedulerLog('warn', msg)
           return
         }
         // ── Reaproveita o arming pré-carregado, se for o mesmo bloco ──────
@@ -3403,7 +3489,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           && armed.blockId === scheduledDue[0].adBreakId
           && scheduledDue.some(i => i.filePath === armed.filePath))
         if (armedMatch && armed) {
-          console.log(`[autoplay-com] usando arming pré-carregado para "${armed.blockName}" (filePath match)`)
+          if (isDev) console.log(`[autoplay-com] usando arming pré-carregado para "${armed.blockName}" (filePath match)`)
+          addSchedulerLog('info', `arming pré-carregado aproveitado: "${armed.blockName}"`)
           // ── Importante: descartar preload musical antigo se houver ─────
           // Cenário: música tocando, playItem disparou anticipatory preload
           // do próximo musical (preloadedInputRef = guid_Y). Aí o bloco
@@ -3412,7 +3499,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // fica fantasma no projeto sem dono.
           const existingPreload = preloadedInputRef.current
           if (existingPreload && existingPreload.guid !== armed.guid) {
-            console.log(`[autoplay-com] descartando preload musical "${existingPreload.filePath}" (guid=${existingPreload.guid}) — bloco comercial assumiu o slot`)
+            if (isDev) console.log(`[autoplay-com] descartando preload musical "${existingPreload.filePath}" (guid=${existingPreload.guid}) — bloco comercial assumiu o slot`)
             removeOwnedInput(existingPreload.guid, { source: 'arming-replaces-musical-preload', queue: 'system' })
           }
           preloadedInputRef.current = {
@@ -3425,12 +3512,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         if (!stateRef.current.isSequencePlaying) {
-          console.log(`[autoplay-com] disparando bloco @${triggerTime} (app idle → startSchedule)${armedMatch ? ' [com arming]' : ''}`)
+          const msg = `disparando bloco @${triggerTime} (idle → startSchedule)${armedMatch ? ' [armado]' : ''}`
+          if (isDev) console.log(`[autoplay-com] ${msg}`)
+          addSchedulerLog('info', msg)
+          firedCommercialTimesRef.current.add(triggerTime)
+          persistFiredTimes()
           commInterruptTimeRef.current = triggerTime
           startSchedule() // SEMPRE inicia a Programação, nunca a Playlist
         } else {
           // Já está tocando a Programação — interrompe para saltar ao bloco devido
-          console.log(`[autoplay-com] interrompendo sequência para bloco @${triggerTime}${armedMatch ? ' [com arming]' : ''}`)
+          const msg = `interrompendo sequência para bloco @${triggerTime}${armedMatch ? ' [armado]' : ''}`
+          if (isDev) console.log(`[autoplay-com] ${msg}`)
+          addSchedulerLog('info', msg)
+          firedCommercialTimesRef.current.add(triggerTime)
+          persistFiredTimes()
           commInterruptTimeRef.current = triggerTime
           scheduleInterruptRef.current = true
           abortRef.current = true
@@ -3440,7 +3535,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }, 1000)
     return () => clearInterval(interval)
-  }, [state.isLoading, startSchedule, expandBlockItems, dispatch, setArmedCommercial, removeOwnedInput])
+  }, [state.isLoading, startSchedule, expandBlockItems, dispatch, setArmedCommercial, removeOwnedInput, addSchedulerLog, persistFiredTimes])
 
   // ── Scheduler: Pre-arming de bloco comercial (v5.5.31) ─────────────────────
   // A cada 2s, varre dateSchedules procurando items adBreakId pending cujo
@@ -3460,7 +3555,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // autoplayComerciais desligado: descarta arming pendente
           if (armedCommercialRef.current) {
             const old = armedCommercialRef.current
-            console.log(`[arming] autoplayComerciais OFF — descartando bloco "${old.blockName}"`)
+            if (isDev) console.log(`[arming] autoplayComerciais OFF — descartando bloco "${old.blockName}"`)
             removeOwnedInput(old.guid, { source: 'arming-discard-autoplay-off', queue: 'system' })
             setArmedCommercial(null)
           }
@@ -3528,7 +3623,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           } else if (firstUpcoming && firstUpcoming.adBreakId !== armed.blockId) {
             // 4. Apareceu um bloco DIFERENTE mais próximo — descarta e re-arma
             //    (compara blockId, não item.id, pra ignorar regens).
-            console.log(`[arming] re-armando: bloco mais próximo "${firstUpcoming.title}" substitui "${armed.blockName}"`)
+            if (isDev) console.log(`[arming] re-armando: bloco mais próximo "${firstUpcoming.title}" substitui "${armed.blockName}"`)
             removeOwnedInput(armed.guid, { source: 'arming-discard-replaced', queue: 'system' })
             setArmedCommercial(null)
           } else {
@@ -3567,7 +3662,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           scheduledTime: firstPlayable.scheduledTime,
         }
 
-        console.log(`[arming] pre-carregando "${blockName}" @${firstUpcoming.scheduledTime} (em ${upcomingByTime[0].diff}s) → primeiro item: "${firstPlayable.title}"`)
+        if (isDev) console.log(`[arming] pre-carregando "${blockName}" @${firstUpcoming.scheduledTime} (em ${upcomingByTime[0].diff}s) → primeiro item: "${firstPlayable.title}"`)
         const guid = await loadNewInput(firstPlayable.filePath, armingMeta)
         if (!guid) {
           console.warn(`[arming] falha em loadNewInput para "${firstPlayable.title}" — vMix não respondeu. Tentará de novo no próximo tick.`)
@@ -3586,7 +3681,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           fireAt: firstUpcoming.scheduledTime!,
           scheduleDate: todayStr,
         })
-        console.log(`[arming] ✓ "${blockName}" ARMADO em PVW (guid=${guid})`)
+        if (isDev) console.log(`[arming] ✓ "${blockName}" ARMADO em PVW (guid=${guid})`)
       } finally {
         armingFiringRef.current = false
       }
@@ -3610,6 +3705,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const todayDow = new Date().getDay()
       const currentTime = now()
       const preloadMin = stateRef.current.settings.preloadMinutes ?? 5
+      const catchUpSec = (stateRef.current.settings.catchUpGraceMinutes ?? 10) * 60
       const { commercialBlocks, dateSchedules, spotRotation } = stateRef.current
       let workingSchedule = dateSchedules[todayStr] ?? []
       let workingRotation = spotRotation
@@ -3627,7 +3723,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const [bH, bM, bS] = block.scheduledTime.split(':').map(Number)
         const blockSec = bH * 3600 + bM * 60 + (bS ?? 0)
         const windowStart = blockSec - preloadMin * 60
-        const windowEnd   = blockSec + COMMERCIAL_CATCH_UP_GRACE_SECONDS
+        const windowEnd   = blockSec + catchUpSec
 
         if (currentSec < windowStart || currentSec > windowEnd) continue
 
@@ -3663,7 +3759,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           window.spotmaster.saveData('spotRotation', workingRotation)
         }
 
-        console.log(`[SpotMaster] Bloco comercial pré-carregado: "${block.name}" (${block.scheduledTime})`)
+        if (isDev) console.log(`[SpotMaster] Bloco comercial pré-carregado: "${block.name}" (${block.scheduledTime})`)
       }
     }
 
@@ -3682,7 +3778,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // depois se um bloco não disparou por causa de relógio do sistema voltando
     // pra trás (NTP, DST, suspender/retomar, etc.). O scheduler já corrige
     // automaticamente — este log só facilita análise.
-    console.log(`[startup] App aberto às ${sessionStartRef.current} — sessionStart anotado.`)
+    if (isDev) console.log(`[startup] App aberto às ${sessionStartRef.current} — sessionStart anotado.`)
     const loadAll = async () => {
       if (!window.spotmaster) {
         dispatch({ type: 'SET_LOADING', payload: false })
@@ -3732,7 +3828,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const _todayHasData = dateSchedulesRaw && typeof dateSchedulesRaw === 'object'
           ? Array.isArray((dateSchedulesRaw as Record<string, unknown>)[today()])
           : false
-        console.log(`[loadAll] disk → ${_datesCount} dia(s) salvo(s), today (${today()}) ${_todayHasData ? 'tem' : 'NÃO tem'} dados | grid keys: ${Object.keys((gridRaw as object) ?? {}).length} | blocos: ${((blocksRaw as unknown[]) ?? []).length}`)
+        if (isDev) console.log(`[loadAll] disk → ${_datesCount} dia(s) salvo(s), today (${today()}) ${_todayHasData ? 'tem' : 'NÃO tem'} dados | grid keys: ${Object.keys((gridRaw as object) ?? {}).length} | blocos: ${((blocksRaw as unknown[]) ?? []).length}`)
+
+        // Verificação de versão de schema — avisa se dados foram gravados por versão diferente
+        const savedVersion = (settingsRaw as AppSettings | null)?.schemaVersion
+        if (savedVersion !== undefined && savedVersion !== SCHEMA_VERSION) {
+          console.warn(`[loadAll] schema version mismatch: disco=${savedVersion}, app=${SCHEMA_VERSION}. Dados podem precisar de migração.`)
+        }
 
         // Migrate old-format blocks (slots[]) to new format (items[])
         const migrateBlock = (b: CommercialBlock): CommercialBlock => {
@@ -3748,11 +3850,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         const rawBlocks = ((blocksRaw as CommercialBlock[]) ?? []).map(migrateBlock)
 
+        // Ao iniciar, nenhum item pode estar em reprodução — reseta 'playing' → 'pending'
+        const resetPlaying = (items: PlaylistItem[]) =>
+          items.map(i => i.status === 'playing' ? { ...i, status: 'pending' as const } : i)
+        const resetSchedules = (raw: Record<string, PlaylistItem[]>) =>
+          Object.fromEntries(Object.entries(raw).map(([d, items]) => [d, resetPlaying(items)]))
+
         dispatch({
           type: 'LOAD_ALL',
           payload: {
             settings:         { ...DEFAULT_SETTINGS, ...(settingsRaw as AppSettings) },
-            playlist:         (playlistRaw as PlaylistItem[])     ?? [],
+            playlist:         resetPlaying((playlistRaw as PlaylistItem[]) ?? []),
             clients:          (clientsRaw as Client[])            ?? [],
             playLog:          (logRaw as PlayLog[])               ?? [],
             commercialBlocks: rawBlocks,
@@ -3760,7 +3868,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             spotRotation:     (rotationRaw as SpotRotation)       ?? {},
             activePanel:      (typeof panelRaw === 'string' ? panelRaw : null) ?? 'playlist',
             weeklyGrid:       { ...DEFAULT_WEEKLY_GRID, ...((gridRaw as WeeklyProgramGrid) ?? {}) },
-            dateSchedules:    (dateSchedulesRaw as Record<string, PlaylistItem[]>) ?? {},
+            dateSchedules:    resetSchedules((dateSchedulesRaw as Record<string, PlaylistItem[]>) ?? {}),
             mediaDurationCache: sanitizeDurationCache(durationCacheRaw),
             vmixCommandLog:    ((vmixCommandLogRaw as VmixCommandLog[]) ?? []).slice(-2000),
             deletedScheduleSlots: (deletedSlotsRaw as Record<string, DeletedScheduleSlot[]>) ?? {},
@@ -4143,7 +4251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume, armedCommercial }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume, armedCommercial, getSchedulerLog: () => [...schedulerLogRef.current] }}>
       {children}
     </AppContext.Provider>
   )

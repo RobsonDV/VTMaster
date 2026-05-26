@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('spotmaster', {
   },
 
   // File operations
+  exportTextFile: (defaultName: string, content: string) =>
+    ipcRenderer.invoke('export-text-file', defaultName, content),
   exportPlaylist: (data: unknown) =>
     ipcRenderer.invoke('export-playlist', data),
   importPlaylist: () =>

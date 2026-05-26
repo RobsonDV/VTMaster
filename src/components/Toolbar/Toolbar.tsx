@@ -4,6 +4,7 @@ import {
   FilePlus,
   FolderOpen,
   Globe,
+  Loader,
   MonitorPlay,
   Moon,
   Plus,
@@ -17,6 +18,7 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { useApp } from '../../store/AppContext'
 import type { AppSettings } from '../../types'
 import Button from '../ui/Button'
@@ -35,6 +37,11 @@ interface ToolbarProps {
 export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseVmixInputs, onToggleMediaBank, mediaBankOpen }: ToolbarProps) {
   const { state, dispatch, t, saveToStorage } = useApp()
   const { settings, vmixStatus, activePanel } = state
+  const [vmixConnecting, setVmixConnecting] = useState(false)
+  const vmixConnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // isVmixConnecting é derivado: só verdadeiro enquanto aguarda E ainda não conectou
+  const isVmixConnecting = vmixConnecting && !vmixStatus.connected
 
   const isPlaylistActive = activePanel === 'playlist'
   const isScheduleActive = activePanel === 'programacao'
@@ -78,10 +85,21 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
   const handleVmixToggle = () => {
     if (!window.spotmaster) return
     if (vmixStatus.connected) {
+      if (vmixConnectTimeoutRef.current) {
+        clearTimeout(vmixConnectTimeoutRef.current)
+        vmixConnectTimeoutRef.current = null
+      }
+      setVmixConnecting(false)
       window.spotmaster.vmixStopPolling()
       dispatch({ type: 'SET_VMIX_STATUS', payload: { connected: false } })
     } else {
+      setVmixConnecting(true)
       window.spotmaster.vmixStartPolling(settings.vmixHost, settings.vmixPort)
+      if (vmixConnectTimeoutRef.current) clearTimeout(vmixConnectTimeoutRef.current)
+      vmixConnectTimeoutRef.current = setTimeout(() => {
+        setVmixConnecting(false)
+        vmixConnectTimeoutRef.current = null
+      }, 8_000)
     }
   }
 
@@ -117,12 +135,13 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
 
         <Button
           className="toolbar-btn"
-          variant={vmixStatus.connected ? 'success' : 'warning'}
+          variant={vmixStatus.connected ? 'success' : isVmixConnecting ? 'secondary' : 'warning'}
           onClick={handleVmixToggle}
-          title={vmixStatus.connected ? t.toolbar.disconnect : t.toolbar.connect}
-          icon={vmixStatus.connected ? <Wifi size={15} /> : <WifiOff size={15} />}
+          disabled={isVmixConnecting}
+          title={vmixStatus.connected ? t.toolbar.disconnect : isVmixConnecting ? 'Conectando ao vMix...' : t.toolbar.connect}
+          icon={vmixStatus.connected ? <Wifi size={15} /> : isVmixConnecting ? <Loader size={15} className="spin" /> : <WifiOff size={15} />}
         >
-          {vmixStatus.connected ? t.toolbar.disconnect : t.toolbar.connect}
+          {vmixStatus.connected ? t.toolbar.disconnect : isVmixConnecting ? 'Conectando...' : t.toolbar.connect}
         </Button>
 
         <div className="toolbar-separator" />

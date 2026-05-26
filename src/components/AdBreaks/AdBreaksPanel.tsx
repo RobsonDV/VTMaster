@@ -10,6 +10,7 @@ import { VMIX_ACTION_COMMANDS } from '../../utils/vmixCommandCatalog'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import PageHeader from '../ui/PageHeader'
+import SchedulerLogWidget from './SchedulerLogWidget'
 import './AdBreaksPanel.css'
 
 const ALL_DAYS   = [0, 1, 2, 3, 4, 5, 6]
@@ -410,6 +411,12 @@ export default function AdBreaksPanel() {
     saveToStorage('settings', next)
   }
 
+  const handleCatchUpChange = (val: number) => {
+    const next = { ...settings, catchUpGraceMinutes: Math.max(0, Math.min(60, val)) }
+    dispatch({ type: 'SET_SETTINGS', payload: next })
+    saveToStorage('settings', next)
+  }
+
   const totalBlockDuration = (block: CommercialBlock) =>
     (block.items ?? []).reduce((acc, item) => {
       if (item.type === 'spot_client') {
@@ -446,6 +453,21 @@ export default function AdBreaksPanel() {
           />
           <span>min antes do horário</span>
         </div>
+
+        {/* Catch-up grace window config */}
+        <div className="ab-preload-row">
+          <Clock size={13} />
+          <span>Janela de catch-up (autoplay comercial)</span>
+          <input
+            type="number" min={0} max={60} value={settings.catchUpGraceMinutes ?? 10}
+            onChange={e => handleCatchUpChange(parseInt(e.target.value) || 0)}
+            className="ab-preload-input"
+          />
+          <span title="0 = dispara apenas no horário exato">min de atraso tolerado</span>
+        </div>
+
+        {/* Diagnostic log */}
+        <SchedulerLogWidget />
 
         {/* New block inline form */}
         {expandedId === 'new' && draft && (

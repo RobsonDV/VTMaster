@@ -708,10 +708,14 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
 
   // ── Auto-read duration for items loaded without metadata (e.g. AutoProg) ────
   const durationReadIds = useRef<Set<string>>(new Set())
+  const durationRetryCount = useRef<Map<string, number>>(new Map())
   // Incrementado após falhas para forçar o useEffect a re-disparar e tentar novamente
   const [durationRetryTick, setDurationRetryTick] = useState(0)
   // Reset when date changes so items on a fresh date get their durations read
-  useEffect(() => { durationReadIds.current.clear() }, [selectedDate])
+  useEffect(() => {
+    durationReadIds.current.clear()
+    durationRetryCount.current.clear()
+  }, [selectedDate])
   useEffect(() => {
     // IMPORTANTE: não usar flag 'active' para bloquear o .then() inteiro.
     // Quando áudios (rápidos) terminam e disparam dispatch, o useEffect é
@@ -746,15 +750,20 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
       // Limpeza de IDs falhos SEMPRE executa (independente de mounted).
       // Sem isso, IDs de vídeos que deram timeout ficam presos no set e
       // nunca são re-tentados — inclusive após regerar a playlist em merge mode.
-      let hadFailures = false
+      let hadRetryable = false
       for (const item of toRead) {
         if (!succeededIds.has(item.id)) {
-          durationReadIds.current.delete(item.id)
-          hadFailures = true
+          const attempts = (durationRetryCount.current.get(item.id) ?? 0) + 1
+          durationRetryCount.current.set(item.id, attempts)
+          if (attempts < 3) {
+            durationReadIds.current.delete(item.id)
+            hadRetryable = true
+          }
+          // após 3 tentativas o ID permanece em durationReadIds → não tenta mais
         }
       }
       // setDurationRetryTick muda estado → só chamar se ainda montado
-      if (hadFailures && mounted) setTimeout(() => setDurationRetryTick(t => t + 1), 5_000)
+      if (hadRetryable && mounted) setTimeout(() => setDurationRetryTick(t => t + 1), 5_000)
       if (Object.keys(cacheUpdates).length > 0) {
         dispatch({ type: 'UPSERT_MEDIA_DURATIONS', payload: cacheUpdates })
       }

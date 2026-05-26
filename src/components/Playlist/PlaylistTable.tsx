@@ -3,7 +3,7 @@ import { Play, ListVideo, Square, Edit2, Trash2, CheckCircle, SkipForward, Chevr
 import { useApp } from '../../store/AppContext'
 import { usePlaybackProgress } from '../../store/playbackProgress'
 import type { PlaylistItem, PlayLog, VmixInput, SpotType } from '../../types'
-import { formatDuration, formatTime, now, today } from '../../utils/time'
+import { formatDuration, now, today } from '../../utils/time'
 import { spotTypeForVmix } from '../../utils/vmixInputs'
 import ContextMenu, { type ContextMenuState } from './ContextMenu'
 import './PlaylistTable.css'
@@ -576,7 +576,7 @@ export default function PlaylistTable({ onEditItem, onInsertVmixAction, onInsert
           <div className="playlist-footer">
             <span>{playlist.length} {t.playlist.itemCount}</span>
             <span className="footer-sep">·</span>
-            <span>{t.playlist.totalDuration}: <strong>{formatTime(totalDuration)}</strong></span>
+            <span>{t.playlist.totalDuration}: <strong>{formatDuration(totalDuration)}</strong></span>
             <span className="footer-sep">·</span>
             <span style={{ color: 'var(--success)' }}>{playlist.filter(i => i.status === 'done').length} {t.statuses.done.toLowerCase()}</span>
             <span className="footer-sep">·</span>
