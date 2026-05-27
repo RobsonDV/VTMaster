@@ -1,4 +1,4 @@
-# VTMaster v5.5.37
+# VTMaster v5.5.38
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -19,6 +19,7 @@ O VTMaster automatiza a execução da grade de programação diária, incluindo:
 - **Scheduler comercial robusto** (v5.5.36): `firedCommercialTimesRef` (Set persistido no localStorage por dia) elimina disparos duplos após crash/reinício; `catchUpGraceMinutes` configurável
 - **Widget de diagnóstico do scheduler** (v5.5.36): painel colapsável com os últimos 60 eventos (info/warn/error), exportação .txt para suporte
 - **Autoplay Comercial inicia do zero** (v5.5.37): hotfix crítico — app idle agora arranca a programação automaticamente quando chega a hora do bloco (stateRef stale fix + startScheduleFromItem)
+- **Scheduler libera blocos antigos automaticamente** (v5.5.38): bloco antigo pendente (ex: AudioOff 19:08 sem arquivo) não bloqueia mais blocos posteriores — quando bloqueado pelo guard de session start, é marcado como disparado e o próximo tick processa o bloco válido
 - Comercial Pro: campanhas (padrão e rotativo), distribuição automática, relatório por campanha
 - Log de veiculação, relatórios PDF/CSV
 - Auto-update via GitHub Releases (electron-updater)

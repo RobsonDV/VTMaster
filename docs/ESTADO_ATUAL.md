@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **26/05/2026** — Versão **5.5.37** — Hotfix crítico: Autoplay Comercial agora inicia a programação do zero quando o app está idle e chega a hora do bloco
+> Atualizado em **27/05/2026** — Versão **5.5.38** — Bloco comercial antigo pendente não bloqueia mais blocos posteriores no scheduler e chega a hora do bloco
 
 ---
 
@@ -2479,4 +2479,51 @@ if (!stateRef.current.isSequencePlaying) {
 - **Autoplay Comercial ON + app idle**: quando chega a hora do bloco e há arquivos disponíveis, a programação **arranca automaticamente** a partir do primeiro item do bloco comercial
 - **`firedCommercialTimesRef.add()`** só é chamado após confirmação de que a tentativa de iniciar foi executada — sem mais bloqueio permanente por tentativa frustrada
 - **Deps de `useCallback`** do scheduler comercial: substituído `startSchedule` por `startScheduleFromItem`
+
+---
+
+### 28.7 v5.5.38 — Scheduler: bloco antigo não bloqueia mais blocos posteriores
+
+**Data:** 27/05/2026
+
+#### Problema identificado em produção
+
+Screenshot do operador: bloco 19:35 armado ("BLOCO @19:35 ARMADO em 0s"), vMix conectado, Autoplay ON — mas nada disparou.
+
+#### Causa raiz
+
+O scheduler comercial determina o `triggerTime` assim:
+```typescript
+const triggerTime = scheduledDue.map(i => i.scheduledTime!).sort()[0]
+```
+Pega o **mais antigo** de todos os itens comerciais pendentes. Se havia um bloco em 19:08 (ex: "AudioOff" VMX action) ainda pendente no schedule, `triggerTime = "19:08"`.
+
+Em seguida, o guard de session start:
+```typescript
+} else if (triggerSec < sessionSec - graceSec) {
+  return  // ← retornava aqui sem processar 19:35
+}
+```
+
+Se o app abriu depois de 19:18 (19:08 + 10min grace), o bloco de 19:08 era bloqueado pelo guard — e o scheduler retornava sem nunca verificar o 19:35. O bloco antigo bloqueava **todos os blocos posteriores para sempre** a cada tick de 1s.
+
+#### Fix aplicado
+
+Quando o session start guard bloqueia um `triggerTime` stale, ele é adicionado a `firedCommercialTimesRef` antes de retornar:
+
+```typescript
+} else if (triggerSec < sessionSec - graceSec) {
+  // ...log...
+  // Marca como "disparado" — próximo tick pula este e processa o bloco válido
+  firedCommercialTimesRef.current.add(triggerTime)
+  persistFiredTimes()
+  return
+}
+```
+
+No próximo tick (1s depois), "19:08" já está no fired set → skip → `triggerTime = "19:35"` → dispara normalmente.
+
+#### Garantia adicionada
+
+- Um único bloco antigo pendente (VMX action sem arquivo, item "sem arquivo", qualquer item bloqueado pelo session guard) nunca mais bloqueia blocos do restante do dia
 

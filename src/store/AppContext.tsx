@@ -3478,9 +3478,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // Não retorna — segue o tick com o sessionStart corrigido.
         } else if (triggerSec < sessionSec - graceSec) {
           const atraso = Math.round((sessionSec - graceSec - triggerSec) / 60)
-          const msg = `bloco @${triggerTime} ignorado: ${atraso} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s.`
+          const msg = `bloco @${triggerTime} ignorado: ${atraso} min antes do sessionStart (${sessionStart}). Grace=${graceSec}s. Marcado como disparado para liberar blocos posteriores.`
           console.warn(`[autoplay-com] ${msg}`)
           addSchedulerLog('warn', msg)
+          // CRÍTICO: marca como "disparado" para que o próximo tick (1s depois) pule
+          // este horário stale e chegue a processar blocos com horários mais recentes.
+          // Sem isto, um bloco antigo ainda pendente (ex: 19:08 AudioOff) bloqueia
+          // TODOS os blocos posteriores — o scheduler retornava aqui para sempre.
+          firedCommercialTimesRef.current.add(triggerTime)
+          persistFiredTimes()
           return
         }
         // ── Reaproveita o arming pré-carregado, se for o mesmo bloco ──────
