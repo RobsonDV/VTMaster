@@ -1,6 +1,6 @@
 # VTMaster — Índice da Documentação
 
-> Versão **5.5.38** — Atualizado em **27/05/2026** — Bloco comercial antigo pendente não bloqueia mais blocos posteriores no scheduler (session-start guard agora marca stale como fired)
+> Versão **5.5.39** — Atualizado em **31/05/2026** — Guard de reentrância no `runSequence` elimina disparo duplo quando os schedulers musical e comercial coincidem na mesma janela de 1s
 
 ---
 

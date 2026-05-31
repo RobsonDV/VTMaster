@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **27/05/2026** — Versão **5.5.38** — Bloco comercial antigo pendente não bloqueia mais blocos posteriores no scheduler e chega a hora do bloco
+> Atualizado em **31/05/2026** — Versão **5.5.39** — Guard de reentrância no `runSequence` elimina disparo duplo quando os schedulers musical e comercial coincidem na mesma janela
 
 ---
 
@@ -2526,4 +2526,41 @@ No próximo tick (1s depois), "19:08" já está no fired set → skip → `trigg
 #### Garantia adicionada
 
 - Um único bloco antigo pendente (VMX action sem arquivo, item "sem arquivo", qualquer item bloqueado pelo session guard) nunca mais bloqueia blocos do restante do dia
+
+---
+
+## Seção 29 — v5.5.39: Guard de reentrância no runSequence (31/05/2026)
+
+### Problema identificado em auditoria
+
+Os dois schedulers do motor — autoPlay musical (itens sem `adBreakId`) e autoplay comercial (blocos com `adBreakId`) — rodam em `setInterval` de 1s **independentes**. Quando um item musical e um bloco comercial ficam *due* na mesma janela de 1s, ambos os caminhos de início (`startSequence` / `startSchedule` / `startScheduleFromItem`) podiam ser chamados quase simultaneamente.
+
+### Causa raiz
+
+Todos os caminhos de start fazem o guard `if (stateRef.current.isSequencePlaying) return`. Mas o `dispatch({ type: 'SET_SEQUENCE_PLAYING', payload: true })` do React é **assíncrono** — só é processado no próximo render. No instante da corrida, `stateRef.current.isSequencePlaying` ainda é `false` para os dois chamadores, então os dois passam pelo guard e chamam `runSequence()`. Resultado: **dois loops `runSequence` concorrentes lendo a mesma fila** → `Cut` duplicado no vMix, inputs fantasma e itens marcados em dobro (sintoma "repete / dispara duplo").
+
+### Fix aplicado
+
+Ref síncrono `runSequenceActiveRef` em `src/store/AppContext.tsx`:
+
+```typescript
+const runSequence = useCallback(async () => {
+  // Guard de reentrância: se um loop já está rodando, não inicia um segundo.
+  if (runSequenceActiveRef.current) return
+  runSequenceActiveRef.current = true
+  sequenceEndedRef.current = false
+  try {
+    while (true) { /* ...loop de playout... */ }
+  } finally {
+    runSequenceActiveRef.current = false  // libera em QUALQUER saída
+  }
+}, [...])
+```
+
+Por ser ref (síncrono), bloqueia a segunda entrada **imediatamente**, sem depender de render. O `try/finally` garante que o guard é liberado em qualquer caminho de saída (break, fim natural, erro não capturado) — um throw nunca deixa o motor "travado".
+
+### Garantia adicionada
+
+- Em nenhuma janela de coincidência de schedulers o playout dispara dois loops concorrentes — fim do `Cut` duplicado / inputs fantasma por corrida de scheduler.
+- Validado: `tsc -b` 0 erros, `eslint .` 0 problemas, `vite build` OK. Publicado como release v5.5.39 (auto-update via GitHub Releases).
 

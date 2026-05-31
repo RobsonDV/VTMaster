@@ -1,4 +1,4 @@
-# VTMaster v5.5.38
+# VTMaster v5.5.39
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
