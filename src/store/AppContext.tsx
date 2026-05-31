@@ -889,6 +889,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // "fantasma" no vMix quando o usuário aciona Stop Next durante o preload.
   const sequenceEndedRef = useRef(true)
 
+  // Guard de reentrância do runSequence. true enquanto o while-loop está vivo.
+  // Os dois schedulers (autoPlay musical + comercial) rodam em intervalos de 1s
+  // independentes; quando um item musical e um comercial ficam "due" na mesma
+  // janela, ambos os caminhos de start podem chamar runSequence antes do
+  // dispatch de SET_SEQUENCE_PLAYING ser processado (dispatch é assíncrono, então
+  // stateRef.current.isSequencePlaying ainda é false nos dois). Dois loops
+  // concorrentes na mesma fila causam Cut duplicado, inputs fantasma e itens
+  // marcados em dobro (sintoma "repete/dispara duplo"). Este ref é síncrono e
+  // bloqueia a segunda entrada imediatamente.
+  const runSequenceActiveRef = useRef(false)
+
   // Tracks which queue (playlist or daySchedule) runSequence is reading from.
   // Changed by startSequence() and startSchedule() before invoking runSequence().
   const activeQueueRef = useRef<'playlist' | 'schedule'>('playlist')
@@ -2299,7 +2310,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   //   - The sequence only stops when there are genuinely no more pending items
   //     (or stopPlayback() sets abortRef).
   const runSequence = useCallback(async () => {
+    // Guard de reentrância: se um loop já está rodando, não inicia um segundo.
+    // Protege contra dois schedulers (musical + comercial) chamando start na
+    // mesma janela de 1s antes do dispatch de isSequencePlaying ser processado.
+    if (runSequenceActiveRef.current) {
+      if (isDev) console.warn('[runSequence] já há um loop ativo — ignorando segunda entrada (corrida de scheduler)')
+      return
+    }
+    runSequenceActiveRef.current = true
     sequenceEndedRef.current = false  // sinaliza que estamos ativos para preloads em voo
+    try {
     while (true) {
       // ── Handle abort ─────────────────────────────────────────────────────
       if (abortRef.current) {
@@ -2488,6 +2508,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     if (window.spotmaster) window.spotmaster.vmixStopFastPolling()
+    } finally {
+      // Libera o guard de reentrância qualquer que seja o caminho de saída
+      // (break, fim natural, erro não capturado). Sem isto um throw deixaria
+      // o motor "travado" achando que ainda há um loop ativo — e nenhuma nova
+      // sequência iniciaria até recarregar o app.
+      runSequenceActiveRef.current = false
+    }
   }, [dispatch, playItem, cleanupInputs, removeOwnedInput, addSchedulerLog])
 
   // ── Sequence controls ──────────────────────────────────────────────────────
