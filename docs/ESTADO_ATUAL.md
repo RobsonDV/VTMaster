@@ -2694,3 +2694,17 @@ material de fato (ex.: 21:00), ignorando o 07:30 vazio.
 
 **Validação:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros.
 
+### Como o Autostart escolhe o horário (esclarecimento)
+
+O horário mostrado/disparado é **100% dinâmico, baseado na programação do dia** — não há
+nenhum horário fixo no código. A cada tick, tanto o countdown (StatusBar) quanto o scheduler:
+1. varrem `dateSchedules[hoje]`;
+2. mantêm só itens `pending` **com conteúdo real** (arquivo/input/ação vMix);
+3. dentro da janela de tolerância (futuro ou ≤5 min vencido);
+4. pegam o **mais cedo** por `scheduledTime`.
+
+Consequência prática: se o operador programar um bloco com material para o meio-dia, o
+countdown passa automaticamente a apontar **12:00** (por ser mais cedo que 21:00) e o
+Autostart inicia esse bloco ao meio-dia — sem qualquer ajuste manual. A única condição é o
+bloco ter conteúdo de verdade; slots vazios da grade são ignorados de propósito.
+

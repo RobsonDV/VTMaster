@@ -23,6 +23,10 @@
 - **Autostart** (`settings.autoStart`): cold-start independente. Liga a programação no
   horário do bloco com o app parado, janela de tolerância **5 min**. Dono único do início
   a partir do idle (o `autoplayComerciais` não faz mais cold-start quando Autostart ON).
+  **Horário 100% dinâmico** (não há horário fixo no código): varre `dateSchedules[hoje]`,
+  filtra itens `pending` com conteúdo real (arquivo/input/ação vMix; ignora placeholders
+  vazios e pausas), e pega o **mais cedo**. Programar um bloco com material para qualquer
+  hora (ex.: meio-dia) faz o gatilho/countdown apontarem para ela automaticamente.
 - **Autoplay Comercial** (`settings.autoplayComerciais`): dispara/interrompe para blocos
   comerciais **com a sequência já tocando**.
 - **Playlist Contínua** (`settings.continuousPlayback`): após o bloco, segue a playlist.
@@ -44,6 +48,15 @@
 ---
 
 ## Registro (mais recente primeiro)
+
+### 2026-06-02 — Esclarecimento: como o Autostart escolhe o horário (sem mudança de código)
+- Dúvida do operador: "ele aponta 21h porque eu disse, ou porque achou o item? Se eu
+  programar pro meio-dia ele entende?"
+- Resposta documentada: o horário é **dinâmico**, lido da programação do dia — não há horário
+  fixo no código. O countdown/scheduler pegam o item `pending` **mais cedo com conteúdo real**
+  (arquivo/input/ação vMix), dentro da janela de 5 min. Programar um bloco com material para
+  o meio-dia faz o Autostart apontar/disparar às 12:00 automaticamente. Slots vazios são
+  ignorados (corrigido na v5.5.43). Detalhe em `docs/ESTADO_ATUAL.md` §33.
 
 ### 2026-06-02 — v5.5.43: Autostart ignora blocos vazios
 - **Reportado:** com a programação vazia (só o 1º bloco real às 21:00), o Autostart marcava
