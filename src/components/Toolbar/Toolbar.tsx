@@ -13,6 +13,7 @@ import {
   Save,
   Settings,
   Sun,
+  Timer,
   Trash2,
   Wifi,
   WifiOff,
@@ -60,6 +61,12 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
 
   const toggleContinuousPlayback = () => {
     const next: AppSettings = { ...settings, continuousPlayback: !settings.continuousPlayback }
+    dispatch({ type: 'SET_SETTINGS', payload: next })
+    saveToStorage('settings', next)
+  }
+
+  const toggleAutoStart = () => {
+    const next: AppSettings = { ...settings, autoStart: !settings.autoStart }
     dispatch({ type: 'SET_SETTINGS', payload: next })
     saveToStorage('settings', next)
   }
@@ -226,6 +233,18 @@ export default function Toolbar({ onAddItem, onAddAdBreak, onSettings, onBrowseV
                 icon={<Zap size={14} />}
               >
                 {settings.triggerEnabled ? t.toolbar.disparoOn : t.toolbar.disparoOff}
+              </Button>
+
+              <Button
+                className="toolbar-btn"
+                variant={settings.autoStart ? 'success' : 'secondary'}
+                onClick={toggleAutoStart}
+                title={settings.autoStart
+                  ? 'Autostart ON — inicia a programação sozinho no horário do 1º item (ou do item vencido agora)'
+                  : 'Autostart OFF — a programação só inicia manualmente'}
+                icon={<Timer size={14} />}
+              >
+                {settings.autoStart ? t.toolbar.autostartOn : t.toolbar.autostartOff}
               </Button>
 
               <Button

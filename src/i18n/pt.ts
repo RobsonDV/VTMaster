@@ -35,6 +35,8 @@ const pt = {
     disparoOff: 'Disparo OFF',
     autoplayComerciaisOn: 'Autoplay Comerc. ON',
     autoplayComerciaisOff: 'Autoplay Comerc. OFF',
+    autostartOn: 'Autostart ON',
+    autostartOff: 'Autostart OFF',
   },
 
   // Playlist

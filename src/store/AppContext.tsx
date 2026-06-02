@@ -78,6 +78,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   triggerEnabled: false,
   triggerKey: null,
   autoplayComerciais: false,
+  autoStart: false,
   preloadMinutes: 5,
   continuousPlayback: false,
   gcMusicEnabled: false,
@@ -820,6 +821,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ghost inputs accumulate in the vMix project. Permanent vMix inputs
   // (inputName) never pass through loadNewInput, so they are never in this Set.
   const spotmasterGuidsRef = useRef<Set<string>>(new Set())
+  // Mutex de carregamento: serializa loadNewInput para que NUNCA haja dois
+  // AddInput+poll em voo ao mesmo tempo. Sem isto, o arming comercial (2s) e o
+  // preload musical antecipado podem disparar AddInput juntos e o pollForNewInput
+  // cruzar os GUIDs → input errado vai ao PGM no horário do bloco.
+  const loadLockRef = useRef<Promise<void>>(Promise.resolve())
   // Set by disparo() during active playback — signals runSequence to skip
   // current item and continue to the next, without fully stopping.
   const disparoInterruptRef = useRef<boolean>(false)
@@ -876,6 +882,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // same JS event-loop tick. The second scheduler returns immediately if the
   // first hasn't finished yet, avoiding double writes to scheduleInterruptTimeRef.
   const schedulerFiringRef = useRef(false)
+  // Reentrância do scheduler de Autostart (cold-start). startScheduleFromNow é
+  // síncrono mas isSequencePlaying só vira true após o dispatch ser processado;
+  // este flag impede dois ticks de 1s dispararem o início ao mesmo tempo.
+  const autoStartFiringRef = useRef(false)
   // High-water mark: runSequence never selects items with order < this value.
   // Updated when a commercial fires automatically — pending musical items from
   // the interrupted block stay 'pending' (visible in the timeline) but are bypassed.
@@ -1610,24 +1620,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Polls until a new input appears after AddInput.
   // Returns the input's GUID (key attribute) — stable across renumbering.
   // Aceita tanto <input ...>content</input> quanto <input ... /> (self-closing).
-  const pollForNewInput = useCallback(async (knownKeys: Set<string>): Promise<string | null> => {
+  //
+  // CRÍTICO: quando dois AddInput acontecem em janelas próximas (ex.: arming de
+  // bloco comercial + preload musical antecipado), o vMix mostra DUAS keys novas
+  // ao mesmo tempo. Retornar "a primeira key desconhecida" pode devolver o GUID
+  // do input ERRADO → PreviewInput+Cut jogam um input aleatório no PGM e o
+  // comercial só entra segundos depois (bug reportado). Por isso, quando o
+  // filePath é conhecido, casamos a key nova pelo basename do arquivo (atributo
+  // `title` da tag <input>, que o vMix define como o nome do arquivo). Só caímos
+  // no fallback "primeira key nova" quando filePath não foi informado.
+  const pollForNewInput = useCallback(async (
+    knownKeys: Set<string>,
+    filePath?: string,
+  ): Promise<string | null> => {
+    // basename e basename-sem-extensão para casar contra o title do vMix
+    const base = filePath ? filePath.split(/[\\/]/).pop() ?? '' : ''
+    const baseLower = base.toLowerCase()
+    const baseNoExtLower = baseLower.replace(/\.[^.]+$/, '')
+
     for (let attempt = 0; attempt < 100; attempt++) {
       await sleep(200)
       if (!window.spotmaster) return null
       const st = await requestVmixXml()
       if (st.success && st.data) {
         const tags = [...st.data.matchAll(/<input\b([^>]*?)\/?>/gi)]
+        let firstUnknown: string | null = null
         for (const tag of tags) {
           const attrs = tag[1]
           const keyM = attrs.match(/\bkey="([^"]+)"/i)
-          if (keyM && !knownKeys.has(keyM[1])) {
-            return keyM[1]  // return GUID — never changes when vMix renumbers
+          if (!keyM || knownKeys.has(keyM[1])) continue
+          const key = keyM[1]
+          if (!firstUnknown) firstUnknown = key
+          // Sem filePath: comportamento antigo (primeira key nova).
+          if (!baseLower) return key
+          // Com filePath: exige correspondência do title com o arquivo pedido.
+          const titleM = attrs.match(/\btitle="([^"]*)"/i)
+          const titleLower = (titleM?.[1] ?? '').toLowerCase()
+          if (titleLower && (titleLower.includes(baseLower) || titleLower.includes(baseNoExtLower))) {
+            return key
           }
         }
+        // filePath informado mas nenhuma key nova casou ainda. NÃO retornamos
+        // firstUnknown aqui — pode ser o input de OUTRO load concorrente. Segue
+        // pollando; o input certo aparece/atualiza o title nos próximos ticks.
       }
     }
     return null
-  }, [])  
+  }, [])
 
   // Polls até o state de um input específico ficar pronto pra tocar.
   // vMix v28/29 mantém state="Loading" enquanto decodifica o arquivo; PlayInput
@@ -1738,36 +1777,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Returns the input's GUID (stable — never changes when vMix renumbers).
   const loadNewInput = useCallback(async (filePath: string, meta?: VmixCommandMeta): Promise<string | null> => {
     if (!window.spotmaster) return null
-    const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
-    const isImage = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
-    const isAudio = ['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'].includes(ext)
-    const vmixType = isImage ? 'Image' : isAudio ? 'AudioFile' : 'Video'
 
-    const knownKeys = await getInputKeys()
-    const addResult = await executeVmixCommand('AddInput', {
-      value: `${vmixType}|${filePath}`,
-      meta: { source: 'load-input', ...meta },
-    })
-    if (!addResult.success) return null
-    const guid = await pollForNewInput(knownKeys)  // returns GUID
-    if (!guid) return null
-    spotmasterGuidsRef.current.add(guid)  // register so we can clean up later
-    // Aguarda o vMix terminar de carregar/decodar o arquivo antes de tocar.
-    // Sem isso, PlayInput pode chegar enquanto state="Loading" e ser ignorado
-    // silenciosamente — o input aparece no vMix mas não inicia a reprodução.
-    if (!isImage) {
-      const ready = await waitForInputReady(guid, 6000)
-      if (!ready) {
-        // Fallback: dá mais tempo absoluto pra arquivos lentos antes de desistir
-        await sleep(1000)
-      }
-      await executeVmixCommand('SetPosition', {
-        input: guid,
-        value: '0',
+    // ── Mutex: garante UM AddInput+poll por vez ─────────────────────────────
+    // Encadeia nesta promise de modo que dois callers concorrentes (arming
+    // comercial + preload musical) rodem em série. Assim, ao capturar
+    // knownKeys e pollar a key nova, só existe UM input nosso em voo — o
+    // pollForNewInput não tem como cruzar GUIDs.
+    const prev = loadLockRef.current
+    let release!: () => void
+    loadLockRef.current = new Promise<void>(r => { release = r })
+    try {
+      await prev
+    } catch { /* ignora rejeição do load anterior */ }
+
+    try {
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
+      const isImage = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
+      const isAudio = ['mp3','wav','aac','ogg','flac','m4a','wma','opus','aiff'].includes(ext)
+      const vmixType = isImage ? 'Image' : isAudio ? 'AudioFile' : 'Video'
+
+      const knownKeys = await getInputKeys()
+      const addResult = await executeVmixCommand('AddInput', {
+        value: `${vmixType}|${filePath}`,
         meta: { source: 'load-input', ...meta },
       })
+      if (!addResult.success) return null
+      // Passa filePath para casar a key nova pelo arquivo (não "primeira nova").
+      const guid = await pollForNewInput(knownKeys, filePath)  // returns GUID
+      if (!guid) return null
+      spotmasterGuidsRef.current.add(guid)  // register so we can clean up later
+      // Aguarda o vMix terminar de carregar/decodar o arquivo antes de tocar.
+      // Sem isso, PlayInput pode chegar enquanto state="Loading" e ser ignorado
+      // silenciosamente — o input aparece no vMix mas não inicia a reprodução.
+      if (!isImage) {
+        const ready = await waitForInputReady(guid, 6000)
+        if (!ready) {
+          // Fallback: dá mais tempo absoluto pra arquivos lentos antes de desistir
+          await sleep(1000)
+        }
+        await executeVmixCommand('SetPosition', {
+          input: guid,
+          value: '0',
+          meta: { source: 'load-input', ...meta },
+        })
+      }
+      return guid
+    } finally {
+      release()
     }
-    return guid
   }, [getInputKeys, pollForNewInput, waitForInputReady])
 
   // ── cleanupInputs ───────────────────────────────────────────────────────────
@@ -2478,18 +2535,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       removeOwnedInput(unusedPreload.guid, { source: 'discard-unused-preload', queue: 'system' })
     }
 
-    // cleanupInputs reads activeInputRef internally, then zeros it.
-    // Do NOT zero activeInputRef before this call or it will remove nothing.
-    if (!abortRef.current) cleanupInputs(5000)
-    else activeInputRef.current = ''
+    // ── Preserva o input no ar ao encerrar ───────────────────────────────
+    // Quando a sequência termina (pause, stop, fim de bloco ou fim natural),
+    // o último item NÃO deve ser removido do vMix — removê-lo faz o vMix pular
+    // o output para outro input (o "input aleatório" reportado no Stop e na
+    // Pausa). Deixamos o input no ar carregado; ele é substituído naturalmente
+    // pela transição do próximo playItem quando a execução recomeçar. Só os
+    // DEMAIS GUIDs órfãos (preloads, anteriores) são removidos. Inputs
+    // permanentes (câmera) nunca entram no Set, então são 100% seguros.
+    // activeInputRef NÃO é zerado — continua apontando para o input no ar.
+    const onAir = activeInputRef.current
 
-    // Full sweep: remove every GUID loaded by SpotMaster this session.
-    // This catches any input that escaped individual cleanup (abort, error, etc.)
-    // and prevents ghost inputs from accumulating in the vMix project.
-    // Permanent vMix inputs are never in this Set — they are 100% safe.
+    // Full sweep: remove todo GUID do SpotMaster desta sessão, EXCETO o que
+    // está no ar. Captura inputs que escaparam da limpeza individual sem
+    // derrubar o output.
     if (window.spotmaster) {
       const allGuids = [...spotmasterGuidsRef.current]
       for (const g of allGuids) {
+        if (g && g === onAir) continue
         removeOwnedInput(g, { source: 'sequence-full-sweep', queue: 'system' })
       }
     }
@@ -2515,7 +2578,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // sequência iniciaria até recarregar o app.
       runSequenceActiveRef.current = false
     }
-  }, [dispatch, playItem, cleanupInputs, removeOwnedInput, addSchedulerLog])
+  }, [dispatch, playItem, removeOwnedInput, addSchedulerLog])
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
@@ -2844,19 +2907,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.spotmaster?.clearPlaybackSnapshot?.()
     if (window.spotmaster) {
       await window.spotmaster.vmixStopFastPolling()
+      // ── PRESERVA o input no ar ──────────────────────────────────────────
+      // O Stop deve PARAR a execução deixando o último input no output do vMix
+      // — NÃO trocar para outro input. Versões anteriores faziam cleanupInputs +
+      // "full sweep" que davam RemoveInput em TODOS os GUIDs, inclusive o que
+      // estava no PGM; remover o input ativo faz o vMix pular o output para
+      // outro input (o "input aleatório" reportado). Aqui capturamos o GUID no
+      // ar e o EXCLUÍMOS de toda limpeza, mantendo-o carregado e visível.
+      // activeInputRef é preservado: a transição do próximo playItem remove
+      // este input naturalmente quando o operador iniciar a próxima execução.
+      const onAir = activeInputRef.current
       // Discard any in-progress preload so it doesn't linger in vMix
       const pre = preloadedInputRef.current
-      if (pre) {
+      if (pre && pre.guid !== onAir) {
         preloadedInputRef.current = null
         removeOwnedInput(pre.guid, { source: 'stop-discard-preload', queue: 'system' })
+      } else if (pre) {
+        preloadedInputRef.current = null
       }
-      cleanupInputs(0)
-      // Full sweep: remove every GUID loaded by SpotMaster this session.
-      // Catches anything that escaped individual cleanup on abort/stop.
+      // Full sweep: remove todo GUID carregado pelo SpotMaster nesta sessão,
+      // EXCETO o que está no ar. Captura inputs órfãos (preloads, anteriores,
+      // arming) sem derrubar o output.
       const allGuids = [...spotmasterGuidsRef.current]
       for (const g of allGuids) {
+        if (g === onAir) continue
         removeOwnedInput(g, { source: 'stop-full-sweep', queue: 'system' })
       }
+      // NÃO zera activeInputRef — o input no ar continua sendo "dono" do PGM.
     }
     getQueue()
       .filter(i => i.status === 'playing')
@@ -2870,7 +2947,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       )
       dispatch({ type: 'REORDER_DATE_SCHEDULE', payload: { date: todayStr, items: fixed } })
     }
-  }, [dispatch, cleanupInputs, removeOwnedInput, setArmedCommercial])
+  }, [dispatch, removeOwnedInput, setArmedCommercial])
 
   // ── skipToNext ───────────────────────────────────────────────────────────────
   // Manual "Next" button: loads the next pending item into vMix Preview, lets
@@ -3554,6 +3631,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         if (!stateRef.current.isSequencePlaying) {
+          // ── Guarda anti-corrida com o Autostart ──────────────────────────
+          // Quando o Autostart está ligado, ELE é o dono único do cold-start
+          // (inicia a grade do 1º item / item vencido agora). Se o comercial
+          // também iniciasse aqui, haveria duplo disparo e ele pularia tudo
+          // antes do bloco. Então, com autoStart ON, não iniciamos do idle —
+          // deixamos o scheduler de Autostart ligar a programação. O arming
+          // pré-carregado continua válido e será aproveitado quando o bloco
+          // chegar dentro da sequência já em andamento.
+          if (stateRef.current.settings.autoStart) return
           // Inicia a Programação a partir do primeiro item do bloco comercial.
           // Usa startScheduleFromItem (não startSchedule) para:
           //  1. Ser explícito sobre de onde inicia (não depende de scheduledDue interno)
@@ -3586,6 +3672,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 1000)
     return () => clearInterval(interval)
   }, [state.isLoading, startScheduleFromItem, expandBlockItems, dispatch, setArmedCommercial, removeOwnedInput, addSchedulerLog, persistFiredTimes])
+
+  // ── Scheduler: Autostart (cold-start da programação) ───────────────────────
+  // Com o programa PARADO (idle) e Autostart ligado, inicia a Programação do Dia
+  // sozinho quando o horário de um bloco chega — DENTRO de uma janela de
+  // tolerância de 5 min. Se o bloco venceu há MAIS de 5 min (ex.: app abriu
+  // atrasado, queda de luz prolongada), o Autostart NÃO o toca: apenas o ignora
+  // e espera o próximo bloco no horário — evita colocar no ar material fora de
+  // hora. Os itens do bloco pulado ficam pendentes (não são marcados como
+  // executados); serão marcados 'skipped' naturalmente quando o próximo bloco
+  // iniciar via startScheduleFromNow.
+  //
+  // É o dono ÚNICO do cold-start: o scheduler comercial não inicia do idle
+  // enquanto autoStart estiver ON (guarda no ramo idle daquele scheduler).
+  // Durante a execução, o autoplayComerciais segue cuidando dos blocos.
+  useEffect(() => {
+    if (state.isLoading) return
+    const AUTOSTART_TOLERANCE_SEC = 5 * 60
+    const toSec = (hhmmss: string) => {
+      const [h, m, s] = hhmmss.split(':').map(Number)
+      return h * 3600 + m * 60 + (s ?? 0)
+    }
+    const interval = setInterval(() => {
+      if (autoStartFiringRef.current) return
+      if (!stateRef.current.settings.autoStart) return
+      if (stateRef.current.isSequencePlaying) return        // só age no idle
+      if (!stateRef.current.vmixStatus.connected) return     // sem vMix não há playout
+
+      const todayStr = today()
+      const schedule = stateRef.current.dateSchedules[todayStr] ?? []
+      // Itens pendentes COM horário. Itens sem scheduledTime não disparam o
+      // cold-start sozinhos (são manuais/encaixes).
+      const timedPending = schedule.filter(
+        i => i.status === 'pending' && !!i.scheduledTime,
+      )
+      if (timedPending.length === 0) return
+
+      const nowSec = toSec(now())
+      // Bloco "atual" = horário mais recente, entre os itens pendentes, que já
+      // venceu (<= agora). Se nada venceu ainda, espera (não inicia precoce).
+      const dueTimes = timedPending
+        .map(i => i.scheduledTime!)
+        .filter(t => toSec(t) <= nowSec)
+        .sort()
+      const currentBlockTime = dueTimes[dueTimes.length - 1]
+      if (!currentBlockTime) return
+
+      // Janela de tolerância: só inicia se estamos dentro de [horário, +5min].
+      // Venceu há mais de 5 min → pula e espera o próximo bloco.
+      if (nowSec - toSec(currentBlockTime) > AUTOSTART_TOLERANCE_SEC) return
+
+      autoStartFiringRef.current = true
+      try {
+        const msg = `Autostart: iniciando a programação (idle → startScheduleFromNow) — bloco @${currentBlockTime.slice(0, 5)} dentro da janela de 5 min`
+        if (isDev) console.log(`[autostart] ${msg}`)
+        addSchedulerLog('info', msg)
+        startScheduleFromNow()
+      } finally {
+        // Libera no próximo tick — isSequencePlaying já terá virado true e
+        // bloqueará reentradas. Se startScheduleFromNow não iniciou nada (ex.:
+        // sem item pending após skip), o flag volta e tentamos no tick seguinte.
+        setTimeout(() => { autoStartFiringRef.current = false }, 1500)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [state.isLoading, startScheduleFromNow, addSchedulerLog])
 
   // ── Scheduler: Pre-arming de bloco comercial (v5.5.31) ─────────────────────
   // A cada 2s, varre dateSchedules procurando items adBreakId pending cujo
@@ -3985,16 +4136,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      // Encontra o item na fila
+      // Encontra o item na fila.
+      // CRÍTICO: casar por id apenas é frágil — o auto-sync (MERGE) regenera o
+      // schedule no startup criando UUIDs novos e resetando status para
+      // 'pending'. Por isso casamos por id E, como fallback, por filePath (chave
+      // estável entre regenerações, mesma estratégia do arming). Aceitamos
+      // status 'playing' OU 'pending' (o reload reseta para pending), senão a
+      // retomada nunca era oferecida — abria e perdia o que estava no ar.
       const { playlist, dateSchedules } = stateRef.current
-      let item: PlaylistItem | undefined
-      if (snapshot.queue === 'schedule') {
-        item = dateSchedules[snapshot.scheduleDate ?? todayStr]?.find(i => i.id === snapshot.itemId)
-      } else {
-        item = playlist.find(i => i.id === snapshot.itemId)
-      }
+      const pool = snapshot.queue === 'schedule'
+        ? (dateSchedules[snapshot.scheduleDate ?? todayStr] ?? [])
+        : playlist
+      const resumable = (i: PlaylistItem) => i.status === 'playing' || i.status === 'pending'
+      const item: PlaylistItem | undefined =
+        pool.find(i => i.id === snapshot.itemId && resumable(i))
+        ?? (snapshot.filePath
+          ? pool.find(i => i.filePath === snapshot.filePath && resumable(i))
+          : undefined)
 
-      if (!item || item.status !== 'playing') {
+      if (!item) {
         window.spotmaster?.clearPlaybackSnapshot?.()
         return
       }

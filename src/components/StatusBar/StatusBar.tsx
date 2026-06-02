@@ -9,15 +9,17 @@ export default function StatusBar() {
   const { vmixStatus, playlist } = state
   const activeItemProgress = usePlaybackProgress()
 
-  // ── Countdown do arming ────────────────────────────────────────────────
-  // Tick a cada 1s pra atualizar o "em Xs" no banner enquanto o bloco está
-  // armado. Sem isto o banner mostraria o tempo congelado de quando armou.
+  // ── Countdown do arming / Autostart ─────────────────────────────────────
+  // Tick a cada 1s pra atualizar o "em Xs" enquanto há um bloco armado OU
+  // enquanto o Autostart (idle) aguarda o horário do 1º item. Sem isto o
+  // contador mostraria o tempo congelado.
+  const autoStartEnabled = state.settings.autoStart
   const [nowTick, setNowTick] = useState(0)
   useEffect(() => {
-    if (!armedCommercial) return
+    if (!armedCommercial && !autoStartEnabled) return
     const id = setInterval(() => setNowTick(t => t + 1), 1000)
     return () => clearInterval(id)
-  }, [armedCommercial])
+  }, [armedCommercial, autoStartEnabled])
   const armedSecondsLeft = (() => {
     if (!armedCommercial) return null
     const [fH, fM, fS] = armedCommercial.fireAt.split(':').map(Number)
@@ -29,6 +31,30 @@ export default function StatusBar() {
   void nowTick  // só pra re-render a cada segundo
 
   const todaySchedule = state.dateSchedules?.[today()] ?? []
+
+  // ── Countdown do Autostart (idle) ───────────────────────────────────────
+  // Quando parado + Autostart ON, mostra o próximo bloco que o Autostart vai
+  // honrar e quanto falta. Blocos vencidos há mais de 5 min (janela de
+  // tolerância) são IGNORADOS aqui — não vão disparar, então não fazemos
+  // contagem para eles; mostramos o próximo bloco elegível.
+  const AUTOSTART_TOLERANCE_SEC = 5 * 60
+  const autostartInfo = (() => {
+    if (!autoStartEnabled) return null
+    if (todaySchedule.some(i => i.status === 'playing')) return null  // já tocando
+    const d = new Date()
+    const nowSec = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
+    const toSec = (hhmmss: string) => {
+      const [h, m, s] = hhmmss.split(':').map(Number)
+      return h * 3600 + m * 60 + (s ?? 0)
+    }
+    // Elegível: bloco futuro OU vencido há no máximo 5 min (ainda na janela).
+    const first = todaySchedule
+      .filter(i => i.status === 'pending' && !!i.scheduledTime)
+      .filter(i => toSec(i.scheduledTime!) + AUTOSTART_TOLERANCE_SEC >= nowSec)
+      .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))[0]
+    if (!first?.scheduledTime) return null
+    return { fireAt: first.scheduledTime.slice(0, 5), secondsLeft: Math.max(0, toSec(first.scheduledTime) - nowSec) }
+  })()
 
   // Active queue: whichever has a 'playing' item takes precedence
   const scheduleCurrentItem = todaySchedule.find((i) => i.status === 'playing')
@@ -86,6 +112,38 @@ export default function StatusBar() {
             {' '}ARMADO
             <span style={{ marginLeft: 8, color: '#fcd34d', fontVariantNumeric: 'tabular-nums' }}>
               em {armedSecondsLeft}s
+            </span>
+          </span>
+        </div>
+      )}
+      {!armedCommercial && autostartInfo && !isPlaying && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 56,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+            background: 'linear-gradient(90deg, color-mix(in srgb, #22c55e 32%, transparent), color-mix(in srgb, #22c55e 16%, transparent))',
+            border: '1px solid #22c55e',
+            borderRadius: 8,
+            padding: '6px 14px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            color: '#86efac',
+            boxShadow: '0 4px 12px rgba(34, 197, 94, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            pointerEvents: 'none',
+            letterSpacing: '0.3px',
+          }}
+        >
+          <span style={{ fontSize: '1.1rem' }}>⏱</span>
+          <span>
+            AUTOSTART @<strong style={{ color: '#fff' }}>{autostartInfo.fireAt}</strong>
+            <span style={{ marginLeft: 8, color: '#bbf7d0', fontVariantNumeric: 'tabular-nums' }}>
+              {autostartInfo.secondsLeft > 0 ? `em ${autostartInfo.secondsLeft}s` : 'iniciando…'}
             </span>
           </span>
         </div>

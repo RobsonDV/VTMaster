@@ -45,6 +45,7 @@ import CommandPalette from './components/CommandPalette/CommandPalette'
 import VideoProPanel from './components/VideoPro/VideoProPanel'
 import VmixOutputsPanel from './components/VmixOutputs/VmixOutputsPanel'
 import VmixHealthPanel from './components/VmixHealth/VmixHealthPanel'
+import ResumeBanner from './components/ResumeBanner/ResumeBanner'
 import './App.css'
 import vtmasterLogo from './assets/Logo_VTMasterHorizontal.png'
 
@@ -241,6 +242,8 @@ export default function App() {
         onToggleMediaBank={() => setShowMediaBank(v => !v)}
         mediaBankOpen={showMediaBank}
       />
+      {/* Banner global de retomada — visível em qualquer aba */}
+      <ResumeBanner />
       <div className="app-body">
         {/* ── Sidebar colapsável ── */}
         <nav className={`sidebar${sidebarCollapsed ? ' sidebar--collapsed' : ''}`}>

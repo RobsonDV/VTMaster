@@ -34,6 +34,8 @@ const en: Translations = {
     disparoOff: 'Trigger OFF',
     autoplayComerciaisOn: 'Ad Autoplay ON',
     autoplayComerciaisOff: 'Ad Autoplay OFF',
+    autostartOn: 'Autostart ON',
+    autostartOff: 'Autostart OFF',
   },
 
   playlist: {

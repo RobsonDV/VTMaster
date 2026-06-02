@@ -237,6 +237,14 @@ export interface AppSettings {
   triggerEnabled: boolean
   triggerKey: string | null
   autoplayComerciais: boolean
+  /**
+   * Autostart: quando true, com o programa PARADO (idle), inicia a
+   * programação sozinho no horário do 1º item pendente (ou, se o app abriu
+   * atrasado, do item vencido agora). É o dono único do "cold-start" — o
+   * autoplayComerciais cuida apenas dos blocos durante a execução. Default
+   * false (operador inicia manualmente).
+   */
+  autoStart: boolean
   preloadMinutes: number
   /**
    * Playlist Contínua: quando true, ao terminar um bloco comercial
