@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Activity, AlertTriangle, ShieldCheck, Square, ListVideo, SkipForward, StopCircle, CheckCircle,
-  Trash2, RefreshCw, CalendarDays,
+  Trash2, RefreshCw, RotateCcw, CalendarDays,
   FolderOpen, Plus, Crosshair,
   Zap, MonitorPlay, Clock, Copy, Clipboard, Play, Pause, GripVertical, Search,
   Music2, Film, Radio,
@@ -689,7 +689,7 @@ interface Props {
 }
 
 export default function DaySchedulePanel({ selectedDate, onDateChange, onSelectedItemChange }: Props) {
-  const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent } = useApp()
+  const { state, dispatch, t, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, generatePlaylistFromGrid, regenerateScheduleFresh, skipToNext, setStopAfterCurrent } = useApp()
   const { dateSchedules } = state
   const activeItemProgress = usePlaybackProgress()
 
@@ -1232,6 +1232,36 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     }
   }
 
+  // Regenera a programação DO ZERO (REPLACE): descarta status 'done'/'skipped' e
+  // edições manuais da data, e limpa o fired set comercial do dia. Use quando o
+  // dia abriu "já executado" e o operador quer começar limpo. Diferente de
+  // "Atualizar" (merge), que preserva o que já tocou.
+  const handleRegenerateFresh = async () => {
+    if (updatingSchedule) return
+    if (isToday && state.isSequencePlaying) {
+      window.alert('Pare a programação antes de regenerar do zero.')
+      return
+    }
+    const msg = isToday
+      ? 'Regenerar a programação de HOJE do zero?\n\nIsto descarta o status atual (itens marcados como executados) e edições manuais, reconstruindo tudo do template como PENDENTE. Use quando o dia abriu "já executado".'
+      : 'Regenerar a programação desta data do zero?\n\nIsto descarta status e edições manuais, reconstruindo tudo do template como PENDENTE.'
+    if (!window.confirm(msg)) return
+    setUpdatingSchedule(true)
+    setUpdateProgress(null)
+    setUpdateError(null)
+    try {
+      await regenerateScheduleFresh(selectedDate as string, (done, total) => {
+        setUpdateProgress({ done, total })
+      })
+    } catch (err) {
+      console.error('[DaySchedule] Falha ao regenerar programação:', err)
+      setUpdateError('Não foi possível regenerar a programação.')
+    } finally {
+      setUpdatingSchedule(false)
+      setUpdateProgress(null)
+    }
+  }
+
   // Lê (ou re-lê) as durações de todos os itens que ainda estão com 0.
   // Chamado pelo botão manual — útil quando a leitura automática falhou
   // (ex: vídeos lentos que deram timeout no batch inicial).
@@ -1581,6 +1611,15 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
             >
               <RefreshCw size={13} className={updatingSchedule ? 'spin' : ''} />
               {updateLabel}
+            </button>
+            <button
+              className="day-schedule-btn"
+              onClick={handleRegenerateFresh}
+              disabled={updatingSchedule}
+              title="Regenerar do zero: descarta status (executados) e edições, tudo volta a PENDENTE. Use quando o dia abriu já executado."
+            >
+              <RotateCcw size={13} className={updatingSchedule ? 'spin' : ''} />
+              Regenerar do zero
             </button>
             {missingDurCount > 0 && (
               <button

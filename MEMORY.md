@@ -13,7 +13,7 @@
 
 ## Estado atual
 
-- **Versão:** 5.5.41 (correção do "dia abre já executado"; pronta para release)
+- **Versão:** 5.5.42 (botão "Regenerar do zero" na Programação do Dia)
 - **Branch:** `main` (fluxo de release direto na main)
 - **Última data:** 02/06/2026
 - **Build/qualidade:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros · `vite build` OK
@@ -45,7 +45,21 @@
 
 ## Registro (mais recente primeiro)
 
-### 2026-06-02 — v5.5.41 (em preparo): dia não abre mais "já executado"
+### 2026-06-02 — v5.5.42: botão "Regenerar do zero" (limpa o dia já executado)
+- **Motivo:** o dia que JÁ abriu marcado como executado não era corrigido por "Atualizar"
+  nem "Regerar" — ambos usam *merge*, que preserva `done`/`skipped` de propósito. Faltava
+  uma ação de reset manual; e mesmo zerando os status, o *fired set* do dia ainda bloquearia
+  os comerciais.
+- **Fix:** nova ação `regenerateScheduleFresh(date)` no `AppContext` (exposta no contexto):
+  REPLACE (tudo `pending`) + limpa o fired set comercial do dia (`localStorage
+  spotmaster_fired_<data>` e o ref em memória se for hoje). Botão **"Regenerar do zero"**
+  (ícone RotateCcw) na barra de ações da Programação do Dia, com confirmação; bloqueado se a
+  sequência estiver tocando. Diferente de "Atualizar" (merge), que preserva o que tocou.
+- **Uso:** quando o dia abrir "já executado", clicar **Regenerar do zero** → volta tudo a
+  pendente e os comerciais podem disparar de novo.
+- **Validação:** `eslint .` 0 · `tsc -b --noEmit` 0.
+
+### 2026-06-02 — v5.5.41: dia não abre mais "já executado"
 - **Sintoma reportado:** ao abrir o app, a Programação do Dia vinha com itens já
   marcados como concluídos (na imagem: 96/189 concluídos, blocos da noite "OK") com
   **0 veiculado** — o motor "achava" que já tinha rodado e pulava os blocos comerciais.

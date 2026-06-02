@@ -710,6 +710,10 @@ interface AppContextValue {
     onDurationProgress?: (done: number, total: number) => void,
     backup?: boolean,
   ) => Promise<void>
+  regenerateScheduleFresh: (
+    targetDate?: string,
+    onDurationProgress?: (done: number, total: number) => void,
+  ) => Promise<void>
   skipToNext: () => Promise<void>
   setStopAfterCurrent: (v: boolean) => void
   triggerAudioLayer: (layerId: string, opts?: { mode?: AudioLayerMode }) => Promise<void>
@@ -1560,6 +1564,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
         })
     }
   }, [dispatch, expandBlockItems])
+
+  // ── regenerateScheduleFresh ─────────────────────────────────────────────────
+  // Regenera a Programação do Dia DO ZERO (REPLACE → todos os itens 'pending'),
+  // descartando status 'done'/'skipped' e edições manuais da data. Diferente do
+  // botão "Atualizar" (merge), que PRESERVA o que já tocou. Usado quando o dia
+  // abriu com status obsoletos ("já executado") e o operador quer começar limpo.
+  // Também limpa o fired set comercial do dia — sem isto, os blocos voltariam a
+  // 'pending' mas o autoplay não os dispararia (já estavam marcados como fired).
+  const regenerateScheduleFresh = useCallback(async (
+    targetDate?: string,
+    onDurationProgress?: (done: number, total: number) => void,
+  ) => {
+    const dateStr = targetDate ?? today()
+    // Limpa o fired set comercial daquela data.
+    try { localStorage.removeItem(`spotmaster_fired_${dateStr}`) } catch { /* ignore */ }
+    if (dateStr === today()) {
+      firedCommercialTimesRef.current.clear()
+      persistFiredTimes()
+    }
+    // REPLACE: reconstrói a partir do template/AutoProg, tudo 'pending'.
+    await generatePlaylistFromGrid(dateStr, false, onDurationProgress)
+  }, [generatePlaylistFromGrid, persistFiredTimes])
 
   // ── Midnight watcher ────────────────────────────────────────────────────────
   // Detects day change and auto-generates the schedule from the weekly grid.
@@ -4496,7 +4522,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume, armedCommercial, getSchedulerLog: () => [...schedulerLogRef.current] }}>
+    <AppContext.Provider value={{ state, dispatch, t, saveToStorage, playItem, playSingleItem, startSequence, startSchedule, startScheduleFromNow, startScheduleFromItem, pauseSchedule, stopPlayback, loadBlockIntoPlaylist, disparo, generatePlaylistFromGrid, regenerateScheduleFresh, skipToNext, setStopAfterCurrent, triggerAudioLayer, stopAudioLayer, audioLayerActive, resumeCandidate, resumeFromSnapshot, ignoreResume, armedCommercial, getSchedulerLog: () => [...schedulerLogRef.current] }}>
       {children}
     </AppContext.Provider>
   )

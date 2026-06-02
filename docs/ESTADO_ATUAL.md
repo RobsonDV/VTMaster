@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **02/06/2026** — Versão **5.5.41** — Programação do Dia não abre mais "já executada" (status obsoletos de outro dia eram mantidos no startup); a cada novo dia vem fresca (tudo pending). Inclui v5.5.40: Autostart, Stop/Pause preservam o input no ar, disparo de comercial correto e retomada global
+> Atualizado em **02/06/2026** — Versão **5.5.42** — Botão "Regenerar do zero" na Programação do Dia (corrige na hora um dia que abriu já executado). Inclui v5.5.41 (dia sempre fresco no startup) e v5.5.40 (Autostart, Stop/Pause preservam o input no ar, disparo de comercial correto, retomada global)
 
 ---
 
@@ -2646,6 +2646,31 @@ existia** em `dateSchedules`. O `loadAll` reseta apenas `playing → pending` �
 
 **Resultado:** a cada novo dia a programação vem fresca (do template/AutoProg), sem itens
 pré-marcados como executados; o autoplay/autostart e os blocos comerciais disparam normalmente.
+
+**Validação:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros.
+
+---
+
+## Seção 32 — v5.5.42: botão "Regenerar do zero" (02/06/2026)
+
+**Motivo:** um dia que já tinha aberto marcado como executado (antes do fix da v5.5.41, ou
+em qualquer carryover) não era corrigível pela UI — "Atualizar"/"Regerar da Estrutura" usam
+*merge*, que **preserva** `done`/`skipped` de propósito (prova de veiculação). E mesmo
+zerando os status, o fired set comercial do dia ainda bloquearia o disparo dos blocos.
+
+**Correção:** nova ação `regenerateScheduleFresh(targetDate)` no `AppContext` (exposta no
+contexto):
+- limpa o fired set comercial do dia: `localStorage['spotmaster_fired_<data>']` + o ref em
+  memória (`firedCommercialTimesRef`) quando a data é hoje;
+- chama `generatePlaylistFromGrid(date, merge=false)` → REPLACE, reconstruindo do
+  template/AutoProg com todos os itens `pending`.
+
+**UI (`DaySchedulePanel.tsx`):** botão **"Regenerar do zero"** (ícone `RotateCcw`) na barra
+de ações, ao lado de "Atualizar", com `window.confirm` avisando que descarta status e
+edições manuais. Bloqueado se a sequência estiver tocando (pede parar antes).
+
+**Quando usar:** o dia abriu "já executado" e o operador quer começar limpo agora, sem
+esperar a próxima virada de dia. Diferente de "Atualizar" (merge), que mantém o que tocou.
 
 **Validação:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros.
 

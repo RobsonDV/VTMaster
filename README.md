@@ -1,4 +1,4 @@
-# VTMaster v5.5.41
+# VTMaster v5.5.42
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -25,6 +25,7 @@ O VTMaster automatiza a execução da grade de programação diária, incluindo:
 - **Disparo de comercial correto** (v5.5.40): `loadNewInput` serializado por mutex + `pollForNewInput` casa o input novo pelo arquivo — fim do "input aleatório" indo ao ar antes do comercial
 - **Retomada de sessão global** (v5.5.40): detecção casa o snapshot por `filePath` (sobrevive à regeneração de UUIDs) e o banner de retomada é global (visível em qualquer aba)
 - **Programação do Dia sempre fresca a cada dia** (v5.5.41): ao virar o dia (ou reabrir num dia novo), a programação é regenerada do template com todos os itens `pending` — fim do "dia abre já executado" que fazia o motor pular blocos. Same-day reopen preserva o que já tocou (resume)
+- **Botão "Regenerar do zero"** (v5.5.42): ação manual na Programação do Dia que descarta status (executados) e edições e reconstrói tudo como `pending`, limpando também o fired set comercial do dia — para corrigir na hora um dia que abriu já executado (diferente de "Atualizar", que preserva o que tocou)
 - Comercial Pro: campanhas (padrão e rotativo), distribuição automática, relatório por campanha
 - Log de veiculação, relatórios PDF/CSV
 - Auto-update via GitHub Releases (electron-updater)
@@ -42,7 +43,7 @@ Stack principal:
 
 - [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.5.41
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.5.42
 - [docs/ATUALIZACOES.md](docs/ATUALIZACOES.md): como publicar releases e testar atualização automática
 
 ## Requisitos
