@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **31/05/2026** — Versão **5.5.39** — Guard de reentrância no `runSequence` elimina disparo duplo quando os schedulers musical e comercial coincidem na mesma janela
+> Atualizado em **02/06/2026** — Versão **5.5.40** — Autostart (cold-start independente com janela de 5 min), Stop/Pause preservam o input no ar, disparo de comercial correto (mutex + match por arquivo) e retomada de sessão global
 
 ---
 
@@ -2563,4 +2563,60 @@ Por ser ref (síncrono), bloqueia a segunda entrada **imediatamente**, sem depen
 
 - Em nenhuma janela de coincidência de schedulers o playout dispara dois loops concorrentes — fim do `Cut` duplicado / inputs fantasma por corrida de scheduler.
 - Validado: `tsc -b` 0 erros, `eslint .` 0 problemas, `vite build` OK. Publicado como release v5.5.39 (auto-update via GitHub Releases).
+
+---
+
+## Seção 30 — v5.5.40: Autostart + input no ar preservado (Stop/Pause) + disparo de comercial correto + retomada global (02/06/2026)
+
+Ciclo motivado por relatos do operador em produção. Quatro frentes, todas em `src/store/AppContext.tsx` salvo indicação.
+
+### 30.1 Autostart — cold-start independente da programação
+
+**Problema reportado:** "o programa não inicia sozinho; tem um contador, mas quando chega em zero nada acontece. Isso na primeira vez que tem que disparar e iniciar a programação; quando ela já está em funcionamento, funciona perfeitamente."
+
+**Causa raiz:** o único caminho de "iniciar a partir do idle" vivia dentro do scheduler do `autoplayComerciais`, que filtra **apenas** itens comerciais (`!!i.adBreakId`). Se o primeiro item do dia é música/programa, nada o liga. E mesmo o ramo idle comercial usava `startScheduleFromItem(comercial)`, pulando tudo antes do bloco. O "contador" que o operador via é o countdown do arming na StatusBar.
+
+**Solução — novo setting `autoStart` + scheduler dedicado:**
+- `AppSettings.autoStart: boolean` (default `false`) em `types/index.ts`.
+- Botão toggle **Autostart** na Toolbar (`Toolbar.tsx`, ícone `Timer`, verde quando ON), ao lado de Autoplay Comerciais e Playlist Contínua. Strings em `i18n/pt.ts` e `i18n/en.ts` (`toolbar.autostartOn/Off`).
+- Novo `useEffect` (tick 1s) com `autoStartFiringRef` (reentrância). Só age quando: `autoStart` ON + **idle** (`!isSequencePlaying`) + vMix conectado. Reusa `startScheduleFromNow()` (já inicia do bloco atual, marcando blocos anteriores como `skipped`).
+- **Dono único do cold-start:** o ramo idle do scheduler comercial agora tem guarda `if (settings.autoStart) return` — sem corrida/duplo disparo. O ramo de **interrupção** (sequência já tocando) permanece intacto; durante a execução o `autoplayComerciais` segue cuidando dos blocos.
+- Countdown de Autostart na StatusBar (`StatusBar.tsx`): banner verde "AUTOSTART @HH:MM em mm:ss" do próximo bloco elegível quando idle.
+
+**Janela de tolerância de 5 min:** o Autostart só inicia um bloco dentro de `[horário, horário+5min]`. Bloco vencido há mais de 5 min é **ignorado** (não toca material fora de hora) — espera o próximo bloco no horário. Os itens do bloco pulado ficam `pending` (não são marcados como executados); viram `skipped` naturalmente quando o próximo bloco inicia.
+
+**Fluxo multi-bloco (ex.: 09h / 12h / 21h, cada um terminando em Pausa):** Autostart liga às 09h → roda até a Pausa → idle → espera → 12h liga sozinho → Pausa → espera → 21h liga → Pausa. A Pausa (`type: 'pause'`) quebra a sequência e devolve ao idle.
+
+### 30.2 Stop e Pause preservam o input no ar
+
+**Problema reportado:** "o Stop não simplesmente para — ele puxa outro input aleatório pro output." E depois: "a Pausa faz o mesmo erro do Stop."
+
+**Causa raiz:** o full-sweep do fim do `runSequence` (e do `stopPlayback`) dava `RemoveInput` em **todos** os GUIDs do SpotMaster, **inclusive o que estava no PGM**. Remover o input ativo faz o vMix pular o output para outro input (o "input aleatório"). Como `pauseSchedule` e `stopPlayback` setam `abortRef`, o `runSequence` encerra e roda esse sweep — afetando Stop e Pause.
+
+**Correção:** no encerramento do `runSequence` e no `stopPlayback`, captura-se o GUID no ar (`activeInputRef.current`) e ele é **excluído** do sweep; `activeInputRef` **não** é zerado. O último item permanece no output do vMix (na Pausa, congelado no frame), e só é substituído pela transição do próximo `playItem` quando a execução recomeça. Os demais GUIDs órfãos (preloads, anteriores) continuam sendo removidos.
+
+### 30.3 Disparo de comercial sem "input aleatório" antes do bloco
+
+**Problema reportado:** "com autoplaycomercial ON, ele puxa um input aleatório pro output e não dispara o comercial; segundos depois dispara o comercial."
+
+**Causa raiz:** `loadNewInput` não era serializado e `pollForNewInput` retornava "a primeira key nova desconhecida" sem verificar o arquivo. Perto do horário do bloco, o arming (2s) e o preload musical antecipado podiam chamar `AddInput` concorrentemente → os GUIDs se cruzavam → `PreviewInput`+`Cut` colocavam o input errado no PGM; segundos depois o load correto resolvia.
+
+**Correção:**
+- **Mutex `loadLockRef`**: serializa `loadNewInput` — nunca há dois `AddInput`+poll em voo ao mesmo tempo.
+- **Match por arquivo em `pollForNewInput(knownKeys, filePath)`**: aceita a key nova apenas se o `title` da tag `<input>` casar com o basename do arquivo; senão segue pollando (não devolve key alheia).
+
+### 30.4 Retomada de sessão global e robusta
+
+**Problema reportado:** "ele não pede mais pra reassumir a programação ao reabrir; abre e perde o que estava em execução."
+
+**Causa raiz:** a detecção casava o snapshot por `item.id` e exigia `status === 'playing'`. O auto-sync (MERGE) regenera o schedule no startup com UUIDs novos e reseta status → o lookup falhava → snapshot descartado. Além disso, o banner de retomada só existia no `DaySchedulePanel` (invisível em outras abas).
+
+**Correção:**
+- Detecção casa o snapshot por **`filePath`** (fallback `id`) e aceita status `playing` **ou** `pending` — sobrevive à regeneração de UUIDs.
+- Banner de retomada agora é **global**: novo componente `src/components/ResumeBanner/ResumeBanner.tsx` renderizado no topo do `App.tsx`, visível em qualquer aba. Removida a duplicata do `DaySchedulePanel`.
+
+### 30.5 Validação e release
+
+- `eslint .` 0 problemas, `tsc -b --noEmit` 0 erros, `vite build` OK.
+- Commit `feat(v5.5.40)` na `main`, push, e `npm run release:github` publicou a release **v5.5.40** com `latest.yml`, `Setup.exe`, `Setup.exe.blockmap` e `Portable.exe` (assinados). Auto-update via GitHub Releases.
 
