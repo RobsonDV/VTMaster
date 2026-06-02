@@ -13,7 +13,7 @@
 
 ## Estado atual
 
-- **Versão:** 5.5.42 (botão "Regenerar do zero" na Programação do Dia)
+- **Versão:** 5.5.43 (Autostart ignora blocos vazios/placeholders)
 - **Branch:** `main` (fluxo de release direto na main)
 - **Última data:** 02/06/2026
 - **Build/qualidade:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros · `vite build` OK
@@ -44,6 +44,18 @@
 ---
 
 ## Registro (mais recente primeiro)
+
+### 2026-06-02 — v5.5.43: Autostart ignora blocos vazios
+- **Reportado:** com a programação vazia (só o 1º bloco real às 21:00), o Autostart marcava
+  o bloco das 07:30 — que é um placeholder vazio da grade, sem arquivo.
+- **Causa:** o scheduler do Autostart e o countdown da StatusBar consideravam qualquer item
+  `pending` com `scheduledTime`, sem checar conteúdo. Placeholders vazios (slots musicais não
+  preenchidos) e pausas isoladas entravam como gatilho.
+- **Fix:** Autostart/StatusBar agora só consideram itens com conteúdo real
+  (`filePath || inputName || type==='vmix_action'`, excluindo `pause` e placeholders). Assim
+  o gatilho/countdown apontam para o primeiro bloco com material (ex.: 21:00), não para o
+  07:30 vazio. (`AppContext.tsx` e `StatusBar.tsx`.)
+- **Validação:** `eslint .` 0 · `tsc -b --noEmit` 0.
 
 ### 2026-06-02 — v5.5.42: botão "Regenerar do zero" (limpa o dia já executado)
 - **Motivo:** o dia que JÁ abriu marcado como executado não era corrigido por "Atualizar"

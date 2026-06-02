@@ -1,4 +1,4 @@
-# VTMaster v5.5.42
+# VTMaster v5.5.43
 
 Software desktop de playout para emissoras de TV e rádio com integração nativa ao vMix.
 
@@ -20,7 +20,7 @@ O VTMaster automatiza a execução da grade de programação diária, incluindo:
 - **Widget de diagnóstico do scheduler** (v5.5.36): painel colapsável com os últimos 60 eventos (info/warn/error), exportação .txt para suporte
 - **Autoplay Comercial inicia do zero** (v5.5.37): hotfix crítico — app idle agora arranca a programação automaticamente quando chega a hora do bloco (stateRef stale fix + startScheduleFromItem)
 - **Scheduler libera blocos antigos automaticamente** (v5.5.38): bloco antigo pendente (ex: AudioOff 19:08 sem arquivo) não bloqueia mais blocos posteriores — quando bloqueado pelo guard de session start, é marcado como disparado e o próximo tick processa o bloco válido
-- **Autostart** (v5.5.40): toggle próprio e independente que inicia a programação sozinho no horário do bloco com o app parado, com janela de tolerância de 5 min (bloco vencido há mais de 5 min é ignorado, espera o próximo). Countdown na StatusBar
+- **Autostart** (v5.5.40): toggle próprio e independente que inicia a programação sozinho no horário do bloco com o app parado, com janela de tolerância de 5 min (bloco vencido há mais de 5 min é ignorado, espera o próximo). Countdown na StatusBar. Desde a v5.5.43, ignora blocos vazios/placeholders — só considera blocos com conteúdo real
 - **Stop e Pause preservam o input no ar** (v5.5.40): não removem mais o input que está no PGM — o vMix não pula para input aleatório; o último item fica no output até a próxima execução
 - **Disparo de comercial correto** (v5.5.40): `loadNewInput` serializado por mutex + `pollForNewInput` casa o input novo pelo arquivo — fim do "input aleatório" indo ao ar antes do comercial
 - **Retomada de sessão global** (v5.5.40): detecção casa o snapshot por `filePath` (sobrevive à regeneração de UUIDs) e o banner de retomada é global (visível em qualquer aba)
@@ -43,7 +43,7 @@ Stack principal:
 
 - [docs/INDEX.md](docs/INDEX.md): índice central e trilhas por perfil
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): arquitetura e detalhes técnicos
-- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.5.42
+- [docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md): status funcional — v5.5.43
 - [docs/ATUALIZACOES.md](docs/ATUALIZACOES.md): como publicar releases e testar atualização automática
 
 ## Requisitos

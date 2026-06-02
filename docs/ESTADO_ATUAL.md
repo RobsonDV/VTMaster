@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **02/06/2026** — Versão **5.5.42** — Botão "Regenerar do zero" na Programação do Dia (corrige na hora um dia que abriu já executado). Inclui v5.5.41 (dia sempre fresco no startup) e v5.5.40 (Autostart, Stop/Pause preservam o input no ar, disparo de comercial correto, retomada global)
+> Atualizado em **02/06/2026** — Versão **5.5.43** — Autostart ignora blocos vazios/placeholders (só considera blocos com conteúdo real). Inclui v5.5.42 ("Regenerar do zero"), v5.5.41 (dia sempre fresco no startup) e v5.5.40 (Autostart, Stop/Pause preservam o input no ar, disparo de comercial correto, retomada global)
 
 ---
 
@@ -2671,6 +2671,26 @@ edições manuais. Bloqueado se a sequência estiver tocando (pede parar antes).
 
 **Quando usar:** o dia abriu "já executado" e o operador quer começar limpo agora, sem
 esperar a próxima virada de dia. Diferente de "Atualizar" (merge), que mantém o que tocou.
+
+**Validação:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros.
+
+---
+
+## Seção 33 — v5.5.43: Autostart ignora blocos vazios/placeholders (02/06/2026)
+
+**Problema reportado:** com a programação praticamente vazia (só o 1º bloco real às 21:00),
+ao ligar o Autostart ele marcava o bloco das **07:30** — um placeholder vazio da grade, sem
+nenhum arquivo.
+
+**Causa:** o scheduler do Autostart ([AppContext.tsx]) e o countdown da StatusBar
+consideravam **qualquer** item `pending` com `scheduledTime`, sem checar se havia conteúdo.
+Placeholders de slots musicais não preenchidos (`type: 'outros'`, sem `filePath`) e pausas
+isoladas entravam como gatilho/contagem.
+
+**Correção:** ambos passam a exigir **conteúdo real** — `filePath || inputName ||
+type === 'vmix_action'`, excluindo `pause` e placeholders vazios (reaproveita a semântica de
+`hasPlayableContent`). Assim o gatilho e o countdown apontam para o primeiro bloco com
+material de fato (ex.: 21:00), ignorando o 07:30 vazio.
 
 **Validação:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros.
 

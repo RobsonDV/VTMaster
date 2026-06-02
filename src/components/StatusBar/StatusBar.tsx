@@ -47,9 +47,12 @@ export default function StatusBar() {
       const [h, m, s] = hhmmss.split(':').map(Number)
       return h * 3600 + m * 60 + (s ?? 0)
     }
-    // Elegível: bloco futuro OU vencido há no máximo 5 min (ainda na janela).
+    // Elegível: item pendente COM conteúdo real (arquivo/input/ação vMix) — ignora
+    // placeholders vazios e pausas isoladas — e futuro OU vencido há no máximo 5 min.
+    const hasContent = (i: typeof todaySchedule[number]) =>
+      (!!i.filePath || !!i.inputName || i.type === 'vmix_action') && i.type !== 'pause'
     const first = todaySchedule
-      .filter(i => i.status === 'pending' && !!i.scheduledTime)
+      .filter(i => i.status === 'pending' && !!i.scheduledTime && hasContent(i))
       .filter(i => toSec(i.scheduledTime!) + AUTOSTART_TOLERANCE_SEC >= nowSec)
       .sort((a, b) => (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? ''))[0]
     if (!first?.scheduledTime) return null

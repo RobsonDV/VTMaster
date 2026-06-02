@@ -3730,10 +3730,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const todayStr = today()
       const schedule = stateRef.current.dateSchedules[todayStr] ?? []
-      // Itens pendentes COM horário. Itens sem scheduledTime não disparam o
-      // cold-start sozinhos (são manuais/encaixes).
+      // Itens pendentes COM horário E com conteúdo real (arquivo/input/ação vMix).
+      // Placeholders vazios (slots musicais não preenchidos) e pausas isoladas NÃO
+      // disparam o Autostart — senão ele "marcaria" um bloco vazio (ex.: 07:30 sem
+      // nada) em vez de esperar o primeiro bloco real (ex.: 21:00). Itens sem
+      // scheduledTime também não disparam (são manuais/encaixes).
       const timedPending = schedule.filter(
-        i => i.status === 'pending' && !!i.scheduledTime,
+        i => i.status === 'pending' && !!i.scheduledTime &&
+          hasPlayableContent(i) && i.type !== 'pause',
       )
       if (timedPending.length === 0) return
 
