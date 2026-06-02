@@ -1585,6 +1585,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         cleanupOldFiredKeys()
         minOrderRef.current = -1
         generatePlaylistFromGrid(currentDay)
+        // Atualiza o marcador de dia ativo para que um reopen posterior no MESMO
+        // dia (após esta virada) não regenere de novo por achar que o dia mudou.
+        try { localStorage.setItem('vtmaster_last_active_date', currentDay) } catch { /* ignore */ }
       }
     }, 30_000)
     return () => clearInterval(interval)
@@ -4393,12 +4396,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.playlist, state.dateSchedules, state.playLog, state.settings.dataSourcesEnabled, state.isLoading])
 
   // ── Auto-load today's schedule on startup ───────────────────────────────────
-  // If today's date has no schedule stored, generate from the weekly template.
+  // Garante que ao abrir o app a Programação do Dia esteja FRESCA (tudo pending)
+  // quando o dia virou desde a última sessão. Sem isto, a data de hoje persistida
+  // no disco podia trazer status 'done'/'skipped' obsoletos (o loadAll só reseta
+  // 'playing'), fazendo o dia "abrir já executado" — o motor então pulava os
+  // blocos comerciais marcados como concluídos. Bug reportado: 96/189 concluídos
+  // com 0 veiculado (playLog do dia vazio).
   useEffect(() => {
     if (state.isLoading) return
-    if (!state.dateSchedules[today()]) {
-      generatePlaylistFromGrid(today())
+    const todayStr = today()
+    const LAST_ACTIVE_KEY = 'vtmaster_last_active_date'
+    let lastActive: string | null = null
+    try { lastActive = localStorage.getItem(LAST_ACTIVE_KEY) } catch { /* ignore */ }
+
+    const existing = stateRef.current.dateSchedules[todayStr]
+    if (!existing || existing.length === 0) {
+      // Sem programação para hoje — gera do zero (tudo pending).
+      generatePlaylistFromGrid(todayStr)
+    } else {
+      // Já existe programação para hoje. Decide se é obsoleta:
+      //  • dayChanged: o app foi aberto pela última vez em outro dia (marcador).
+      //  • firstRunStale: primeira execução após este fix (sem marcador) — pega
+      //    o estado atual quebrado: há status executado mas NENHUMA veiculação
+      //    registrada hoje (status carregado de outro dia).
+      const hasAired = existing.some(
+        i => i.status === 'done' || i.status === 'skipped',
+      )
+      const loggedToday = stateRef.current.playLog.some(l => l.date === todayStr)
+      const dayChanged = !!lastActive && lastActive !== todayStr
+      const firstRunStale = !lastActive && hasAired && !loggedToday
+      if (dayChanged || firstRunStale) {
+        if (isDev) console.warn(`[novo-dia] Regenerando programação de ${todayStr} — dayChanged=${dayChanged}, firstRunStale=${firstRunStale} (hasAired=${hasAired}, loggedToday=${loggedToday}). Status obsoletos limpos.`)
+        // Limpa o fired set do dia (segurança) e regenera do zero (tudo pending).
+        firedCommercialTimesRef.current.clear()
+        persistFiredTimes()
+        generatePlaylistFromGrid(todayStr)  // merge=false → REPLACE, todos pending
+      }
     }
+    try { localStorage.setItem(LAST_ACTIVE_KEY, todayStr) } catch { /* ignore */ }
   }, [state.isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tracks whether a schedule sync was deferred because the sequence was playing.

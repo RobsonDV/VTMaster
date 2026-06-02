@@ -1,6 +1,6 @@
 # VTMaster — Estado Atual do Projeto
 
-> Atualizado em **02/06/2026** — Versão **5.5.40** — Autostart (cold-start independente com janela de 5 min), Stop/Pause preservam o input no ar, disparo de comercial correto (mutex + match por arquivo) e retomada de sessão global
+> Atualizado em **02/06/2026** — Versão **5.5.41** — Programação do Dia não abre mais "já executada" (status obsoletos de outro dia eram mantidos no startup); a cada novo dia vem fresca (tudo pending). Inclui v5.5.40: Autostart, Stop/Pause preservam o input no ar, disparo de comercial correto e retomada global
 
 ---
 
@@ -2619,4 +2619,33 @@ Ciclo motivado por relatos do operador em produção. Quatro frentes, todas em `
 
 - `eslint .` 0 problemas, `tsc -b --noEmit` 0 erros, `vite build` OK.
 - Commit `feat(v5.5.40)` na `main`, push, e `npm run release:github` publicou a release **v5.5.40** com `latest.yml`, `Setup.exe`, `Setup.exe.blockmap` e `Portable.exe` (assinados). Auto-update via GitHub Releases.
+
+---
+
+## Seção 31 — v5.5.41: Programação do Dia não abre mais "já executada" (02/06/2026)
+
+**Problema reportado:** ao abrir o app, a Programação do Dia já vinha com itens marcados como
+concluídos (ex.: 96/189 concluídos, blocos da noite como "OK") **sem nenhuma veiculação real
+naquele dia** (0 veiculado / playLog do dia vazio). O motor interpretava os blocos comerciais
+como já executados e os pulava, indo direto para a música.
+
+**Causa raiz:** o efeito de auto-load no startup só gerava a programação quando a data **não
+existia** em `dateSchedules`. O `loadAll` reseta apenas `playing → pending` — nunca
+`done`/`skipped`. Assim, status executados antigos persistidos no disco bleeded para o novo dia.
+
+**Correção (`AppContext.tsx`, efeito de auto-load no startup):**
+- Marcador `localStorage['vtmaster_last_active_date']` registra o último dia em que o app rodou.
+- No startup, se a data de hoje **não existe** → gera do zero (como antes).
+- Se existe, regenera do zero (REPLACE → tudo `pending`) e limpa o fired set do dia quando:
+  - **`dayChanged`**: o último dia ativo (marcador) é diferente de hoje; ou
+  - **`firstRunStale`**: 1ª execução após o fix (sem marcador) e há `done`/`skipped` mas
+    **nenhuma** entrada no playLog de hoje (status carregado de outro dia).
+- Same-day reopen com veiculação real (playLog com entradas de hoje) **preserva** o estado —
+  o resume de sessão continua intacto.
+- O midnight watcher também grava o marcador ao virar o dia.
+
+**Resultado:** a cada novo dia a programação vem fresca (do template/AutoProg), sem itens
+pré-marcados como executados; o autoplay/autostart e os blocos comerciais disparam normalmente.
+
+**Validação:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros.
 

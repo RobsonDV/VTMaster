@@ -13,7 +13,7 @@
 
 ## Estado atual
 
-- **Versão:** 5.5.40 (publicada no GitHub Releases, auto-update ativo)
+- **Versão:** 5.5.41 (correção do "dia abre já executado"; pronta para release)
 - **Branch:** `main` (fluxo de release direto na main)
 - **Última data:** 02/06/2026
 - **Build/qualidade:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros · `vite build` OK
@@ -44,6 +44,23 @@
 ---
 
 ## Registro (mais recente primeiro)
+
+### 2026-06-02 — v5.5.41 (em preparo): dia não abre mais "já executado"
+- **Sintoma reportado:** ao abrir o app, a Programação do Dia vinha com itens já
+  marcados como concluídos (na imagem: 96/189 concluídos, blocos da noite "OK") com
+  **0 veiculado** — o motor "achava" que já tinha rodado e pulava os blocos comerciais.
+- **Causa raiz:** o efeito de startup só gerava programação nova se a data **não existisse**
+  em `dateSchedules`; o `loadAll` só reseta `playing → pending` (mantém `done`/`skipped`).
+  Status executados antigos persistiam e bleeded para o novo dia.
+- **Fix (`AppContext.tsx`, efeito de auto-load no startup):** marcador
+  `localStorage['vtmaster_last_active_date']` + heurística de carryover (há `done`/`skipped`
+  mas **nenhuma** veiculação no playLog de hoje). Se o dia mudou desde a última sessão, ou
+  na 1ª execução pós-fix com status órfão, regenera a programação do zero (REPLACE → tudo
+  `pending`) e limpa o fired set do dia. Mesmo dia + itens realmente veiculados (playLog com
+  entradas) = preserva (resume intacto). O midnight watcher também grava o marcador.
+- **Resultado:** a cada novo dia a programação vem fresca (do template/AutoProg), sem itens
+  marcados como executados. Same-day reopen continua preservando o que tocou (resume).
+- **Validação:** `eslint .` 0 · `tsc -b --noEmit` 0.
 
 ### 2026-06-02 — v5.5.40 publicada
 - **Autostart** (novo): toggle independente na Toolbar; scheduler dedicado (1s) que inicia
