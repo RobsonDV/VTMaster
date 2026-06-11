@@ -291,6 +291,26 @@ function hasPlayableContent(item: PlaylistItem): boolean {
   return !!item.filePath || !!item.inputName || item.type === 'vmix_action' || item.type === 'pause'
 }
 
+function compareScheduleOrder(a: PlaylistItem, b: PlaylistItem): number {
+  const orderDiff = (a.order ?? 0) - (b.order ?? 0)
+  if (orderDiff !== 0) return orderDiff
+  const timeDiff = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
+  if (timeDiff !== 0) return timeDiff
+  return a.id.localeCompare(b.id)
+}
+
+function orderBetween(prev?: PlaylistItem, next?: PlaylistItem): number {
+  const prevOrder = prev?.order
+  const nextOrder = next?.order
+  if (typeof prevOrder === 'number' && typeof nextOrder === 'number') {
+    if (nextOrder > prevOrder) return prevOrder + ((nextOrder - prevOrder) / 2)
+    return prevOrder + 0.5
+  }
+  if (typeof prevOrder === 'number') return prevOrder + 1
+  if (typeof nextOrder === 'number') return nextOrder - 1
+  return 1
+}
+
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_LOADING':
@@ -468,7 +488,7 @@ function reducer(state: AppState, action: Action): AppState {
       const d = action.payload.date
       const existing = state.dateSchedules[d] ?? []
       const deletedItem = existing.find(i => i.id === action.payload.id)
-      const remaining = existing.filter(i => i.id !== action.payload.id).map((i, idx) => ({ ...i, order: idx + 1 }))
+      const remaining = existing.filter(i => i.id !== action.payload.id)
       // Registra a deleção apenas para itens que vieram da grade (não manuais),
       // para impedir que o regenerador da grade os re-adicione no merge.
       let nextDeleted = state.deletedScheduleSlots
@@ -505,57 +525,72 @@ function reducer(state: AppState, action: Action): AppState {
       // Always reads from current state — avoids stale closure when items are
       // added rapidly (each dispatch sees the latest schedule, not the render's copy)
       const current = state.dateSchedules[action.payload.date] ?? []
+      const sorted = [...current].sort(compareScheduleOrder)
       const { groupTime, ...itemFields } = action.payload.item
-      // Order: place after the last item of the same group (by scheduledTime prefix)
+      // Order: place after the last item of the same group without reindexing
+      // the whole day. Reindexing cloned every row and made the timeline repaint.
       const groupItems = groupTime
-        ? current.filter(i => i.scheduledTime?.slice(0, 5) === groupTime)
-        : current
-      const maxGroupOrder = groupItems.length > 0
-        ? Math.max(...groupItems.map(i => i.order ?? 0))
-        : (current.length > 0 ? Math.max(...current.map(i => i.order ?? 0)) : 0)
+        ? sorted.filter(i => i.scheduledTime?.slice(0, 5) === groupTime)
+        : sorted
+      const prevInGroup = groupItems[groupItems.length - 1]
+      const insertIdx = prevInGroup
+        ? sorted.findIndex(i => i.id === prevInGroup.id) + 1
+        : groupTime
+        ? sorted.findIndex(i => (i.scheduledTime?.slice(0, 5) ?? '99:99') > groupTime)
+        : sorted.length
+      const splitIdx = insertIdx >= 0 ? insertIdx : sorted.length
+      const prev = sorted[splitIdx - 1]
+      const next = sorted[splitIdx]
       const newItem: PlaylistItem = {
         ...itemFields,
         id: crypto.randomUUID(),
-        order: maxGroupOrder + 0.5,
+        order: orderBetween(prev, next),
       }
-      const reindexed = [...current, newItem]
-        .sort((a, b) => a.order - b.order)
-        .map((i, n) => ({ ...i, order: n + 1 }))
       return {
         ...state,
         dateSchedules: {
           ...state.dateSchedules,
-          [action.payload.date]: reindexed,
+          [action.payload.date]: [...current, newItem].sort(compareScheduleOrder),
         },
       }
     }
     case 'INSERT_ITEM_AFTER': {
       const current = state.dateSchedules[action.payload.date] ?? []
-      const anchor = current.find(i => i.id === action.payload.afterId)
-      const anchorOrder = anchor?.order ?? (current.length > 0 ? Math.max(...current.map(i => i.order ?? 0)) : 0)
+      const sorted = [...current].sort(compareScheduleOrder)
+      const anchorIdx = sorted.findIndex(i => i.id === action.payload.afterId)
+      const anchor = anchorIdx >= 0 ? sorted[anchorIdx] : sorted[sorted.length - 1]
+      const next = anchorIdx >= 0 ? sorted[anchorIdx + 1] : undefined
       const newItem: PlaylistItem = {
         ...action.payload.item,
         id: crypto.randomUUID(),
-        order: anchorOrder + 0.5,
+        order: orderBetween(anchor, next),
       }
-      const reindexed = [...current, newItem]
-        .sort((a, b) => a.order - b.order)
-        .map((i, n) => ({ ...i, order: n + 1 }))
-      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: reindexed } }
+      return {
+        ...state,
+        dateSchedules: {
+          ...state.dateSchedules,
+          [action.payload.date]: [...current, newItem].sort(compareScheduleOrder),
+        },
+      }
     }
     case 'INSERT_ITEM_BEFORE': {
       const current = state.dateSchedules[action.payload.date] ?? []
-      const anchor = current.find(i => i.id === action.payload.beforeId)
-      const anchorOrder = anchor?.order ?? 1
+      const sorted = [...current].sort(compareScheduleOrder)
+      const anchorIdx = sorted.findIndex(i => i.id === action.payload.beforeId)
+      const prev = anchorIdx > 0 ? sorted[anchorIdx - 1] : undefined
+      const anchor = anchorIdx >= 0 ? sorted[anchorIdx] : sorted[0]
       const newItem: PlaylistItem = {
         ...action.payload.item,
         id: crypto.randomUUID(),
-        order: anchorOrder - 0.5,
+        order: orderBetween(prev, anchor),
       }
-      const reindexed = [...current, newItem]
-        .sort((a, b) => a.order - b.order)
-        .map((i, n) => ({ ...i, order: n + 1 }))
-      return { ...state, dateSchedules: { ...state.dateSchedules, [action.payload.date]: reindexed } }
+      return {
+        ...state,
+        dateSchedules: {
+          ...state.dateSchedules,
+          [action.payload.date]: [...current, newItem].sort(compareScheduleOrder),
+        },
+      }
     }
     case 'UPSERT_MEDIA_DURATIONS': {
       const merged = { ...state.mediaDurationCache, ...action.payload }
@@ -1839,10 +1874,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Sem isso, PlayInput pode chegar enquanto state="Loading" e ser ignorado
       // silenciosamente — o input aparece no vMix mas não inicia a reprodução.
       if (!isImage) {
-        const ready = await waitForInputReady(guid, 6000)
+        let ready = await waitForInputReady(guid, 10000)
         if (!ready) {
-          // Fallback: dá mais tempo absoluto pra arquivos lentos antes de desistir
+          // Última chance pra arquivos muito lentos antes de desistir
           await sleep(1000)
+          ready = await waitForInputReady(guid, 1500)
+        }
+        if (!ready) {
+          // Input nunca saiu de Loading/Empty. Devolver o GUID mesmo assim (como
+          // a versão anterior fazia) fazia o playItem cortar pra um input morto:
+          // tela preta pela duração INTEIRA do item. Tratamos como falha — o
+          // caller loga erro e segue pro próximo item — e removemos o input
+          // quebrado do vMix pra não virar fantasma.
+          console.warn(`[loadNewInput] input ${guid} não ficou pronto (Loading/Empty) para "${filePath}" — descartando e reportando falha.`)
+          removeOwnedInput(guid, { source: 'load-input-not-ready', queue: 'system', ...meta })
+          return null
         }
         await executeVmixCommand('SetPosition', {
           input: guid,
@@ -1854,7 +1900,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       release()
     }
-  }, [getInputKeys, pollForNewInput, waitForInputReady])
+  }, [getInputKeys, pollForNewInput, waitForInputReady, removeOwnedInput])
 
   // ── cleanupInputs ───────────────────────────────────────────────────────────
   // Removes the active input (by GUID) from vMix after delayMs.
@@ -1952,6 +1998,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const { vmixStatus } = stateRef.current
     let onAirInput = ''
+    // true quando o input já estava no ar (resume/Next): item.duration é o
+    // tempo RESTANTE e não pode ser sobrescrito pela duração total do arquivo.
+    let wasAlreadyOnAir = false
 
     // ── vMix offline guard ───────────────────────────────────────────────────
     // If vMix is unreachable and the item requires vMix (file or named input),
@@ -2015,44 +2064,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
             if (useCrossfade && !isImg) {
               // ── Crossfade (Fade / Merge) ──────────────────────────────────────
-              // Para crossfade com áudio contínuo:
-              //   1) PreviewInput → input vai pro PVW
-              //   2) PlayInput    → começa a tocar NO PVW (áudio entra gradualmente)
-              //   3) waitForInputPlaying → confirma Running antes de iniciar o fade
-              //   4) SetTransitionEffect1 + SetTransitionDuration1 → configura slot 1
-              //   5) Transition1 → executa a transição; o vMix faz o crossfade
-              // O clip anterior continua tocando no PGM durante o fade — sem dead air.
-              await executeVmixCommand('PreviewInput', { input: guid, meta: itemMeta })
-              await sleep(100)
+              //   1) PlayInput → o clip novo começa a tocar fora do ar
+              //   2) Fade/Merge COM Input (+Duration) → o vMix faz o crossfade
+              //      direto para ESTE input, sem depender do PVW.
+              // A forma antiga (PreviewInput → Transition1) sofria a mesma corrida
+              // de PVW do Cut: o arming podia trocar o preview entre os comandos e
+              // a transição levava o input errado ao ar. Bônus: o caminho com
+              // txDuration=0 chamava 'Fade' sem Value e era rejeitado pela
+              // validação do catálogo — a transição silenciosamente não acontecia.
               await executeVmixCommand('PlayInput', { input: guid, meta: itemMeta })
               await sleep(150)
               await waitForInputPlaying(guid, 1500)
-
-              if (txDuration > 0) {
-                const effectName = useFade ? 'Fade' : 'Merge'
-                // Configura tipo e duração no slot 1 de transição do vMix
-                await executeVmixCommand('SetTransitionEffect1', {
-                  value: effectName, meta: { ...itemMeta, source: 'transition-config' }, validate: false,
-                })
-                await executeVmixCommand('SetTransitionDuration1', {
-                  value: String(txDuration), meta: { ...itemMeta, source: 'transition-config' }, validate: false,
-                })
-                await executeVmixCommand('Transition1', { meta: itemMeta })
-              } else {
-                // Usa a duração atual configurada no vMix (botão Fade da interface)
-                await executeVmixCommand(useFade ? 'Fade' : 'Merge', { meta: itemMeta })
-              }
+              await executeVmixCommand(useFade ? 'Fade' : 'Merge', {
+                input: guid,
+                ...(txDuration > 0 ? { duration: String(txDuration) } : {}),
+                meta: itemMeta,
+                validate: false,  // Fade exige Value no catálogo; aqui usamos Input+Duration
+              })
 
             } else {
               // ── Corte seco (Cut) — padrão e para imagens ─────────────────────
-              // Ordem correta para vMix 28+:
-              //   1) PreviewInput  → input vai pro PVW
-              //   2) Cut           → PVW vira PGM (input visível mas ainda Paused)
-              //   3) PlayInput     → só agora o clip começa a reproduzir
-              await executeVmixCommand('PreviewInput', { input: guid, meta: itemMeta })
-              await sleep(150)
-              await executeVmixCommand('Cut', { meta: itemMeta })
-              await sleep(150)
+              // Cut COM Input: o vMix corta o input direto pro PGM, atomicamente,
+              // sem passar pelo PVW. A forma antiga (PreviewInput → sleep 150ms →
+              // Cut sem parâmetro) tinha uma janela onde QUALQUER PreviewInput
+              // concorrente (ex.: arming de bloco comercial, tick de 2s) trocava
+              // o PVW e o Cut jogava o input ERRADO no ar — tela preta com o
+              // áudio do clip certo tocando fora do ar.
+              await executeVmixCommand('Cut', { input: guid, meta: itemMeta })
+              await sleep(100)
               if (!isImg) {
                 await executeVmixCommand('PlayInput', { input: guid, meta: itemMeta })
                 // Aguarda até 1.5s confirmando Running. Só retenta se vMix realmente não respondeu.
@@ -2080,6 +2119,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // When alreadyOnAir=true, skipToNext already handled Cut + activeInputRef
 
           onAirInput = guid
+          wasAlreadyOnAir = cachedAlreadyOnAir
         } else {
           // File failed to load (not found or vMix rejected AddInput).
           // Log immediately as error — sequence continues to the NEXT item instead
@@ -2125,9 +2165,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         await executeVmixCommand('SetPosition', { input: item.inputName, value: '0', meta: itemMeta })
         await executeVmixCommand('PlayInput', { input: item.inputName, meta: itemMeta })
-        await executeVmixCommand('PreviewInput', { input: item.inputName, meta: itemMeta })
-        await sleep(100)
-        await executeVmixCommand('Cut', { meta: itemMeta })
+        await executeVmixCommand('Cut', { input: item.inputName, meta: itemMeta })
         onAirInput = item.inputName
         // activeInputRef intentionally left as '' — permanent inputs are not owned by SpotMaster
       }
@@ -2270,8 +2308,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // to read the real duration from vMix (reported after the input buffers).
     {
       let durationSec = item.duration ?? 0
-      if (durationSec <= 0 && onAirInput && window.spotmaster) {
-        // vMix already buffered the input (we slept 1s in loadNewInput).
+      // Confere SEMPRE a duração real reportada pelo vMix (não só quando a
+      // cadastrada falta). Cadastro MENOR que o arquivo cortava o clip no meio
+      // ("passa por cima"); MAIOR deixava o fim congelado à espera do
+      // wall-clock. Exceção: item retomado (resume/Next) — duration ali é o
+      // tempo restante, não a duração do arquivo.
+      if (!wasAlreadyOnAir && item.filePath && onAirInput && window.spotmaster) {
+        // vMix already buffered the input (loadNewInput waits for ready).
         // Re-read the XML to get the real duration.
         const st = await requestVmixXml()
         if (st.success && st.data) {
@@ -2280,15 +2323,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const keyM = tag[1].match(/\bkey="([^"]+)"/i)
             const durM = tag[1].match(/\bduration="(\d+)"/i)
             if (keyM && keyM[1] === onAirInput && durM) {
-              durationSec = parseInt(durM[1]) / 1000
-              // Persist the real duration so block headers always show total time
-              if (activeQueueRef.current === 'schedule' && durationSec > 0) {
-                const liveItem = getQueue().find(i => i.id === item.id)
-                if (liveItem) {
-                  dispatch({
-                    type: 'UPDATE_SCHEDULE_ITEM',
-                    payload: { date: today(), item: { ...liveItem, duration: durationSec } },
-                  })
+              const vmixDur = parseInt(durM[1]) / 1000
+              if (vmixDur > 0 && Math.abs(vmixDur - durationSec) > 1) {
+                durationSec = vmixDur
+                // Persist the real duration so block headers always show total time
+                if (activeQueueRef.current === 'schedule') {
+                  const liveItem = getQueue().find(i => i.id === item.id)
+                  if (liveItem) {
+                    dispatch({
+                      type: 'UPDATE_SCHEDULE_ITEM',
+                      payload: { date: today(), item: { ...liveItem, duration: vmixDur } },
+                    })
+                  }
                 }
               }
               break
@@ -2448,6 +2494,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (firstDue.adBreakId) {
           // Commercial fires: advance high-water mark, do NOT mark anything skipped.
           minOrderRef.current = Math.max(minOrderRef.current, firstDue.order)
+          // Registra o disparo NO MESMO instante (ref é síncrono). Sem isto, o
+          // scheduler comercial (tick de 1s) via os demais itens do bloco ainda
+          // 'pending' (dispatch do status é assíncrono), não achava o horário no
+          // fired set e INTERROMPIA a sequência — cortando o 1º comercial com
+          // ~1s no ar. Era o "come comerciais" quando o bloco era alcançado pelo
+          // próprio motor (Autostart, Playlist Contínua, salto por horário) e
+          // não pelo scheduler.
+          if (firstDue.scheduledTime && !firedCommercialTimesRef.current.has(firstDue.scheduledTime)) {
+            firedCommercialTimesRef.current.add(firstDue.scheduledTime)
+            persistFiredTimes()
+            commInterruptTimeRef.current = firstDue.scheduledTime
+          }
         } else {
           const toSkip = pending.filter(i => i.order < firstDue.order)
           if (toSkip.length > 0) {
@@ -2607,7 +2665,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // sequência iniciaria até recarregar o app.
       runSequenceActiveRef.current = false
     }
-  }, [dispatch, playItem, removeOwnedInput, addSchedulerLog])
+  }, [dispatch, playItem, removeOwnedInput, addSchedulerLog, persistFiredTimes])
 
   // ── Sequence controls ──────────────────────────────────────────────────────
   const startSequence = useCallback(() => {
@@ -2639,9 +2697,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const d = new Date()
     const nowHHMM = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 
-    // Unique block times sorted ascending
+    // Unique block times sorted ascending (apenas itens COM horário — itens
+    // sem scheduledTime são encaixes manuais e não definem blocos)
     const blockTimes = [...new Set(
-      schedule.map(i => i.scheduledTime?.slice(0, 5) ?? '00:00'),
+      schedule
+        .map(i => i.scheduledTime?.slice(0, 5))
+        .filter((t): t is string => !!t),
     )].sort()
 
     // Latest block at or before now (the "current" block)
@@ -2649,13 +2710,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     let updatedSchedule = schedule
     if (currentBlockTime) {
-      updatedSchedule = schedule.map(item => ({
-        ...item,
-        status: (item.scheduledTime?.slice(0, 5) ?? '00:00') < currentBlockTime
-          && item.status === 'pending'
-            ? ('skipped' as const)
-            : item.status,
-      }))
+      updatedSchedule = schedule.map(item => {
+        const t = item.scheduledTime?.slice(0, 5)
+        // Item sem horário nunca é pulado por comparação de horário — antes
+        // caía no default '00:00' e era marcado skipped indevidamente.
+        if (!t || t >= currentBlockTime || item.status !== 'pending') return item
+        return { ...item, status: 'skipped' as const }
+      })
       // Update stateRef immediately so runSequence reads the correct data
       stateRef.current = {
         ...stateRef.current,
@@ -2786,9 +2847,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // SetPosition em ms — pula direto para onde a música estava (estimado por wall-clock)
         const seekMs = String(Math.max(0, elapsedSeconds * 1000))
         await executeVmixCommand('SetPosition', { input: loadedGuid, value: seekMs, meta: resumeMeta, validate: false })
-        await executeVmixCommand('PreviewInput', { input: loadedGuid, meta: resumeMeta })
-        await new Promise(r => setTimeout(r, 120))
-        await executeVmixCommand('Cut', { meta: resumeMeta })
+        await executeVmixCommand('Cut', { input: loadedGuid, meta: resumeMeta })
         await new Promise(r => setTimeout(r, 120))
         await executeVmixCommand('PlayInput', { input: loadedGuid, meta: resumeMeta })
         if (isDev) console.log(`[resume] reload: arquivo "${item.title}" recarregado, seek=${elapsedSeconds}s, faltam ${remainingSeconds}s`)
@@ -3030,23 +3089,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     const ext = nextPending.filePath.split('.').pop()?.toLowerCase() ?? ''
-    const isImg   = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
-    const isAudio = ['mp3','wav','aac','m4a','flac','ogg','wma','opus','aiff','aif'].includes(ext)
+    const isImg = ['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext)
 
-    // Start playing the new input in preview — current media stays on Program
-    if (!isImg && !isAudio) {
-      await executeVmixCommand('PlayInput', { input: nextGuid, meta: nextMeta })
-    }
-
-    // 3-second crossfade window — current audio/video continues
-    await sleep(3000)
-
-    // Cut to new input
-    await executeVmixCommand('PreviewInput', { input: nextGuid, meta: nextMeta })
+    // Cut direto pro novo input (atômico, sem PVW). A forma antiga dava
+    // PlayInput e esperava 3s antes do corte — o próximo clip tocava 3s fora
+    // do ar com o áudio vazando no master, e a janela PreviewInput→Cut sofria
+    // a mesma corrida de PVW da transição principal (tela preta).
+    await executeVmixCommand('Cut', { input: nextGuid, meta: nextMeta })
     await sleep(100)
-    await executeVmixCommand('Cut', { meta: nextMeta })
-    if (isAudio) {
-      await sleep(500)
+    if (!isImg) {
       await executeVmixCommand('PlayInput', { input: nextGuid, meta: nextMeta })
     }
 
@@ -3126,8 +3177,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const inputName = layer.fixedInputName
       if (!inputName) return
       if (effectiveMode === 'replace') {
-        await executeVmixCommand('PreviewInput', { input: inputName, meta: audioMeta })
-        await executeVmixCommand('Cut', { meta: audioMeta })
+        await executeVmixCommand('Cut', { input: inputName, meta: audioMeta })
         await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
       } else {
         await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
@@ -3180,9 +3230,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         if (placeholderMode === 'replace') {
-          if (guid) await executeVmixCommand('PreviewInput', { input: guid, meta: audioMeta })
-          await executeVmixCommand('Cut', { meta: audioMeta })
-          if (guid) await executeVmixCommand('PlayInput', { input: guid, meta: audioMeta })
+          if (guid) {
+            await executeVmixCommand('Cut', { input: guid, meta: audioMeta })
+            await executeVmixCommand('PlayInput', { input: guid, meta: audioMeta })
+          }
         } else {
           if (guid) {
             await executeVmixCommand('PlayInput', { input: guid, meta: audioMeta })
@@ -3200,8 +3251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await executeVmixCommand('SetLoop', { input: inputName, value: '1', meta: audioMeta, validate: false })
         }
         if (placeholderMode === 'replace') {
-          await executeVmixCommand('PreviewInput', { input: inputName, meta: audioMeta })
-          await executeVmixCommand('Cut', { meta: audioMeta })
+          await executeVmixCommand('Cut', { input: inputName, meta: audioMeta })
           await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
         } else {
           await executeVmixCommand('PlayInput', { input: inputName, meta: audioMeta })
@@ -3577,14 +3627,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
           addSchedulerLog('warn', `bloco @${triggerTime} aguardando: sequência encerrando (abortRef=true)`)
           return
         }
-        // ── Idempotência: verificar se há itens realmente pendentes ─────────
-        // Protege contra o caso em que o operador iniciou o bloco manualmente
-        // e todos os itens já estão done/playing — não dispara novamente.
-        if (scheduledDue.every(i => i.status !== 'pending')) {
-          addSchedulerLog('warn', `bloco @${triggerTime} ignorado: todos os itens já estão ${scheduledDue[0]?.status ?? 'sem status'}`)
-          firedCommercialTimesRef.current.add(triggerTime)
-          persistFiredTimes()
-          return
+        // ── Guard: o bloco deste horário JÁ está no ar ───────────────────────
+        // O motor (runSequence) pode ter alcançado o bloco por conta própria
+        // (Autostart, Playlist Contínua, salto interno por horário) — e o item
+        // em 'playing' não aparece em scheduledDue (filtra pending). Abortar
+        // aqui cortava o comercial que ACABOU de entrar no ar. Registra o
+        // horário como disparado e deixa o motor seguir o bloco até o fim.
+        // (O check antigo de idempotência aqui era código morto: scheduledDue
+        // já vem filtrado para 'pending', a condição nunca era verdadeira.)
+        {
+          const playingNow = schedule.find(i => i.status === 'playing')
+          if (
+            playingNow?.adBreakId &&
+            scheduledDue.some(d => d.adBreakId === playingNow.adBreakId && d.scheduledTime === triggerTime)
+          ) {
+            addSchedulerLog('info', `bloco @${triggerTime} já em execução pelo motor — registrado sem interromper`)
+            firedCommercialTimesRef.current.add(triggerTime)
+            persistFiredTimes()
+            commInterruptTimeRef.current = triggerTime
+            return
+          }
         }
         // Permite catch-up comercial por uma janela curta apos o horario, mesmo se
         // sessionStart bloquearia itens antigos. Depois disso, evita disparar
@@ -3903,8 +3965,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        // Marca em PVW pra operador ver visualmente que o bloco está armado
-        await executeVmixCommand('PreviewInput', { input: guid, meta: armingMeta })
+        // Marca em PVW pra operador ver visualmente que o bloco está armado.
+        // SOMENTE em idle: com a sequência tocando, escrever no PVW concorria
+        // com a janela PreviewInput→Cut do playItem (era a causa da "tela preta
+        // com áudio"). Com o Cut&Input atômico isso deixou de ser fatal, mas
+        // continua desnecessário e confuso durante a execução.
+        if (!stateRef.current.isSequencePlaying) {
+          await executeVmixCommand('PreviewInput', { input: guid, meta: armingMeta })
+        }
 
         setArmedCommercial({
           blockId,
@@ -4486,9 +4554,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const todayStr = today()
     const schedule = stateRef.current.dateSchedules[todayStr]
     if (!schedule || schedule.length === 0) return  // fresh-generation handles new days
-    if (stateRef.current.isSequencePlaying && minOrderRef.current !== -1) {
-      // A commercial has already fired — renumbering while playing is risky.
-      // Defer until the sequence stops.
+    if (stateRef.current.isSequencePlaying) {
+      // NUNCA regenerar com a sequência tocando: o merge troca os UUIDs dos
+      // itens pending e renumera o dia inteiro — o playItem perde o item da
+      // queue ("sumiu da queue"), o preload antecipado vira stale (gap/travada
+      // na transição) e o arming pisca. Antes o sync só era adiado depois de um
+      // comercial disparar (minOrderRef !== -1); agora é adiado sempre. O
+      // deferred-retry abaixo + o timer de 60s aplicam o sync assim que a
+      // sequência parar.
       needsScheduleSyncRef.current = true
       return
     }

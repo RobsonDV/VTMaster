@@ -35,6 +35,17 @@ let pollingInterval: ReturnType<typeof setInterval> | null = null
 let currentHost = 'localhost'
 let currentPort = 8088
 
+// Conexões HTTP reutilizadas (keep-alive). Sem isto, cada comando/poll abria
+// um socket TCP novo — com fast-poll de 500ms + poll de 2s + comandos de
+// playout simultâneos, o overhead de handshake atrasava exatamente os comandos
+// críticos (Cut/Play) nos momentos de transição.
+const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 4 })
+
+// Emissor do poll lento (status geral). Guardado em módulo para que o
+// fast-poll possa alimentá-lo durante a reprodução — assim o poll de 2s é
+// suspenso (metade das requisições XML) sem congelar o status da UI.
+let slowEmit: ((status: VmixStatus) => void) | null = null
+
 // Hash compacto do status para deduplicar emissões IPC idênticas
 function statusHash(s: VmixStatus): string {
   if (!s.connected) return `off|${(s as VmixStatus & { error?: string }).error ?? ''}`
@@ -58,9 +69,9 @@ export function makeVmixRequest(
       hostname: host,
       port,
       path: query ? `/api/?${query}` : '/api/',
-
       method: 'GET',
       timeout: 3000,
+      agent: keepAliveAgent,
     }
 
     const req = http.request(options, (res) => {
@@ -166,8 +177,13 @@ export function startVmixPolling(
     lastHash = h
     onStatus(status)
   }
+  slowEmit = emit
 
   const poll = async () => {
+    // Durante a reprodução, o fast-poll (500ms) já busca o mesmo XML e
+    // alimenta este emit via slowEmit — pular aqui corta o tráfego pela metade
+    // sem perder atualização de status.
+    if (fastPollingInterval) return
     backoffCounter++
     if (consecutiveFailures >= 3 && backoffCounter % 5 !== 0) return
 
@@ -196,6 +212,7 @@ export function stopVmixPolling(): void {
     clearInterval(pollingInterval)
     pollingInterval = null
   }
+  slowEmit = null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,11 +242,17 @@ export function startVmixFastPolling(
     if (result.success && result.data) {
       try {
         const status = parseVmixStatus(result.data)
+        // Alimenta também o status geral (poll lento fica suspenso enquanto o
+        // fast-poll roda) — dedup interno do slowEmit evita IPC redundante.
+        slowEmit?.(status)
         const h = fastHash(status)
         if (h === lastFastHash) return
         lastFastHash = h
         onStatus(status)
       } catch { /* ignore parse errors */ }
+    } else {
+      // Mantém o flag connected verdadeiro na UI mesmo com o poll lento suspenso
+      slowEmit?.({ connected: false, error: result.error } as VmixStatus)
     }
   }
   poll()

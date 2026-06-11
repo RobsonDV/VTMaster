@@ -38,6 +38,26 @@ function secsToHHMM(s: number): string {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`
 }
 
+function compareScheduleOrder(a: PlaylistItem, b: PlaylistItem): number {
+  const orderDiff = (a.order ?? 0) - (b.order ?? 0)
+  if (orderDiff !== 0) return orderDiff
+  const timeDiff = (a.scheduledTime ?? '').localeCompare(b.scheduledTime ?? '')
+  if (timeDiff !== 0) return timeDiff
+  return a.id.localeCompare(b.id)
+}
+
+function orderBetween(prev?: PlaylistItem, next?: PlaylistItem): number {
+  const prevOrder = prev?.order
+  const nextOrder = next?.order
+  if (typeof prevOrder === 'number' && typeof nextOrder === 'number') {
+    if (nextOrder > prevOrder) return prevOrder + ((nextOrder - prevOrder) / 2)
+    return prevOrder + 0.5
+  }
+  if (typeof prevOrder === 'number') return prevOrder + 1
+  if (typeof nextOrder === 'number') return nextOrder - 1
+  return 1
+}
+
 interface BlockGroup {
   time: string
   slot: ProgramSlot | null
@@ -701,7 +721,7 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     [dateSchedules, selectedDate]
   )
   const sorted = useMemo(
-    () => [...schedule].sort((a, b) => a.order - b.order),
+    () => [...schedule].sort(compareScheduleOrder),
     [schedule]
   )
   const hasPending = schedule.some(i => i.status === 'pending')
@@ -999,15 +1019,20 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     if (!dragId || dragId === targetItem.id) return
     const dragItem = sorted.find(i => i.id === dragId)
     if (!dragItem) return
-    const movedItem = dragItem.scheduledTime?.slice(0, 5) !== targetItem.scheduledTime?.slice(0, 5)
+    const baseMovedItem = dragItem.scheduledTime?.slice(0, 5) !== targetItem.scheduledTime?.slice(0, 5)
       ? { ...dragItem, scheduledTime: targetItem.scheduledTime, adBreakId: targetItem.adBreakId }
       : dragItem
     const without = sorted.filter(i => i.id !== dragId)
     const tIdx    = without.findIndex(i => i.id === targetItem.id)
-    without.splice(tIdx, 0, movedItem)
+    const insertIdx = tIdx >= 0 ? tIdx : without.length
+    const movedItem = {
+      ...baseMovedItem,
+      order: orderBetween(without[insertIdx - 1], without[insertIdx]),
+    }
+    without.splice(insertIdx, 0, movedItem)
     dispatch({
       type: 'REORDER_DATE_SCHEDULE',
-      payload: { date: selectedDate, items: without.map((i, n) => ({ ...i, order: n + 1 })) },
+      payload: { date: selectedDate, items: without.sort(compareScheduleOrder) },
     })
   }
 
@@ -1086,18 +1111,27 @@ export default function DaySchedulePanel({ selectedDate, onDateChange, onSelecte
     if (!dragId) return
     const dragItem = sorted.find(i => i.id === dragId)
     if (!dragItem) return
-    const lastInGroup = [...group.items].sort((a, b) => a.order - b.order).pop()
-    const newOrder = lastInGroup ? lastInGroup.order + 1 : (sorted[sorted.length - 1]?.order ?? 0) + 1
-    const movedItem = dragItem.scheduledTime?.slice(0, 5) !== group.time
-      ? { ...dragItem, scheduledTime: group.time + ':00', adBreakId: undefined }
-      : { ...dragItem }
     const without = sorted.filter(i => i.id !== dragId)
-    without.push({ ...movedItem, order: newOrder })
+    const groupItems = without.filter(i => i.scheduledTime?.slice(0, 5) === group.time)
+    const lastInGroup = [...groupItems].sort(compareScheduleOrder).pop()
+    const lastIdx = lastInGroup ? without.findIndex(i => i.id === lastInGroup.id) : -1
+    const insertIdx = lastIdx >= 0
+      ? lastIdx + 1
+      : without.findIndex(i => (i.scheduledTime?.slice(0, 5) ?? '99:99') > group.time)
+    const splitIdx = insertIdx >= 0 ? insertIdx : without.length
+    const baseMovedItem = dragItem.scheduledTime?.slice(0, 5) !== group.time
+      ? { ...dragItem, scheduledTime: group.time + ':00', adBreakId: undefined }
+      : dragItem
+    const movedItem = {
+      ...baseMovedItem,
+      order: orderBetween(without[splitIdx - 1], without[splitIdx]),
+    }
+    without.splice(splitIdx, 0, movedItem)
     dispatch({
       type: 'REORDER_DATE_SCHEDULE',
       payload: {
         date: selectedDate,
-        items: without.sort((a, b) => a.order - b.order).map((i, n) => ({ ...i, order: n + 1 })),
+        items: without.sort(compareScheduleOrder),
       },
     })
     setDragId(null)

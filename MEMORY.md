@@ -13,9 +13,9 @@
 
 ## Estado atual
 
-- **Versão:** 5.5.43 (Autostart ignora blocos vazios/placeholders)
+- **Versão:** 5.5.44 (auditoria do motor: Cut atômico, fim das corridas de scheduler/PVW)
 - **Branch:** `main` (fluxo de release direto na main)
-- **Última data:** 02/06/2026
+- **Última data:** 11/06/2026
 - **Build/qualidade:** `eslint .` 0 problemas · `tsc -b --noEmit` 0 erros · `vite build` OK
 - **Onde mora a lógica:** motor de playout e schedulers em `src/store/AppContext.tsx`
 
@@ -48,6 +48,44 @@
 ---
 
 ## Registro (mais recente primeiro)
+
+### 2026-06-11 — v5.5.44: auditoria completa do motor (tela preta, comerciais comidos, mixagem lenta)
+- **Reportado:** (1) clipes entrando em tela preta com o áudio tocando; (2) disparo
+  automático "comendo" comerciais / passando por cima; (3) mixagem entre itens travando.
+- **P1 — Cut atômico (causa da tela preta):** TODAS as transições agora usam
+  `Cut`/`Fade`/`Merge` **com `Input`** (corte direto ao PGM, sem PVW). A forma antiga
+  (`PreviewInput` → sleep 150ms → `Cut` sem parâmetro) tinha janela onde o **arming
+  (PreviewInput a cada 2s)** trocava o PVW e o Cut levava o input errado ao ar — tela
+  preta com o áudio do clip certo fora do ar. Corrigido em: playItem (cut+fade),
+  inputName, resumeFromSnapshot, skipToNext, AudioPro (3 pontos). Arming agora só toca
+  o PVW em idle. Bônus: fade com duração 0 chamava `Fade` sem Value e era rejeitado
+  pela validação (transição nunca acontecia); skipToNext tinha 3s de áudio duplo.
+- **P2 — scheduler não corta mais o próprio bloco (comercial comido):** quando o
+  runSequence alcança um bloco vencido por conta própria (Autostart/Playlist Contínua),
+  registra o horário em `firedCommercialTimesRef` **sincronamente**; e o scheduler
+  comercial ganhou guard "bloco já em execução → registra sem abortar". Antes, o tick
+  de 1s via os itens ainda pending (dispatch assíncrono) e abortava — o 1º comercial
+  ia ao ar por ~1s e era marcado done. Check de idempotência morto removido.
+- **P3 — loadNewInput honesto:** input que não sai de Loading/Empty (timeout 10s+1.5s)
+  agora retorna `null` (item vira erro e a fila segue) e o input quebrado é removido.
+  Antes devolvia o GUID mesmo assim → Cut pra input morto → tela preta a duração inteira.
+- **P4 — auto-sync NUNCA roda durante reprodução:** o merge era adiado só após um
+  comercial disparar (`minOrderRef !== -1`); tocando música antes do 1º bloco ele rodava
+  ao vivo, trocando UUIDs/renumerando o dia (raiz do "sumiu da queue", preload stale →
+  gap na transição, arming piscando). Agora adia sempre; deferred-retry + timer 60s aplicam.
+- **P5 — camada vMix:** keep-alive agent no `makeVmixRequest`; poll lento (2s) suspenso
+  enquanto o fast-poll (500ms) roda — o fast-poll alimenta o status geral via `slowEmit`.
+  Metade das requisições XML durante playout; comandos críticos não disputam socket.
+- **P6 — duração real:** playItem agora compara a duração cadastrada com a reportada
+  pelo vMix em TODO item de arquivo (>1s de diferença → usa a do vMix). Cadastro menor
+  cortava o clip no meio; maior congelava o fim no ar. Resume/Next preservados
+  (duration = tempo restante, flag `wasAlreadyOnAir`).
+- **P7 — menores:** `startScheduleFromNow` não marca mais como skipped itens SEM
+  scheduledTime (caíam no default '00:00').
+- **Validação:** `eslint .` 0 · `tsc -b --noEmit` 0 · `npm run build` OK.
+- **Atenção:** validar em produção com vMix real: transição cut e fade, disparo de bloco
+  com Autostart+Autoplay Comerciais+Playlist Contínua ligados (cenário do operador).
+- Obs.: `DaySchedulePanel.tsx` tinha modificação local pré-existente (não relacionada).
 
 ### 2026-06-02 — Esclarecimento: como o Autostart escolhe o horário (sem mudança de código)
 - Dúvida do operador: "ele aponta 21h porque eu disse, ou porque achou o item? Se eu
